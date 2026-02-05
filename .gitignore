@@ -23,6 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
+# OS/Build artifacts
+desktop.ini
+build.err
+build.out
+
 # Env files
 .env
 .env.*

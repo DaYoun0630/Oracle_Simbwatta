@@ -79,52 +79,51 @@ const selectRole = (role: string) => {
 }
 
 .role-page {
-  height: 100vh;
+  min-height: 100vh;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #f5f6f7;
-  padding: 20px;
-  overflow: hidden;
+  padding: clamp(16px, 2.6vmin, 32px);
+  overflow-y: auto;
 }
 
 .role-container {
-  width: 100%;
-  max-width: 500px;
-  height: 100%;
+  width: min(720px, 100%);
+  max-width: 720px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 20px;
+  justify-content: flex-start;
+  gap: clamp(16px, 2.8vmin, 28px);
   color: #2e2e2e;
   animation: fadeDown 0.7s ease both;
 }
 
 .role-header {
   display: grid;
-  gap: 12px;
+  gap: clamp(10px, 2vmin, 14px);
 }
 
 .badge {
   background: #e6f3f3;
   color: #1f5f5f;
-  padding: 8px 16px;
+  padding: clamp(6px, 1.2vmin, 8px) clamp(12px, 2.2vmin, 16px);
   border-radius: 999px;
   font-weight: 700;
-  font-size: 18px;
+  font-size: clamp(0.95rem, 0.85rem + 0.5vmin, 1.1rem);
   align-self: start;
 }
 
 .role-header h1 {
-  font-size: 30px;
+  font-size: clamp(1.6rem, 1.3rem + 1.2vmin, 2.1rem);
   font-weight: 900;
   line-height: 1.3;
   margin: 0;
 }
 
 .role-header p {
-  font-size: 20px;
+  font-size: clamp(1rem, 0.95rem + 0.5vmin, 1.2rem);
   line-height: 1.6;
   margin: 0;
   color: #5f5f5f;
@@ -133,23 +132,20 @@ const selectRole = (role: string) => {
 .role-list {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  flex: 1;
-  justify-content: center;
+  gap: clamp(14px, 2.6vmin, 24px);
 }
 
 .role-card {
   width: 100%;
-  min-height: 120px;
-  height: clamp(120px, 18vh, 150px);
+  min-height: clamp(96px, 14vmin, 138px);
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 18px 20px;
+  gap: clamp(12px, 2.4vmin, 20px);
+  padding: clamp(14px, 2.2vmin, 18px) clamp(16px, 2.8vmin, 20px);
   border: 2px solid transparent;
-  border-radius: 28px;
+  border-radius: clamp(20px, 3.6vmin, 28px);
   background: #f5f6f7;
-  box-shadow: 14px 14px 28px #d1d9e6, -14px -14px 28px #ffffff;
+  box-shadow: 10px 10px 22px #d1d9e6, -10px -10px 22px #ffffff;
   cursor: pointer;
   text-align: left;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
@@ -166,9 +162,9 @@ const selectRole = (role: string) => {
 }
 
 .pictogram {
-  width: clamp(84px, 20vw, 100px);
-  height: clamp(84px, 20vw, 100px);
-  border-radius: 26px;
+  width: clamp(64px, 14vmin, 96px);
+  height: clamp(64px, 14vmin, 96px);
+  border-radius: clamp(18px, 3.2vmin, 26px);
   background: #ffffff;
   display: flex;
   align-items: center;
@@ -178,22 +174,28 @@ const selectRole = (role: string) => {
 }
 
 .pictogram svg {
-  width: 92px;
-  height: 92px;
+  width: 70%;
+  height: 70%;
 }
 
 .role-info h2 {
-  font-size: 24px;
+  font-size: clamp(1.2rem, 1.05rem + 0.7vmin, 1.5rem);
   font-weight: 900;
   margin: 0 0 6px;
   color: #2e2e2e;
 }
 
 .role-info p {
-  font-size: 18px;
+  font-size: clamp(0.95rem, 0.9rem + 0.5vmin, 1.1rem);
   line-height: 1.6;
   margin: 0;
   color: #5f5f5f;
+}
+
+@media (max-width: 480px) {
+  .role-page {
+    align-items: flex-start;
+  }
 }
 
 .pictogram-subject .wave-ring {

@@ -150,51 +150,50 @@ onUnmounted(stopAutoSlide);
 }
 
 .landing-viewport {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  min-height: 100vh;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #f5f6f7;
-  padding: 0;
-  overflow: hidden;
+  padding: clamp(16px, 3vmin, 32px);
+  overflow-y: auto;
 }
 
 .landing {
   width: 100%;
-  max-width: 390px;
-  height: 100%;
-  max-height: 100vh;
+  max-width: 720px;
   background: transparent;
-  padding: 2.5vh 4vw;
+  padding: clamp(16px, 3vmin, 28px);
   display: grid;
   grid-template-rows:
     auto
     1fr
     auto;
-  gap: 1.5vh;
+  gap: clamp(12px, 2.5vmin, 20px);
   color: #2e2e2e;
 }
 
 .hero {
   display: grid;
-  gap: 1vh;
+  gap: clamp(8px, 2vmin, 12px);
 }
 
 .service-badge {
   background: #e6f3f3;
   color: #1f5f5f;
-  padding: 0.8vh 3vw;
+  padding: clamp(6px, 1.2vmin, 8px) clamp(12px, 2.2vmin, 16px);
   border-radius: 999px;
   font-weight: 700;
-  font-size: clamp(14px, 4vw, 16px);
+  font-size: clamp(0.9rem, 0.85rem + 0.5vmin, 1.05rem);
   align-self: start;
 }
 
 .hero h1 {
-  font-size: clamp(24px, 7vw, 28px);
+  font-size: clamp(1.5rem, 1.2rem + 1.4vmin, 2rem);
   font-weight: 900;
-  line-height: 1.25;
+  line-height: 1.3;
   margin: 0;
 }
 
@@ -204,21 +203,20 @@ onUnmounted(stopAutoSlide);
 }
 
 .hero p {
-  font-size: clamp(14px, 4vw, 16px);
+  font-size: clamp(0.95rem, 0.9rem + 0.5vmin, 1.05rem);
   line-height: 1.5;
   margin: 0;
   color: #5f5f5f;
 }
 
 .carousel {
-  height: 100%;
   flex: 1;
   background: #f0f3f4;
-  border-radius: clamp(20px, 5vw, 28px);
+  border-radius: clamp(18px, 3.6vmin, 28px);
   box-shadow: inset 6px 6px 14px rgba(209, 217, 230, 0.7), inset -6px -6px 14px #ffffff;
   display: flex;
-  min-height: 0;
-  padding: 1vh 1vw;
+  min-height: clamp(260px, 36vmin, 420px);
+  padding: clamp(8px, 1.6vmin, 14px);
 }
 
 .carousel-window {
@@ -236,27 +234,27 @@ onUnmounted(stopAutoSlide);
   min-width: 100%;
   height: 100%;
   display: flex;
-  padding: 0.8vh 0.8vw;
+  padding: clamp(6px, 1.4vmin, 10px);
 }
 
 .slide-card {
   flex: 1;
   background: #ffffff;
-  border-radius: clamp(20px, 5vw, 26px);
+  border-radius: clamp(18px, 3.6vmin, 26px);
   box-shadow: 10px 10px 20px #d1d9e6, -10px -10px 20px #ffffff;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1vh;
+  gap: clamp(8px, 1.6vmin, 12px);
   text-align: center;
-  padding: 1.5vh 3vw;
+  padding: clamp(12px, 2.4vmin, 18px) clamp(16px, 3vmin, 24px);
 }
 
 .pictogram {
-  width: clamp(100px, 50%, 140px);
-  height: clamp(100px, 50%, 140px);
-  border-radius: clamp(20px, 5vw, 28px);
+  width: clamp(92px, 22vmin, 156px);
+  height: clamp(92px, 22vmin, 156px);
+  border-radius: clamp(18px, 3.6vmin, 26px);
   background: #f5f6f7;
   display: flex;
   align-items: center;
@@ -270,7 +268,7 @@ onUnmounted(stopAutoSlide);
 }
 
 .slide-title {
-  font-size: clamp(20px, 5.5vw, 24px);
+  font-size: clamp(1.2rem, 1.05rem + 0.8vmin, 1.5rem);
   font-weight: 800;
   line-height: 1.3;
   margin: 0;
@@ -280,17 +278,17 @@ onUnmounted(stopAutoSlide);
   display: block;
   color: #4cb7b7;
   font-weight: 900;
-  font-size: clamp(22px, 6vw, 26px);
+  font-size: clamp(1.35rem, 1.1rem + 1vmin, 1.7rem);
 }
 
 .slide-title .subtitle {
   display: block;
-  font-size: clamp(16px, 4.5vw, 18px);
+  font-size: clamp(1rem, 0.95rem + 0.6vmin, 1.15rem);
   font-weight: 700;
 }
 
 .slide-desc {
-  font-size: clamp(14px, 4vw, 16px);
+  font-size: clamp(0.9rem, 0.85rem + 0.5vmin, 1.05rem);
   line-height: 1.5;
   color: #5f5f5f;
   margin: 0;
@@ -298,37 +296,37 @@ onUnmounted(stopAutoSlide);
 
 .footer {
   display: grid;
-  gap: 1vh;
-  padding-top: 1vh;
+  gap: clamp(8px, 1.6vmin, 12px);
+  padding-top: clamp(6px, 1.4vmin, 10px);
 }
 
 .indicator {
   display: flex;
   justify-content: center;
-  gap: clamp(8px, 3vw, 12px);
+  gap: clamp(8px, 2.2vmin, 12px);
 }
 
 .dot {
-  width: clamp(12px, 4vw, 16px);
-  height: clamp(12px, 4vw, 16px);
+  width: clamp(10px, 2.6vmin, 16px);
+  height: clamp(10px, 2.6vmin, 16px);
   background: #c9d6d6;
   border-radius: 999px;
   transition: all 0.3s ease;
 }
 
 .dot.active {
-  width: clamp(24px, 8vw, 32px);
+  width: clamp(22px, 5vmin, 32px);
   background: #4cb7b7;
   box-shadow: 0 0 12px rgba(76, 183, 183, 0.45);
 }
 
 .cta-button {
-  height: clamp(52px, 7vh, 60px);
+  height: clamp(48px, 6.5vmin, 60px);
   border: none;
-  border-radius: clamp(18px, 4vw, 22px);
+  border-radius: clamp(16px, 3vmin, 22px);
   background: #4cb7b7;
   color: #ffffff;
-  font-size: clamp(16px, 4.5vw, 18px);
+  font-size: clamp(1rem, 0.95rem + 0.5vmin, 1.1rem);
   font-weight: 900;
   box-shadow: 0 12px 22px rgba(76, 183, 183, 0.35);
   cursor: pointer;
@@ -479,5 +477,11 @@ onUnmounted(stopAutoSlide);
 @keyframes heartPulse {
   0%, 100% { transform: scale(1); opacity: 0.7; }
   50% { transform: scale(1.2); opacity: 1; }
+}
+
+@media (max-width: 480px) {
+  .landing-viewport {
+    align-items: flex-start;
+  }
 }
 </style>
