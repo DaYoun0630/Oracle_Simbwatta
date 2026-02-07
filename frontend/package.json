@@ -1,0 +1,23 @@
+{
+  "name": "sim-web-service",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npx -y node@22 ./node_modules/vite/bin/vite.js",
+    "build": "npx -y node@22 ./node_modules/vite/bin/vite.js build",
+    "preview": "npx -y node@22 ./node_modules/vite/bin/vite.js preview"
+  },
+  "engines": {
+    "node": ">=22.12 <24"
+  },
+  "dependencies": {
+    "pinia": "^3.0.4",
+    "vue": "^3.5.24",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.2.4"
+  }
+}

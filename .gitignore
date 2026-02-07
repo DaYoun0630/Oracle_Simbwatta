@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Docker env files
+docker/.env
+
+# Local service/runtime state (do not commit)
+postgres-data/
+minio-data/
+models/
+data/
+
+# Local tooling state
+.claude/

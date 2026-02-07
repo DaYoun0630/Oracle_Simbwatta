@@ -1,0 +1,238 @@
+<script setup>
+import { computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import CaregiverShell from '@/components/shells/CaregiverShell.vue';
+import DoctorShell from '@/components/shells/DoctorShell.vue';
+import SubjectShell from '@/components/shells/SubjectShell.vue';
+
+const authStore = useAuthStore();
+const role = computed(() => authStore.role);
+const userName = computed(() => authStore.userName);
+const router = useRouter();
+
+const roleLabel = computed(() => {
+  if (role.value === 'doctor') return '의료진 계정';
+  if (role.value === 'caregiver') return '보호자 계정';
+  return '이용자 계정';
+});
+
+const goToPersonalInfo = () => {
+  if (role.value === 'doctor') {
+    return router.push({ name: 'doctor-profile-edit' });
+  }
+  router.push({ name: 'personal-info' });
+};
+
+const goToNotifications = () => {
+  if (role.value === 'doctor') {
+    return router.push({ name: 'doctor-notification' });
+  }
+  router.push({ name: 'notification-settings' });
+};
+
+const goToCaregiverManagement = () => {
+  router.push({ name: 'caregiver-management' });
+};
+
+const handleLogout = () => {
+  authStore.clear();
+  router.push({ name: 'landing' });
+};
+
+onMounted(() => {
+  if (role.value === 'doctor') {
+    router.replace({ name: 'doctor-settings' });
+  }
+});
+</script>
+
+<template>
+  <component
+    :is="role === 'caregiver' ? CaregiverShell : role === 'doctor' ? DoctorShell : SubjectShell"
+    title="설정"
+  >
+    <div class="settings-container">
+      <section class="user-info-card">
+        <div class="avatar-placeholder"></div>
+        <div class="details">
+          <h2>{{ userName }} 님</h2>
+          <p>{{ roleLabel }}</p>
+        </div>
+      </section>
+
+      <section class="settings-cards">
+        <button class="settings-card" @click="goToPersonalInfo">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4cb7b7" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>개인정보 수정</h3>
+            <p>이름, 연락처, 아바타 관리</p>
+          </div>
+          <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>
+          </svg>
+        </button>
+
+        <button v-if="role !== 'subject'" class="settings-card" @click="goToNotifications">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4cb7b7" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>알림 상세 설정</h3>
+            <p>변화 알림, 주간 리포트, 서비스 안내</p>
+          </div>
+          <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>
+          </svg>
+        </button>
+
+        <button v-if="role === 'caregiver'" class="settings-card" @click="goToCaregiverManagement">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4cb7b7" stroke-width="2">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="8.5" cy="7" r="4"/>
+              <path d="M20 8v6"/>
+              <path d="M23 11h-6"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>보호자 연결 관리</h3>
+            <p>대상자 연결 및 권한 설정</p>
+          </div>
+          <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>
+          </svg>
+        </button>
+      </section>
+
+      <button class="logout-text-button" @click="handleLogout">
+        로그아웃
+      </button>
+    </div>
+  </component>
+</template>
+
+<style scoped>
+.settings-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-height: calc(100vh - 200px);
+}
+
+.user-info-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: #ffffff;
+  padding: 24px;
+  border-radius: 28px;
+  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+}
+
+.avatar-placeholder {
+  width: 72px;
+  height: 72px;
+  background: #e0e5ec;
+  border-radius: 50%;
+  box-shadow: inset 4px 4px 10px #d1d9e6, inset -4px -4px 10px #ffffff;
+}
+
+.details h2 {
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0 0 4px;
+  color: #2e2e2e;
+}
+
+.details p {
+  font-size: 16px;
+  color: #4cb7b7;
+  font-weight: 700;
+  margin: 0;
+}
+
+.settings-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  padding: 24px;
+  border: none;
+  border-radius: 28px;
+  background: #f5f6f7;
+  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  cursor: pointer;
+  transition: transform 0.2s;
+  text-align: left;
+}
+
+.settings-card:active {
+  transform: scale(0.98);
+}
+
+.card-icon {
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6),
+              inset -4px -4px 10px #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-content {
+  flex: 1;
+}
+
+.card-content h3 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #2e2e2e;
+  margin: 0 0 6px;
+}
+
+.card-content p {
+  font-size: 15px;
+  font-weight: 600;
+  color: #777;
+  margin: 0;
+}
+
+.chevron {
+  flex-shrink: 0;
+}
+
+.logout-text-button {
+  background: none;
+  border: none;
+  font-size: 18px;
+  font-weight: 700;
+  color: #ff8a80;
+  padding: 20px;
+  cursor: pointer;
+  margin-top: auto;
+  transition: opacity 0.2s;
+}
+
+.logout-text-button:hover {
+  opacity: 0.8;
+}
+</style>
