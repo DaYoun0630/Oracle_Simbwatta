@@ -11,25 +11,26 @@
 8. [Database Schema](#8-database-schema)
 9. [API Endpoints](#9-api-endpoints)
 10. [Authentication (Google OAuth)](#10-authentication-google-oauth)
-11. [OMV Storage Setup (Local SATA HAT)](#11-omv-storage-setup-local-sata-hat)
-12. [RPI 5 Setup](#12-rpi-5-setup)
-13. [Docker Configuration](#13-docker-configuration)
-14. [UV Package Management](#14-uv-package-management)
-15. [File Storage (MinIO)](#15-file-storage-minio)
-16. [LLM Training System](#16-llm-training-system)
-17. [Voice ML Pipeline (CPU-Optimized)](#17-voice-ml-pipeline-cpu-optimized)
-18. [MRI ML Pipeline (CPU-Optimized)](#18-mri-ml-pipeline-cpu-optimized)
-19. [Celery Background Tasks](#19-celery-background-tasks)
-20. [Model Versioning](#20-model-versioning)
-21. [In-App Notification System](#21-in-app-notification-system)
-22. [Logging & Monitoring](#22-logging--monitoring)
-23. [Backup Strategy](#23-backup-strategy)
-24. [Testing Guide](#24-testing-guide)
-25. [Deployment](#25-deployment)
-26. [Mobile App Considerations](#26-mobile-app-considerations)
-27. [Environment Variables](#27-environment-variables)
-28. [Development Phases](#28-development-phases)
-29. [Troubleshooting](#29-troubleshooting)
+11. [Frontend Architecture (Vue 3)](#11-frontend-architecture-vue-3)
+12. [OMV Storage Setup (Local SATA HAT)](#12-omv-storage-setup-local-sata-hat)
+13. [RPI 5 Setup](#13-rpi-5-setup)
+14. [Docker Configuration](#14-docker-configuration)
+15. [UV Package Management](#15-uv-package-management)
+16. [File Storage (MinIO)](#16-file-storage-minio)
+17. [LLM Voice Chat (OpenAI Realtime API)](#17-llm-voice-chat-openai-realtime-api)
+18. [Voice ML Pipeline (CPU-Optimized)](#18-voice-ml-pipeline-cpu-optimized)
+19. [MRI ML Pipeline (CPU-Optimized)](#19-mri-ml-pipeline-cpu-optimized)
+20. [Celery Background Tasks](#20-celery-background-tasks)
+21. [Model Versioning](#21-model-versioning)
+22. [In-App Notification System](#22-in-app-notification-system)
+23. [Logging & Monitoring](#23-logging--monitoring)
+24. [Backup Strategy](#24-backup-strategy)
+25. [Testing Guide](#25-testing-guide)
+26. [Deployment](#26-deployment)
+27. [Mobile App Considerations](#27-mobile-app-considerations)
+28. [Environment Variables](#28-environment-variables)
+29. [Development Phases](#29-development-phases)
+30. [Troubleshooting](#30-troubleshooting)
 
 ---
 
@@ -47,7 +48,7 @@ A dual-system diagnostic platform for Alzheimer's/cognitive assessment:
 **This Version Features:**
 - ✅ Docker containers (clean, isolated)
 - ✅ UV package manager (fast installs)
-- ✅ Python 3.10
+- ✅ Python 3.12
 - ✅ RPI 5 for compute (ML processing)
 - ✅ OMV storage on RPI (SATA HAT) for database/files
 - ✅ CPU-optimized ML pipelines
@@ -91,17 +92,17 @@ A dual-system diagnostic platform for Alzheimer's/cognitive assessment:
 
 | Component | Technology | Location | Notes |
 |-----------|------------|----------|-------|
-| **Runtime** | Python 3.10 | Inside Docker | Not on host |
+| **Runtime** | Python 3.12 | Inside Docker | Not on host |
 | **Package Manager** | UV | Inside Docker | Fast installs |
 | **Containers** | Docker + Compose | RPI 5 | Isolated |
-| **Frontend** | Vue.js + PWA | RPI 5 (Nginx) | |
+| **Frontend** | Vue 3 + Vite + Pinia | RPI 5 (Nginx) | Neumorphism UI |
 | **API** | FastAPI | RPI 5 (Docker) | |
 | **Background Jobs** | Celery | RPI 5 (Docker) | ML processing |
 | **Task Queue** | Redis | RPI 5 (Docker) | Low latency |
 | **Database** | PostgreSQL | RPI 5 (Docker) | Local SSD |
 | **File Storage** | MinIO | RPI 5 (Docker) | Audio, MRI |
-| **LLM** | OpenAI API | Cloud | GPT-4 |
-| **Voice ML** | Whisper small, wav2vec2, BERT | RPI 5 | CPU-optimized |
+| **LLM / Voice Chat** | OpenAI API (Realtime) | Cloud | Teammate WIP |
+| **Voice ML** | faster-whisper (INT8), wav2vec2, BERT, Kiwi | RPI 5 | CPU-optimized |
 | **MRI ML** | 3D CNN, CatBoost | RPI 5 | CPU-optimized |
 
 ---
@@ -160,93 +161,92 @@ Use a static IP for reliability.
 ```
 RPI 5 (OMV local storage): /srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final/
 │
-├── code/                              ← Git repository
+├── src/claude/                        ← Backend source (Python)
+│   ├── app/                           ← FastAPI application
+│   │   ├── main.py                    ← App entry point
+│   │   ├── database.py                ← AsyncPG connection pool
+│   │   ├── storage.py                 ← MinIO service
+│   │   ├── config.py                  ← Pydantic settings
+│   │   ├── auth.py                    ← Google OAuth + JWT
+│   │   └── routers/
+│   │       ├── auth.py                ← Auth endpoints
+│   │       ├── doctor.py              ← Doctor endpoints
+│   │       ├── patient.py             ← Patient endpoints + WebSocket chat
+│   │       ├── family.py              ← Family/caregiver endpoints
+│   │       ├── notifications.py       ← Notification endpoints
+│   │       └── health.py              ← Health check
+│   │
+│   └── worker/                        ← Celery ML worker
+│       ├── tasks.py                   ← Celery task definitions
+│       ├── feature_extractor.py       ← Voice ML feature extraction
+│       └── model_inference.py         ← RandomForest model inference
+│
+├── frontend/                          ← Vue 3 + Vite frontend
 │   ├── src/
-│   │   ├── __init__.py
-│   │   ├── api.py                     ← FastAPI app
-│   │   ├── tasks.py                   ← Celery tasks
-│   │   ├── database.py
-│   │   ├── storage.py
-│   │   ├── auth/
-│   │   │   ├── google.py
-│   │   │   ├── jwt.py
-│   │   │   └── permissions.py
-│   │   ├── routers/
-│   │   │   ├── doctor.py
-│   │   │   ├── patient.py
-│   │   │   ├── family.py
-│   │   │   └── notifications.py
-│   │   ├── notifications/
-│   │   │   ├── types.py
-│   │   │   └── service.py
-│   │   ├── llm/
-│   │   │   ├── prompt_manager.py
-│   │   │   └── chat_service.py
-│   │   └── ml/
-│   │       ├── voice_pipeline.py
-│   │       └── mri_pipeline.py
-│   │
-│   ├── config/
-│   │   ├── prompts/
-│   │   │   └── exercises.yaml
-│   │   └── models.yaml
-│   │
-│   ├── frontend/
-│   │   ├── src/
-│   │   ├── dist/                      ← Built files
-│   │   └── package.json
-│   │
-│   ├── migrations/
-│   │   └── 001_init.sql
-│   │
-│   ├── tests/
-│   │   ├── conftest.py
-│   │   ├── test_auth.py
-│   │   ├── test_doctor.py
-│   │   └── test_notifications.py
-│   │
-│   ├── scripts/
-│   │   ├── backup.sh
-│   │   └── deploy.sh
-│   │
-│   ├── pyproject.toml                 ← UV config
-│   ├── uv.lock                        ← UV lock file
-│   ├── Dockerfile.api
-│   ├── Dockerfile.worker
-│   ├── nginx.conf
-│   └── .env.example
+│   │   ├── main.js                    ← Vue app entry point
+│   │   ├── App.vue                    ← Root component
+│   │   ├── style.css                  ← Global styles (Neumorphism)
+│   │   ├── router/index.js            ← Vue Router (role-based guards)
+│   │   ├── stores/                    ← Pinia state management
+│   │   │   ├── auth.js                ← Auth state + localStorage
+│   │   │   └── doctorPatient.js       ← Doctor's selected patient
+│   │   ├── composables/               ← Vue 3 composition functions
+│   │   │   ├── useAuth.ts             ← Auth hook
+│   │   │   ├── useVoiceSession.ts     ← Voice chat state machine
+│   │   │   ├── useMockSession.ts      ← Mock session data
+│   │   │   ├── useSubjectData.js      ← Patient data fetcher
+│   │   │   ├── useDoctorData.js       ← Doctor data fetcher
+│   │   │   └── useCaregiverData.js    ← Caregiver data fetcher
+│   │   ├── components/
+│   │   │   ├── AppHeader.vue          ← Header with back/menu
+│   │   │   ├── AppShell.vue           ← Main layout wrapper
+│   │   │   ├── VoiceOrb.vue           ← Voice chat orb animation
+│   │   │   ├── WeeklyChart.vue        ← Activity chart
+│   │   │   ├── common/                ← AlertBanner, EmptyState
+│   │   │   ├── home/                  ← SubjectHome, CaregiverHome, DoctorHome
+│   │   │   ├── shells/                ← Role-specific layout shells
+│   │   │   ├── history/               ← Session history components
+│   │   │   └── mri/                   ← MRI display, diagnosis form, charts
+│   │   ├── pages/                     ← 18 page components
+│   │   │   ├── LandingPage.vue
+│   │   │   ├── LoginPage.vue
+│   │   │   ├── RoleSelectPage.vue
+│   │   │   ├── HomePage.vue
+│   │   │   ├── ChatPage.vue           ← Voice chat UI
+│   │   │   ├── SessionResultPage.vue
+│   │   │   ├── HistoryPage.vue
+│   │   │   ├── SettingsPage.vue
+│   │   │   ├── DoctorPatientsPage.vue
+│   │   │   ├── DoctorPage.vue
+│   │   │   └── ...                    ← Profile, Notifications, etc.
+│   │   └── data/
+│   │       ├── adapters/              ← DataAdapter pattern (mock/real)
+│   │       └── mock/                  ← Mock data for all roles
+│   ├── package.json
+│   ├── vite.config.js
+│   └── index.html
+│
+├── migrations/
+│   └── 001_init.sql                   ← Database schema
 │
 ├── docker/
 │   ├── docker-compose.yml             ← Unified single-node (recommended)
-│   ├── docker-compose.nas.yml         ← Storage-only (optional)
 │   └── .env                           ← Shared env vars
 │
 ├── models/                            ← ML model files
-│   ├── voice_classifier.pt
-│   ├── mri_model1.pt
-│   ├── mri_model2.pt
-│   └── catboost_subtype.cbm
+│   └── audio_processed/
+│       ├── trained_model.pkl          ← RandomForest classifier
+│       └── trained_model_imputer.pkl  ← SimpleImputer for features
 │
 ├── postgres-data/                     ← PostgreSQL data (auto-created)
+├── minio-data/                        ← MinIO storage (audio, MRI)
 │
-├── minio-data/                        ← MinIO storage
-│   ├── voice-recordings/
-│   ├── mri-scans/
-│   └── processed/
-│
-└── backups/                           ← Automated backups
-    ├── postgres/
-    └── minio/
-
-
-Local Storage:
-Use the OMV local path directly (no /mnt/nas mount).
-
-Host system (RPI 5):
-- Only Docker installed
-- No Python on host
-- No venv on host
-- Everything runs in containers
+├── pyproject.toml                     ← UV config (Python >=3.11,<3.14)
+├── uv.lock                           ← UV lock file
+├── Dockerfile.api                     ← Python 3.12 + FastAPI
+├── Dockerfile.worker                  ← Python 3.12 + Celery + ML deps
+├── nginx.conf                         ← Reverse proxy + static files
+└── main.py                            ← Dev entry point
 ```
 
 ---
@@ -255,11 +255,13 @@ Host system (RPI 5):
 
 ### Three User Roles
 
-| Role | Description | Primary Functions |
-|------|-------------|-------------------|
-| **Doctor** | Medical professional | Diagnose, view all data, manage patients |
-| **Patient** | Person receiving care | Training sessions, view own progress |
-| **Family** | Patient's family member | View linked patient's progress (read-only) |
+| Role | Frontend Name | Description | Primary Functions |
+|------|---------------|-------------|-------------------|
+| **Doctor** | `doctor` | Medical professional | Diagnose, view all data, manage patients |
+| **Patient** | `subject` | Person receiving care | Voice chat training, view own progress |
+| **Family** | `caregiver` | Patient's family member | View linked patient's progress, manage care |
+
+> Note: The frontend uses `subject` for patient and `caregiver` for family. Role normalization happens in the auth store.
 
 ### Permission Matrix
 
@@ -573,9 +575,148 @@ oauth.register(
 
 ---
 
-## 11. OMV Storage Setup (Local SATA HAT)
+## 11. Frontend Architecture (Vue 3)
 
-### 11.1 Install Docker on OMV
+### Stack
+
+| Component | Technology | Version |
+|-----------|------------|---------|
+| **Framework** | Vue 3 (Composition API) | 3.5.24 |
+| **Build Tool** | Vite | 7.2.4 |
+| **State Management** | Pinia | 3.0.4 |
+| **Routing** | Vue Router | 4.6.4 |
+| **Language** | TypeScript + JavaScript | ESNext |
+| **Design System** | Neumorphism (custom CSS) | - |
+| **Font** | Pretendard (Korean sans-serif) | - |
+
+### Design System
+
+Neumorphism-based soft UI with teal accent:
+
+```css
+:root {
+  --main-mint: #4cb7b7;          /* Primary teal */
+  --bg-color: #f5f6f7;           /* Soft gray background */
+  --text-dark: #2e2e2e;
+  --text-gray: #555;
+}
+
+/* Raised elements */
+box-shadow: 18px 18px 36px rgba(207,214,223,0.9), -18px -18px 36px #fff;
+
+/* Pressed/inset elements */
+box-shadow: inset 6px 6px 12px rgba(209,217,230,0.7), inset -6px -6px 12px #fff;
+```
+
+- Minimum touch target: 56px (mobile-friendly)
+- Minimum font size: 16px (accessibility)
+- Pill-shaped buttons: `border-radius: 999px`
+
+### Three User Roles → Three Shells
+
+| Role | Shell Component | Home Component | Key Pages |
+|------|----------------|----------------|-----------|
+| **Subject (Patient)** | `SubjectShell.vue` | `SubjectHome.vue` | Chat, SessionResult, History, Settings |
+| **Caregiver (Family)** | `CaregiverShell.vue` | `CaregiverHome.vue` | History, Settings, CaregiverManagement |
+| **Doctor** | `DoctorShell.vue` | `DoctorHome.vue` | Patients, PatientDetail, Report, DoctorSettings |
+
+### Routes
+
+```
+Public:
+  /                    → LandingPage
+  /select-role         → RoleSelectPage
+  /login               → LoginPage
+
+Subject (Patient):
+  /home                → HomePage (SubjectHome)
+  /chat                → ChatPage (voice chat with VoiceOrb)
+  /session-result      → SessionResultPage
+  /history             → HistoryPage (SubjectHistory)
+  /settings            → SettingsPage
+  /settings/personal-info → PersonalInfoPage
+
+Caregiver:
+  /home                → HomePage (CaregiverHome)
+  /history             → HistoryPage (CaregiverHistory)
+  /settings/notifications → NotificationSettingsPage
+  /settings/caregiver-management → CaregiverManagementPage
+
+Doctor:
+  /home                → HomePage (DoctorHome)
+  /doctor/patients     → DoctorPatientsPage
+  /doctor/patient/:id  → DoctorPage (patient detail)
+  /doctor/report/:id   → Report view
+  /doctor-settings     → DoctorSettings
+  /doctor-settings/profile → DoctorProfileEdit
+  /doctor-settings/notifications → DoctorNotification
+```
+
+### State Management (Pinia)
+
+**`useAuthStore`** — User authentication:
+- Stores `user` (id, name, role), persists to `localStorage`
+- Role normalization: `patient` → `subject`
+- Hydrates on app mount from `localStorage('auth-user')`
+
+**`useDoctorPatientStore`** — Doctor context:
+- Tracks currently selected `patientId` and `patientSummary`
+
+### Data Adapter Pattern
+
+```
+composables/useSubjectData.js  →  data/adapters/SubjectAdapter.js  →  /api/subject/dashboard
+composables/useDoctorData.js   →  data/adapters/DoctorAdapter.js   →  /api/doctor/patient/:id
+composables/useCaregiverData.js → data/adapters/CaregiverAdapter.js → /api/caregiver/dashboard
+```
+
+Currently using **mock data** (`useMock=true`). Switch adapters to call real backend API when ready.
+
+### Voice Chat (ChatPage + VoiceOrb)
+
+The `useVoiceSession.ts` composable manages the voice chat state machine:
+
+```
+idle → listening → pause → processing → speaking → idle
+```
+
+- `VoiceOrb.vue` renders the animated voice orb during chat
+- Voice chat integration with OpenAI Realtime API is **in progress** (teammate working on it)
+- During the voice session, audio is auto-recorded and sent to backend for ML analysis
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `VoiceOrb.vue` | Animated orb for voice chat interaction |
+| `WeeklyChart.vue` | Patient activity visualization |
+| `MRIImageDisplay.vue` | MRI scan viewer |
+| `DoctorDiagnosisForm.vue` | Doctor diagnosis input |
+| `RegionContributionChart.vue` | Brain region analysis chart |
+| `AlertBanner.vue` | Alert/notification display |
+
+### Build & Dev
+
+```bash
+cd frontend
+
+# Development
+npm run dev        # Vite dev server (requires Node >= 22)
+
+# Production build
+npm run build      # Outputs to dist/
+
+# Preview build
+npm run preview
+```
+
+Production `dist/` is served by Nginx container at `/` with API proxied at `/api/`.
+
+---
+
+## 12. OMV Storage Setup (Local SATA HAT)
+
+### 12.1 Install Docker on OMV
 
 SSH into the RPI/OMV host:
 
@@ -595,7 +736,7 @@ docker --version
 docker compose version
 ```
 
-### 11.2 Create Shared Folder in OMV
+### 12.2 Create Shared Folder in OMV
 
 OMV Web UI → **Storage → Shared Folders** → Create:
 
@@ -603,7 +744,7 @@ OMV Web UI → **Storage → Shared Folders** → Create:
 |------|------|
 | `mci-platform` | `/srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final` |
 
-### 11.3 Create Directory Structure
+### 12.3 Create Directory Structure
 
 ```bash
 cd /srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final
@@ -611,7 +752,7 @@ cd /srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final
 mkdir -p code docker models postgres-data minio-data backups/postgres backups/minio
 ```
 
-### 11.3.1 Important: PostgreSQL Data Must Stay Local (No NFS)
+### 12.3.1 Important: PostgreSQL Data Must Stay Local (No NFS)
 
 PostgreSQL ("PG") data should remain on the **local SSD filesystem** (ext4).  
 With the SATA HAT, this is already local to the RPI. Do **not** place `postgres-data/` on NFS.  
@@ -628,7 +769,7 @@ Not safe to export over NFS:
 
 NFS is not required for single-node deployments.
 
-### 11.4 Optional: Enable NFS Share (only if external clients need it)
+### 12.4 Optional: Enable NFS Share (only if external clients need it)
 
 Skip this section for single-node SATA HAT setups.
 
@@ -640,7 +781,7 @@ OMV → **Services → NFS → Shares** → Add:
 |---------------|--------|---------|
 | mci-platform | 10.0.0.10 | `rw,sync,no_subtree_check,no_root_squash` |
 
-### 11.5 Start Storage Containers (PostgreSQL + MinIO)
+### 12.5 Start Storage Containers (PostgreSQL + MinIO)
 
 ```bash
 cd /srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final/docker
@@ -653,11 +794,11 @@ docker compose -f docker-compose.yml up -d
 
 ---
 
-## 12. RPI 5 Setup
+## 13. RPI 5 Setup
 
-If OMV and the SATA HAT are on the same RPI, skip sections 12.2 and 12.4 (no NFS required).
+If OMV and the SATA HAT are on the same RPI, skip sections 13.2 and 13.4 (no NFS required).
 
-### 12.1 Install Docker on RPI 5
+### 13.1 Install Docker on RPI 5
 
 ```bash
 # Update system
@@ -678,7 +819,7 @@ docker --version
 docker compose version
 ```
 
-### 12.2 Install NFS Client (Optional)
+### 13.2 Install NFS Client (Optional)
 
 Only needed if you plan to mount this storage from another machine.
 
@@ -686,7 +827,7 @@ Only needed if you plan to mount this storage from another machine.
 sudo apt install -y nfs-common
 ```
 
-### 12.3 Set Static IP
+### 13.3 Set Static IP
 
 ```bash
 sudo nmcli con mod "Wired connection 1" \
@@ -698,14 +839,14 @@ sudo nmcli con mod "Wired connection 1" \
 sudo nmcli con up "Wired connection 1"
 ```
 
-### 12.4 Local Storage (No NFS Mount)
+### 13.4 Local Storage (No NFS Mount)
 
 ```bash
 # Verify local OMV path exists
 ls /srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final
 ```
 
-### 12.5 Start RPI 5 Containers
+### 13.5 Start RPI 5 Containers
 
 ```bash
 cd /srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final/docker
@@ -715,17 +856,17 @@ docker compose -f docker-compose.yml up -d
 
 ---
 
-## 13. Docker Configuration
+## 14. Docker Configuration
 
 Recommended for single-node SATA HAT setups:
 
 `docker compose -f docker-compose.yml up -d`
 
-### 13.1 docker-compose.yml (Unified single-node)
+### 14.1 docker-compose.yml (Unified single-node)
 
 This file combines the storage + compute services in one place.
 
-### 13.2 docker-compose.nas.yml (Storage-only, optional)
+### 14.2 docker-compose.nas.yml (Storage-only, optional)
 
 ```yaml
 version: '3.8'
@@ -770,7 +911,7 @@ services:
       retries: 3
 ```
 
-### 13.3 docker-compose.rpi.yml (Compute-only, optional)
+### 14.3 docker-compose.rpi.yml (Compute-only, optional)
 
 Only needed if you want to split compute from storage.
 
@@ -863,10 +1004,10 @@ volumes:
   redis-data:
 ```
 
-### 13.3 Dockerfile.api (FastAPI + UV + Python 3.10)
+### 14.4 Dockerfile.api (FastAPI + UV + Python 3.12)
 
 ```dockerfile
-FROM python:3.10-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 # Install UV
 RUN pip install uv
@@ -891,10 +1032,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["uv", "run", "uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-### 13.4 Dockerfile.worker (Celery + ML + UV + Python 3.10)
+### 14.5 Dockerfile.worker (Celery + ML + UV + Python 3.12)
 
 ```dockerfile
-FROM python:3.10-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 # Install system dependencies for ML
 RUN apt-get update && apt-get install -y \
@@ -929,7 +1070,7 @@ ENV OPENBLAS_NUM_THREADS=4
 CMD ["uv", "run", "celery", "-A", "src.tasks", "worker", "--loglevel=info", "--concurrency=2"]
 ```
 
-### 13.5 nginx.conf
+### 14.6 nginx.conf
 
 ```nginx
 events {
@@ -988,65 +1129,54 @@ http {
 
 ---
 
-## 14. UV Package Management
+## 15. UV Package Management
 
-### 14.1 pyproject.toml
+### 15.1 pyproject.toml
 
 ```toml
 [project]
-name = "mci-platform"
+name = "final"
 version = "0.1.0"
 description = "MCI Cognitive Assessment Platform"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    "fastapi>=0.109.0",
-    "uvicorn[standard]>=0.27.0",
     "asyncpg>=0.29.0",
-    "redis>=5.0.1",
-    "celery>=5.3.6",
-    "python-jose[cryptography]>=3.3.0",
     "authlib>=1.3.0",
-    "httpx>=0.26.0",
-    "python-multipart>=0.0.6",
-    "pydantic>=2.5.3",
-    "pydantic-settings>=2.1.0",
+    "fastapi>=0.128.3",
+    "celery>=5.3.6",
+    "httpx>=0.28.1",
     "minio>=7.2.3",
-    "openai>=1.12.0",
+    "openai>=2.17.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.1.0",
+    "python-jose[cryptography]>=3.3.0",
+    "python-multipart>=0.0.6",
+    "python-dotenv>=1.2.1",
     "pyyaml>=6.0.1",
-]
-
-[project.optional-dependencies]
-ml = [
+    "redis>=5.0.1",
+    "uvicorn[standard]>=0.40.0",
+    "email-validator>=2.3.0",
     "torch>=2.1.0",
     "torchaudio>=2.1.0",
     "transformers>=4.37.0",
-    "faster-whisper>=0.10.0",
     "kiwipiepy>=0.16.3",
     "librosa>=0.10.1",
     "soundfile>=0.12.1",
-    "nibabel>=5.2.0",
+    "scikit-learn>=1.4.0",
     "scipy>=1.12.0",
-    "scikit-image>=0.22.0",
-    "catboost>=1.2.2",
-    "pydicom>=2.4.4",
-    "onnxruntime>=1.16.3",
+    "numpy>=1.26.0",
+    "psycopg2-binary>=2.9.9",
+    "faster-whisper>=0.10.0",
 ]
 
+[dependency-groups]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-]
-
-[tool.uv]
-dev-dependencies = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest>=9.0.2",
 ]
 ```
 
-### 14.2 Initialize UV (First Time)
+### 15.2 Initialize UV (First Time)
 
 ```bash
 # On your development machine (not the RPI/OMV host)
@@ -1061,7 +1191,7 @@ uv lock
 # This creates uv.lock - commit this to git
 ```
 
-### 14.3 UV Commands Reference
+### 15.3 UV Commands Reference
 
 ```bash
 # Install dependencies
@@ -1084,7 +1214,7 @@ uv run celery -A src.tasks worker
 
 ---
 
-## 15. File Storage (MinIO)
+## 16. File Storage (MinIO)
 
 ### Bucket Structure
 
@@ -1139,86 +1269,67 @@ storage = StorageService()
 
 ---
 
-## 16. LLM Training System
+## 17. LLM Voice Chat (OpenAI Realtime API)
 
-### Prompt Configuration
+> **Status: In Progress** — Teammate is implementing the OpenAI Realtime API integration.
 
-```yaml
-# config/prompts/exercises.yaml
+### Overview
 
-word_recall:
-  normal:
-    system: |
-      당신은 인지 훈련 도우미입니다.
-      어려운 카테고리를 사용하여 빠른 속도로 진행합니다.
-      20개 이상: 우수, 15-19개: 양호, 14개 이하: 추가 훈련 필요
-    categories: ["과일", "나라", "ㄱ으로 시작하는 단어"]
+The voice chat system uses the **OpenAI Realtime API** for live voice conversations between the patient and the AI cognitive training assistant. This enables natural, low-latency voice interactions in Korean.
 
-  early_mci:
-    system: |
-      쉬운 카테고리로 천천히 진행합니다.
-      힌트를 자연스럽게 제공합니다.
-      10개 이상이면 칭찬합니다.
-    categories: ["과일", "동물"]
+### Architecture
 
-  late_mci:
-    system: |
-      매우 친숙한 카테고리만 사용합니다.
-      자주 격려하고 칭찬합니다.
-      5개 이상이면 성공입니다.
-    categories: ["과일", "가족"]
-
-story_retelling:
-  normal:
-    system: |
-      5-7문장의 이야기를 들려주고 세부 질문을 합니다.
-
-daily_conversation:
-  normal:
-    system: |
-      자연스러운 일상 대화를 나눕니다.
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                    VOICE CHAT FLOW                                    │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│   Patient (Frontend)                                                  │
+│   ┌──────────────┐     WebSocket      ┌──────────────┐              │
+│   │  VoiceOrb    │ ◄──────────────► │  FastAPI WS  │              │
+│   │  (ChatPage)  │  audio frames      │  /patient/   │              │
+│   └──────────────┘                    │  chat        │              │
+│                                        └──────┬───────┘              │
+│                                               │                       │
+│                          ┌────────────────────▼────────────────┐     │
+│                          │  OpenAI Realtime API                │     │
+│                          │  (voice-to-voice, Korean)           │     │
+│                          └─────────────────────────────────────┘     │
+│                                                                       │
+│   Meanwhile (background):                                            │
+│   Audio chunks → MinIO → Celery ML Worker → Voice Assessment        │
+│                                                                       │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Chat Service
+### Key Points
 
-```python
-# src/llm/chat_service.py
-from openai import OpenAI
-import yaml
+- **Real-time voice**: Patient speaks naturally; AI responds with voice (no text typing needed)
+- **Auto-recording**: While the patient chats, audio is automatically captured and stored to MinIO
+- **Background ML**: After the session ends, the recorded audio is processed by the Celery ML worker for cognitive assessment
+- **Korean-first**: System prompt and conversation are in Korean for elderly patients
 
-class PromptManager:
-    def __init__(self):
-        with open("config/prompts/exercises.yaml") as f:
-            self.prompts = yaml.safe_load(f)
-    
-    def get_prompt(self, exercise_type: str, mci_stage: str) -> dict:
-        return self.prompts.get(exercise_type, {}).get(mci_stage, {})
+### Frontend State Machine (`useVoiceSession.ts`)
 
-class ChatService:
-    def __init__(self):
-        self.client = OpenAI()
-        self.prompt_manager = PromptManager()
-    
-    async def chat(self, exercise_type: str, mci_stage: str, message: str):
-        prompt = self.prompt_manager.get_prompt(exercise_type, mci_stage)
-        
-        response = await self.client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": prompt.get("system", "")},
-                {"role": "user", "content": message}
-            ],
-            stream=True
-        )
-        
-        async for chunk in response:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
 ```
+idle → listening → pause → processing → speaking → idle
+```
+
+- `VoiceOrb.vue` animates based on the current state
+- `ChatPage.vue` renders the full voice chat UI
+
+### Integration Points (To Be Connected)
+
+| Component | Current | Target |
+|-----------|---------|--------|
+| Voice input | Mock responses | OpenAI Realtime API |
+| Audio capture | Not wired | WebSocket binary frames → MinIO |
+| Session results | Mock data | Real ML assessment scores |
+| Auth in WS | localStorage role | JWT token in WS handshake |
 
 ---
 
-## 17. Voice ML Pipeline (CPU-Optimized)
+## 18. Voice ML Pipeline (CPU-Optimized)
 
 ### Pipeline Flow
 
@@ -1413,7 +1524,7 @@ def get_voice_pipeline():
 
 ---
 
-## 18. MRI ML Pipeline (CPU-Optimized)
+## 19. MRI ML Pipeline (CPU-Optimized)
 
 ### Pipeline Flow
 
@@ -1599,7 +1710,7 @@ def get_mri_pipeline():
 
 ---
 
-## 19. Celery Background Tasks
+## 20. Celery Background Tasks
 
 ```python
 # src/tasks.py
@@ -1692,7 +1803,7 @@ def process_mri_scan(self, patient_id: str, dicom_path: str, clinical_data: dict
 
 ---
 
-## 20. Model Versioning
+## 21. Model Versioning
 
 ```yaml
 # config/models.yaml
@@ -1719,7 +1830,7 @@ mri:
 
 ---
 
-## 21. In-App Notification System
+## 22. In-App Notification System
 
 ### Notification Types
 
@@ -1781,7 +1892,7 @@ notification_service = NotificationService()
 
 ---
 
-## 22. Logging & Monitoring
+## 23. Logging & Monitoring
 
 ### View Logs
 
@@ -1814,7 +1925,7 @@ ping 10.0.0.1
 
 ---
 
-## 23. Backup Strategy
+## 24. Backup Strategy
 
 ### Automated Backup Script
 
@@ -1846,7 +1957,7 @@ crontab -e
 
 ---
 
-## 24. Testing Guide
+## 25. Testing Guide
 
 ```bash
 # Run tests in Docker
@@ -1861,7 +1972,7 @@ docker exec mci-api uv run pytest tests/test_notifications.py -v
 
 ---
 
-## 25. Deployment
+## 26. Deployment
 
 ### First Time Setup
 
@@ -1900,7 +2011,7 @@ docker compose -f docker-compose.yml down -v --rmi all
 
 ---
 
-## 26. Mobile App Considerations
+## 27. Mobile App Considerations
 
 PWA (Progressive Web App) is recommended - works great with this setup.
 
@@ -1924,7 +2035,7 @@ export default {
 
 ---
 
-## 27. Environment Variables
+## 28. Environment Variables
 
 ### docker/.env
 
@@ -1954,7 +2065,7 @@ JWT_SECRET=your-very-secure-random-string
 
 ---
 
-## 28. Development Phases
+## 29. Development Phases
 
 | Phase | Scope | Time |
 |-------|-------|------|
@@ -1967,7 +2078,7 @@ JWT_SECRET=your-very-secure-random-string
 
 ---
 
-## 29. Troubleshooting
+## 30. Troubleshooting
 
 ### Container Won't Start
 
@@ -2045,17 +2156,20 @@ docker compose -f docker-compose.yml build && docker compose -f docker-compose.y
 
 | Component | Location | Technology |
 |-----------|----------|------------|
-| Code | RPI 5 (OMV local) | Git repo |
-| PostgreSQL | RPI 5 (OMV local) | Docker |
-| MinIO | RPI 5 (OMV local) | Docker |
-| ML Models | RPI 5 (OMV local) | .pt, .cbm files |
-| FastAPI | RPI 5 | Docker + UV + Python 3.10 |
-| Celery | RPI 5 | Docker + UV + Python 3.10 |
-| Redis | RPI 5 | Docker |
-| Nginx | RPI 5 | Docker |
+| Frontend | RPI 5 (Nginx) | Vue 3 + Vite + Pinia |
+| Backend API | RPI 5 (Docker) | FastAPI + UV + Python 3.12 |
+| ML Worker | RPI 5 (Docker) | Celery + UV + Python 3.12 |
+| Database | RPI 5 (OMV local) | PostgreSQL 16 |
+| File Storage | RPI 5 (OMV local) | MinIO |
+| Task Queue | RPI 5 (Docker) | Redis 7 |
+| Voice Chat | Cloud | OpenAI Realtime API (WIP) |
+| Voice ML | RPI 5 (Docker) | faster-whisper (INT8), wav2vec2, BERT, Kiwi, RandomForest |
+| MRI ML | RPI 5 (Docker) | 3D CNN, CatBoost |
+| ML Models | RPI 5 (OMV local) | .pkl files (audio), .pt/.cbm (MRI) |
+| Reverse Proxy | RPI 5 (Docker) | Nginx Alpine |
 
 **Processing Times:**
-- Voice: ~1-2 minutes ✅
-- MRI: ~3-7 minutes ✅
+- Voice: ~1-2 minutes
+- MRI: ~3-7 minutes
 
-**No Python installed on host systems - everything runs in Docker!** 🐳
+**Everything runs in Docker with Python 3.12 — no Python on host!**
