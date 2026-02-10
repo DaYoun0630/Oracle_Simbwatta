@@ -1,14 +1,10 @@
 <script setup>
 import { computed } from 'vue';
-import { useAuthStore } from '@/stores/auth';
 import SubjectShell from '@/components/shells/SubjectShell.vue';
 import VoiceOrb from '@/components/VoiceOrb.vue';
 import { useVoiceSession } from '@/composables/useVoiceSession';
 
-const authStore = useAuthStore();
-const userName = computed(() => authStore.userName);
-
-const { state, isListening, startListening } = useVoiceSession();
+const { state, startListening } = useVoiceSession();
 
 const statusConfig = computed(() => {
   switch (state.value) {
@@ -47,7 +43,7 @@ const statusConfig = computed(() => {
 </script>
 
 <template>
-  <SubjectShell :showHomeButton="state !== 'idle'">
+  <SubjectShell :showHomeButton="state !== 'idle'" :showMenuButton="true">
     <div class="chat-wrapper" :style="{ backgroundColor: statusConfig.bgColor }">
       <div class="status-area">
         <h1 class="status-text">{{ statusConfig.text }}</h1>

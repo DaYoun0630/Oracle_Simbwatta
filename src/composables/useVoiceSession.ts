@@ -1,9 +1,9 @@
 import { ref, computed, readonly } from "vue";
+import { sendChat } from "@/api/chat";
 
 type VoiceState =
   | "idle"
   | "listening"
-  | "pause"
   | "processing"
   | "speaking";
 
@@ -14,73 +14,64 @@ export interface ChatMessage {
   timestamp: Date;
 }
 
-// 싱글톤 패턴: 모듈 레벨에서 state 관리
+type SpeechRecognitionResultEvent = Event & {
+  results: SpeechRecognitionResultList;
+};
+
+interface SpeechRecognitionLike extends EventTarget {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((event: SpeechRecognitionResultEvent) => void | Promise<void>) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: ((event: Event) => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+// 세션 상태
 const state = ref<VoiceState>("idle");
 const messages = ref<ChatMessage[]>([]);
-const currentTranscript = ref(""); // 실시간 음성 인식 텍스트
-const currentResponse = ref(""); // AI 응답 텍스트
+const currentTranscript = ref("");
+const currentResponse = ref("");
 const sessionStartTime = ref<Date | null>(null);
 const isSessionActive = ref(false);
 
+// 타이머 관리
 let listeningTimer: number | null = null;
-let pauseTimer: number | null = null;
-let processingTimer: number | null = null;
-let typingTimer: number | null = null;
+let recognition: SpeechRecognitionLike | null = null;
+let isRecognitionStopping = false;
 
 const resetTimers = () => {
-  if (listeningTimer) clearTimeout(listeningTimer);
-  if (pauseTimer) clearTimeout(pauseTimer);
-  if (processingTimer) clearTimeout(processingTimer);
-  if (typingTimer) clearInterval(typingTimer);
-
-  listeningTimer = null;
-  pauseTimer = null;
-  processingTimer = null;
-  typingTimer = null;
+  if (listeningTimer) {
+    clearTimeout(listeningTimer);
+    listeningTimer = null;
+  }
 };
 
-// 샘플 응답들 (실제로는 API에서 받아옴)
-const sampleResponses = [
-  "오늘 기분이 어떠세요? 편하게 말씀해 주세요.",
-  "그렇군요. 더 자세히 이야기해 주실 수 있으신가요?",
-  "말씀해 주셔서 감사합니다. 그런 감정을 느끼시는 건 자연스러운 일이에요.",
-  "좋은 하루 보내고 계신 것 같아서 기쁘네요.",
-  "힘드셨겠어요. 제가 더 도와드릴 수 있는 부분이 있을까요?"
-];
+const stopRecognition = () => {
+  if (!recognition) return;
 
-// 샘플 사용자 발화 (실제로는 음성 인식에서)
-const sampleUserMessages = [
-  "오늘은 기분이 좋아요",
-  "조금 피곤한 것 같아요",
-  "요즘 잠을 잘 못 자요",
-  "산책을 다녀왔어요",
-  "가족들과 통화했어요"
-];
+  try {
+    isRecognitionStopping = true;
+    recognition.stop();
+  } catch {
+    // ignore stop failures when recognition is already closed
+  }
 
-const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-// 타이핑 효과로 텍스트 표시
-const typeText = (text: string, target: typeof currentTranscript | typeof currentResponse, onComplete?: () => void) => {
-  let index = 0;
-  target.value = "";
-
-  typingTimer = window.setInterval(() => {
-    if (index < text.length) {
-      target.value += text[index];
-      index++;
-    } else {
-      if (typingTimer) clearInterval(typingTimer);
-      typingTimer = null;
-      onComplete?.();
-    }
-  }, 60);
+  recognition = null;
 };
+
+// 메시지 ID 생성
+const generateId = () =>
+  `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
 export function useVoiceSession() {
   const isListening = computed(() => state.value === "listening");
   const isProcessing = computed(() => state.value === "processing");
   const isSpeaking = computed(() => state.value === "speaking");
-  const hasMessages = computed(() => messages.value.length > 0);
 
   const startSession = () => {
     if (!isSessionActive.value) {
@@ -90,72 +81,129 @@ export function useVoiceSession() {
     }
   };
 
+  // 음성 인식 시작
   const startListening = () => {
     startSession();
     resetTimers();
+    stopRecognition();
+    isRecognitionStopping = false;
+
     state.value = "listening";
     currentTranscript.value = "";
     currentResponse.value = "";
 
-    // 랜덤 사용자 메시지 선택
-    const randomUserMessage = sampleUserMessages[Math.floor(Math.random() * sampleUserMessages.length)];
+    const speechWindow = window as Window & {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
 
-    // 사용자가 말하는 것처럼 타이핑 효과
-    typeText(randomUserMessage, currentTranscript, () => {
-      // 타이핑 완료 후 잠시 대기
-      pauseTimer = window.setTimeout(() => {
-        // 사용자 메시지 추가
-        messages.value.push({
-          id: generateId(),
-          role: "user",
-          content: randomUserMessage,
-          timestamp: new Date()
-        });
+    const SpeechRecognition =
+      speechWindow.SpeechRecognition ||
+      speechWindow.webkitSpeechRecognition;
 
-        startProcessing();
-      }, 960);
-    });
+    if (!SpeechRecognition) {
+      console.error("SpeechRecognition not supported");
+      state.value = "idle";
+      return;
+    }
 
-    // 최대 listening 시간 (타임아웃)
-    listeningTimer = window.setTimeout(() => {
-      if (state.value === "listening") {
-        startProcessing();
-      }
-    }, 9600);
-  };
+    recognition = new SpeechRecognition();
+    recognition.lang = "ko-KR";
+    recognition.interimResults = false;
+    recognition.continuous = false;
 
-  const startProcessing = () => {
-    resetTimers();
-    state.value = "processing";
-    currentTranscript.value = "";
+    recognition.onresult = async (event) => {
+      console.log("STT onresult fired");
+      const transcript = event.results[0][0].transcript;
+      console.log("STT transcript:", transcript);
 
-    // AI가 생각 중인 시간
-    processingTimer = window.setTimeout(() => {
-      startSpeaking();
-    }, 1800);
-  };
+      currentTranscript.value = transcript;
 
-  const startSpeaking = () => {
-    state.value = "speaking";
-
-    // 랜덤 AI 응답 선택
-    const randomResponse = sampleResponses[Math.floor(Math.random() * sampleResponses.length)];
-
-    // AI 응답 타이핑 효과
-    typeText(randomResponse, currentResponse, () => {
-      // 응답 완료 후 메시지 추가
       messages.value.push({
         id: generateId(),
-        role: "assistant",
-        content: randomResponse,
-        timestamp: new Date()
+        role: "user",
+        content: transcript,
+        timestamp: new Date(),
       });
 
-      // 잠시 후 idle 상태로
-      setTimeout(() => {
-        finishSpeaking();
-      }, 1200);
+      await startProcessing(transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error("STT error", event);
+      recognition = null;
+      state.value = "idle";
+    };
+
+    recognition.onend = () => {
+      console.log("STT ended");
+      recognition = null;
+
+      if (state.value === "listening" && !isRecognitionStopping) {
+        state.value = "idle";
+      }
+
+      isRecognitionStopping = false;
+    };
+
+    console.log("SpeechRecognition start");
+
+    recognition.start();
+
+    listeningTimer = window.setTimeout(() => {
+      stopRecognition();
+      state.value = "idle";
+    }, 10000);
+  };
+
+  // 백엔드 호출 단계
+  const startProcessing = async (userText: string) => {
+    resetTimers();
+    stopRecognition();
+    state.value = "processing";
+    currentTranscript.value = "";
+    console.log("CALL /chat", userText);
+
+    try {
+      const res = await sendChat(
+        userText,
+        {
+          stage: "경도 인지 저하 의심",
+          main_region: "해마",
+          risk_level: "중간",
+          trend: "최근 6개월간 소폭 저하",
+          recommended_training: ["단어 회상"],
+        },
+        null
+      );
+
+      startSpeaking(res.response);
+    } catch {
+      state.value = "idle";
+    }
+  };
+
+  // 음성 출력 단계
+  const startSpeaking = (responseText: string) => {
+    state.value = "speaking";
+    currentResponse.value = responseText;
+
+    messages.value.push({
+      id: generateId(),
+      role: "assistant",
+      content: responseText,
+      timestamp: new Date(),
     });
+
+    const utterance = new SpeechSynthesisUtterance(responseText);
+    utterance.lang = "ko-KR";
+    utterance.rate = 0.9;
+
+    utterance.onend = () => {
+      finishSpeaking();
+    };
+
+    speechSynthesis.speak(utterance);
   };
 
   const finishSpeaking = () => {
@@ -165,6 +213,7 @@ export function useVoiceSession() {
 
   const resetSession = () => {
     resetTimers();
+    stopRecognition();
     state.value = "idle";
     messages.value = [];
     currentTranscript.value = "";
@@ -174,41 +223,10 @@ export function useVoiceSession() {
   };
 
   const stopListening = () => {
-    if (state.value === "listening") {
-      resetTimers();
-      if (currentTranscript.value) {
-        messages.value.push({
-          id: generateId(),
-          role: "user",
-          content: currentTranscript.value,
-          timestamp: new Date()
-        });
-        startProcessing();
-      } else {
-        state.value = "idle";
-      }
-    }
-  };
-
-  // 텍스트 메시지 직접 전송
-  const sendTextMessage = (text: string) => {
-    if (!text.trim()) return;
-
-    startSession();
-
-    messages.value.push({
-      id: generateId(),
-      role: "user",
-      content: text.trim(),
-      timestamp: new Date()
-    });
-
-    state.value = "processing";
-    currentTranscript.value = "";
-
-    processingTimer = window.setTimeout(() => {
-      startSpeaking();
-    }, 1800);
+    if (state.value !== "listening") return;
+    resetTimers();
+    stopRecognition();
+    state.value = "idle";
   };
 
   return {
@@ -224,13 +242,11 @@ export function useVoiceSession() {
     isListening,
     isProcessing,
     isSpeaking,
-    hasMessages,
 
     // Actions
     startListening,
     stopListening,
     finishSpeaking,
     resetSession,
-    sendTextMessage,
   };
 }

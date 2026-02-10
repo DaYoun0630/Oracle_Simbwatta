@@ -28,6 +28,7 @@ const slides = [
 ];
 
 const currentIndex = ref(0);
+const isOffline = ref(!navigator.onLine);
 
 const slideTrackStyle = computed(() => ({
   transform: `translateX(-${currentIndex.value * 100}%)`
@@ -49,13 +50,34 @@ const stopAutoSlide = () => {
 };
 
 const startService = () => {
+  if (isOffline.value) {
+    window.alert("네트워크 연결을 확인한 뒤 다시 시도해주세요.");
+    return;
+  }
+
   // 기존 세션을 초기화하고 역할 선택으로 이동
   authStore.clear();
-  router.push("/select-role");
+  router.push({ name: "select-role" }).catch((error) => {
+    console.error("Failed to navigate to role selection:", error);
+    window.location.assign("/select-role");
+  });
 };
 
-onMounted(startAutoSlide);
-onUnmounted(stopAutoSlide);
+const syncNetworkState = () => {
+  isOffline.value = !navigator.onLine;
+};
+
+onMounted(() => {
+  startAutoSlide();
+  window.addEventListener("online", syncNetworkState);
+  window.addEventListener("offline", syncNetworkState);
+});
+
+onUnmounted(() => {
+  stopAutoSlide();
+  window.removeEventListener("online", syncNetworkState);
+  window.removeEventListener("offline", syncNetworkState);
+});
 </script>
 
 <template>
@@ -137,7 +159,9 @@ onUnmounted(stopAutoSlide);
           ></span>
         </div>
 
-        <button class="cta-button" @click="startService">서비스 시작하기</button>
+        <button class="cta-button" :disabled="isOffline" @click="startService">
+          {{ isOffline ? "네트워크 연결 필요" : "서비스 시작하기" }}
+        </button>
       </div>
     </div>
   </div>
@@ -151,19 +175,18 @@ onUnmounted(stopAutoSlide);
 
 .landing-viewport {
   width: 100%;
-  min-height: 100vh;
-  height: auto;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #f5f6f7;
-  padding: clamp(16px, 3vmin, 32px);
+  padding: clamp(12px, 2.6vmin, 32px);
   overflow-y: auto;
 }
 
 .landing {
-  width: 100%;
-  max-width: 720px;
+  width: min(100%, 860px);
+  min-height: min(calc(100dvh - clamp(24px, 5vmin, 64px)), 844px);
   background: transparent;
   padding: clamp(16px, 3vmin, 28px);
   display: grid;
@@ -178,6 +201,7 @@ onUnmounted(stopAutoSlide);
 .hero {
   display: grid;
   gap: clamp(8px, 2vmin, 12px);
+  padding-inline: 4px;
 }
 
 .service-badge {
@@ -337,6 +361,12 @@ onUnmounted(stopAutoSlide);
   box-shadow: 0 8px 16px rgba(76, 183, 183, 0.25);
 }
 
+.cta-button:disabled {
+  background: #9fbcbc;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
 .pictogram-voice .pg-ring {
   fill: none;
   stroke: rgba(76, 183, 183, 0.45);
@@ -482,6 +512,56 @@ onUnmounted(stopAutoSlide);
 @media (max-width: 480px) {
   .landing-viewport {
     align-items: flex-start;
+    padding-top: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .landing {
+    width: min(100%, 390px);
+    min-height: min(calc(100dvh - 24px), 844px);
+    padding: 16px 14px 18px;
+    gap: 12px;
+  }
+
+  .hero {
+    padding-inline: 8px;
+  }
+
+  .carousel {
+    min-height: clamp(320px, 44vh, 420px);
+  }
+}
+
+@media (min-width: 1024px) {
+  .landing {
+    width: min(100%, 1120px);
+    min-height: min(calc(100dvh - 64px), 860px);
+    grid-template-columns: minmax(320px, 1fr) minmax(380px, 1.15fr);
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "hero carousel"
+      "footer footer";
+    column-gap: clamp(24px, 4vw, 52px);
+    row-gap: clamp(14px, 2.2vh, 24px);
+    align-items: stretch;
+  }
+
+  .hero {
+    grid-area: hero;
+    align-content: center;
+  }
+
+  .carousel {
+    grid-area: carousel;
+    min-height: 0;
+  }
+
+  .footer {
+    grid-area: footer;
+    width: min(100%, 560px);
+    margin: 0 auto;
   }
 }
 </style>

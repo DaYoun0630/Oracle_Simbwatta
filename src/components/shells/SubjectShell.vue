@@ -9,6 +9,10 @@ const props = defineProps({
     type: String,
     default: '홈'
   },
+  showMenuButton: {
+    type: Boolean,
+    default: false
+  },
   showHomeButton: {
     type: Boolean,
     default: false
@@ -28,6 +32,11 @@ const goHome = () => {
   router.push({ name: 'home' });
 };
 
+const goSettings = () => {
+  if (router.currentRoute.value.name === 'settings') return;
+  router.push({ name: 'settings' });
+};
+
 watch(fontScale, (value) => {
   const map = { small: '15px', medium: '16px', large: '18px' };
   document.documentElement.style.fontSize = map[value] || '16px';
@@ -40,8 +49,9 @@ watch(fontScale, (value) => {
     <AppHeader
       :title="props.title"
       :showBackButton="true"
-      :showMenuButton="false"
+      :showMenuButton="props.showMenuButton"
       @back="goBack"
+      @menu="goSettings"
     />
 
     <div class="content">
