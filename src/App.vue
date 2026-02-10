@@ -19,7 +19,7 @@ html, body {
   padding: 0;
   width: 100%;
   height: 100%;
-  background-color: #f5f6f7;
+  background-color: #f4f7f8;
   overflow-x: hidden;
 }
 
@@ -28,6 +28,6 @@ html, body {
   padding: 0;
   width: 100%;
   min-height: 100vh;
-  background-color: #f5f6f7;
+  background-color: #f4f7f8;
 }
 </style>

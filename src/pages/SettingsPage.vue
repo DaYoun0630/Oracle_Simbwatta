@@ -18,16 +18,10 @@ const roleLabel = computed(() => {
 });
 
 const goToPersonalInfo = () => {
-  if (role.value === 'doctor') {
-    return router.push({ name: 'doctor-profile-edit' });
-  }
   router.push({ name: 'personal-info' });
 };
 
 const goToNotifications = () => {
-  if (role.value === 'doctor') {
-    return router.push({ name: 'doctor-notification' });
-  }
   router.push({ name: 'notification-settings' });
 };
 

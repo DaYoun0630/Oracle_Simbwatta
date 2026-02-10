@@ -16,7 +16,7 @@ const router = useRouter();
     <AppHeader
       :title="title"
       :showBackButton="showBack"
-      :showMenuButton="false"
+      :showMenuButton="showMenu"
       @back="router.back()"
     />
 
@@ -28,20 +28,26 @@ const router = useRouter();
 
 <style scoped>
 .app-shell {
+  --shell-max-width: 520px;
+  --shell-gutter: clamp(14px, 4vw, 20px);
   min-height: 100vh;
-  background-color: #f5f6f7;
+  background-color: #f4f7f8;
   display: flex;
   flex-direction: column;
 }
 
 .main-content {
   flex: 1;
-  max-width: 460px;
+  width: min(100%, var(--shell-max-width));
   margin: 0 auto;
-  padding: 16px 20px 20px;
-  width: 100%;
+  padding: 8px var(--shell-gutter) 24px;
   box-sizing: border-box;
 }
 
-
+@media (min-width: 900px) {
+  .app-shell {
+    --shell-max-width: 760px;
+    --shell-gutter: 24px;
+  }
+}
 </style>

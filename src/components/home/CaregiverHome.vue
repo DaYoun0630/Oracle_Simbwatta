@@ -235,10 +235,11 @@ const statusIconPath = computed(() => {
 .caregiver-home-container {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100%;
-  overflow: hidden;
-  justify-content: space-between;
+  gap: 20px;
+  min-height: 100%;
+  overflow: visible;
+  justify-content: flex-start;
+  padding-bottom: 12px;
 }
 
 .loading {
@@ -262,10 +263,11 @@ const statusIconPath = computed(() => {
 }
 
 .hero-card {
-  background: #f5f6f7;
+  background: #f4f7f8;
   padding: 20px 20px 18px;
-  border-radius: 32px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  border-radius: 24px;
+  border: 1px solid rgba(46, 46, 46, 0.04);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -303,6 +305,7 @@ const statusIconPath = computed(() => {
   background: #e6f3f3;
   color: #1f5f5f;
   white-space: nowrap;
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.08), inset -2px -2px 4px rgba(255, 255, 255, 0.9);
 }
 
 .status-pill.stable {
@@ -325,7 +328,6 @@ const statusIconPath = computed(() => {
   height: 10px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 8px currentColor;
 }
 
 .hero-body {
@@ -340,10 +342,11 @@ const statusIconPath = computed(() => {
   height: 92px;
   border-radius: 24px;
   background: #ffffff;
+  border: 1px solid rgba(46, 46, 46, 0.06);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 6px 6px 12px rgba(209, 217, 230, 0.7), inset -6px -6px 12px #ffffff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
 }
 
 .status-visual svg {
@@ -384,12 +387,13 @@ const statusIconPath = computed(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 20px;
+  border-radius: 999px;
   background: #ffffff;
+  border: 1px solid rgba(46, 46, 46, 0.06);
   font-size: 18px;
   font-weight: 700;
   color: #2e2e2e;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 .emotion-icon {
@@ -413,15 +417,15 @@ const statusIconPath = computed(() => {
 }
 
 .trend-card {
-  background: #f5f6f7;
+  background: #f4f7f8;
   padding: 20px 20px 16px;
-  border-radius: 32px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  border-radius: 24px;
+  border: 1px solid rgba(46, 46, 46, 0.04);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  flex: 1;
-  min-height: 0;
+  flex: none;
 }
 
 .trend-header {
@@ -469,15 +473,17 @@ const statusIconPath = computed(() => {
 .quick-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
+  align-items: stretch;
 }
 
 .action-card {
   border: none;
-  background: #f5f6f7;
+  background: #f4f7f8;
   padding: 16px 12px;
   border-radius: 24px;
-  box-shadow: 10px 10px 20px #cfd6df, -10px -10px 20px #ffffff;
+  border: 1px solid rgba(46, 46, 46, 0.04);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -486,6 +492,8 @@ const statusIconPath = computed(() => {
   cursor: pointer;
   min-height: 150px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .action-card:disabled {
@@ -502,10 +510,11 @@ const statusIconPath = computed(() => {
   height: 64px;
   border-radius: 18px;
   background: #ffffff;
+  border: 1px solid rgba(46, 46, 46, 0.06);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 .action-icon svg {

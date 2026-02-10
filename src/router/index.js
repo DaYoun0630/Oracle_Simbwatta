@@ -79,15 +79,11 @@ const routes = [
   },
   {
     path: "/doctor-settings/profile",
-    name: "doctor-profile-edit",
-    component: () => import("../pages/DoctorProfileEdit.vue"),
-    meta: { requiresAuth: true, roles: ["doctor"] }
+    redirect: { name: "doctor-settings" }
   },
   {
     path: "/doctor-settings/notifications",
-    name: "doctor-notification",
-    component: () => import("../pages/DoctorNotification.vue"),
-    meta: { requiresAuth: true, roles: ["doctor"] }
+    redirect: { name: "doctor-settings" }
   },
   {
     path: "/settings/personal-info",
