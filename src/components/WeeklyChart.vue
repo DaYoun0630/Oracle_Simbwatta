@@ -61,7 +61,7 @@ const handlePointClick = (index: number) => {
           <stop offset="100%" stop-color="#7fd4d4" />
         </linearGradient>
         <linearGradient :id="`${gradientId}-area`" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="rgba(76, 183, 183, 0.35)" />
+          <stop offset="0%" stop-color="rgba(76, 183, 183, 0.42)" />
           <stop offset="100%" stop-color="rgba(76, 183, 183, 0)" />
         </linearGradient>
       </defs>

@@ -197,11 +197,37 @@ const observationLabel = (type: string) => {
 
 <style scoped>
 .history-container {
+  --card-surface: #f7f9fa;
+  --card-elevation-main:
+    0 10px 22px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.11),
+    0 1px 3px rgba(126, 140, 154, 0.06);
+  --card-elevation-sub:
+    0 8px 16px rgba(126, 140, 154, 0.14),
+    0 2px 6px rgba(126, 140, 154, 0.1);
+  --card-elevation-icon:
+    0 10px 18px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --card-elevation-hover:
+    0 11px 20px rgba(126, 140, 154, 0.16),
+    0 4px 10px rgba(126, 140, 154, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  height: 100%;
-  overflow: hidden;
+  gap: 24px;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100%;
+  overflow: visible;
+  padding-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.trend-card,
+.insight-card,
+.log-card {
+  width: 100%;
+  min-width: 0;
 }
 
 .loading {
@@ -214,7 +240,7 @@ const observationLabel = (type: string) => {
 .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #e0e5ec;
+  border: 4px solid #d9e0e3;
   border-top-color: #4cb7b7;
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -225,10 +251,10 @@ const observationLabel = (type: string) => {
 }
 
 .trend-card {
-  background: #f5f6f7;
-  padding: 20px 20px 16px;
-  border-radius: 32px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  background: var(--card-surface);
+  padding: 20px;
+  border-radius: 24px;
+  box-shadow: var(--card-elevation-main);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -238,6 +264,10 @@ const observationLabel = (type: string) => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.section-header > div {
+  min-width: 0;
 }
 
 .mint-dot {
@@ -255,7 +285,7 @@ const observationLabel = (type: string) => {
 
 .section-sub {
   margin: 4px 0 0;
-  font-size: 18px;
+  font-size: 16px;
   color: #666;
 }
 
@@ -269,7 +299,7 @@ const observationLabel = (type: string) => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   color: #555;
 }
@@ -278,11 +308,11 @@ const observationLabel = (type: string) => {
   width: 28px;
   height: 28px;
   border-radius: 10px;
-  background: #ffffff;
+  background: #f9fbfb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 3px 3px 8px rgba(209, 217, 230, 0.6), inset -3px -3px 8px #ffffff;
+  box-shadow: var(--card-elevation-icon);
 }
 
 .legend-icon svg {
@@ -304,10 +334,10 @@ const observationLabel = (type: string) => {
 }
 
 .insight-card {
-  background: #ffffff;
+  background: var(--card-surface);
   padding: 18px 20px;
-  border-radius: 28px;
-  box-shadow: 10px 10px 20px #d1d9e6, -10px -10px 20px #ffffff;
+  border-radius: 24px;
+  box-shadow: var(--card-elevation-main);
   display: grid;
   gap: 8px;
 }
@@ -320,21 +350,19 @@ const observationLabel = (type: string) => {
 
 .insight-card p {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
   color: #4d4d4d;
   line-height: 1.5;
 }
 
 .log-card {
-  background: #f5f6f7;
+  background: var(--card-surface);
   padding: 18px 20px;
-  border-radius: 32px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  border-radius: 24px;
+  box-shadow: var(--card-elevation-main);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex: 1;
-  min-height: 0;
 }
 
 .log-header {
@@ -352,12 +380,12 @@ const observationLabel = (type: string) => {
 
 .date-chip {
   padding: 8px 14px;
-  border-radius: 18px;
-  font-size: 18px;
+  border-radius: 999px;
+  font-size: 15px;
   font-weight: 800;
-  background: #ffffff;
+  background: #e6f2f1;
   color: #4cb7b7;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.08), inset -2px -2px 4px rgba(255, 255, 255, 0.9);
 }
 
 .log-detail {
@@ -366,20 +394,20 @@ const observationLabel = (type: string) => {
   gap: 16px;
   align-items: center;
   padding: 16px;
-  border-radius: 22px;
-  background: #ffffff;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  border-radius: 18px;
+  background: #f9fbfb;
+  box-shadow: var(--card-elevation-sub);
 }
 
 .log-icon {
   width: 64px;
   height: 64px;
   border-radius: 18px;
-  background: #f5f6f7;
+  background: #f9fbfb;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  box-shadow: var(--card-elevation-icon);
 }
 
 .log-icon svg {
@@ -411,12 +439,14 @@ const observationLabel = (type: string) => {
 .log-text {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .log-title {
   margin: 0;
   font-size: 20px;
   font-weight: 900;
+  overflow-wrap: anywhere;
 }
 
 .log-desc {
@@ -424,48 +454,58 @@ const observationLabel = (type: string) => {
   font-size: 18px;
   color: #555;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .log-empty {
   padding: 16px;
-  font-size: 18px;
+  font-size: 15px;
   color: #777;
-  background: #ffffff;
-  border-radius: 22px;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  background: #f9fbfb;
+  border-radius: 18px;
+  box-shadow: var(--card-elevation-sub);
 }
 
 .log-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  max-height: 320px;
   overflow: auto;
-  padding-right: 4px;
+  padding-right: 2px;
 }
 
 .log-item {
   border: none;
-  background: #ffffff;
+  background: #f9fbfb;
   padding: 12px 14px;
-  border-radius: 20px;
+  border-radius: 16px;
   display: grid;
   grid-template-columns: auto auto 1fr;
   align-items: center;
   gap: 10px;
-  font-size: 18px;
+  font-size: 15px;
   cursor: pointer;
-  box-shadow: 6px 6px 12px #d1d9e6, -6px -6px 12px #ffffff;
+  box-shadow: var(--card-elevation-sub);
   text-align: left;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.log-item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--card-elevation-hover);
 }
 
 .log-item.active {
-  outline: 2px solid rgba(76, 183, 183, 0.6);
+  box-shadow:
+    0 0 0 2px rgba(76, 183, 183, 0.16),
+    var(--card-elevation-hover);
 }
 
 .log-badge {
   padding: 6px 10px;
   border-radius: 12px;
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 800;
   color: #4cb7b7;
   background: rgba(76, 183, 183, 0.15);
@@ -487,7 +527,7 @@ const observationLabel = (type: string) => {
 }
 
 .log-date {
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 700;
   color: #777;
 }
@@ -495,5 +535,51 @@ const observationLabel = (type: string) => {
 .log-summary {
   font-weight: 800;
   color: #2e2e2e;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .trend-card,
+  .insight-card,
+  .log-card {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .section-header h3,
+  .log-header h4 {
+    font-size: 19px;
+  }
+
+  .section-sub,
+  .insight-card p {
+    font-size: 15px;
+  }
+
+  .log-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .log-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .log-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+  }
+
+  .log-icon svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .log-item {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
 }
 </style>

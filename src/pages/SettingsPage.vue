@@ -116,9 +116,21 @@ onMounted(() => {
 
 <style scoped>
 .settings-container {
+  --card-surface: #f7f9fa;
+  --card-elevation-main:
+    0 10px 22px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.11),
+    0 1px 3px rgba(126, 140, 154, 0.06);
+  --card-elevation-icon:
+    0 10px 18px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --card-elevation-hover:
+    0 11px 20px rgba(126, 140, 154, 0.16),
+    0 4px 10px rgba(126, 140, 154, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 28px;
   min-height: calc(100vh - 200px);
 }
 
@@ -126,18 +138,18 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 20px;
-  background: #ffffff;
+  background: var(--card-surface);
   padding: 24px;
   border-radius: 28px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  box-shadow: var(--card-elevation-main);
 }
 
 .avatar-placeholder {
   width: 72px;
   height: 72px;
-  background: #e0e5ec;
+  background: #f9fbfb;
   border-radius: 50%;
-  box-shadow: inset 4px 4px 10px #d1d9e6, inset -4px -4px 10px #ffffff;
+  box-shadow: var(--card-elevation-icon);
 }
 
 .details h2 {
@@ -157,7 +169,7 @@ onMounted(() => {
 .settings-cards {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
 .settings-card {
@@ -168,15 +180,20 @@ onMounted(() => {
   padding: 24px;
   border: none;
   border-radius: 28px;
-  background: #f5f6f7;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  background: var(--card-surface);
+  box-shadow: var(--card-elevation-main);
   cursor: pointer;
-  transition: transform 0.2s;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
   text-align: left;
 }
 
 .settings-card:active {
-  transform: scale(0.98);
+  transform: translateY(1px);
+}
+
+.settings-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--card-elevation-hover);
 }
 
 .card-icon {
@@ -184,9 +201,8 @@ onMounted(() => {
   height: 64px;
   min-width: 64px;
   border-radius: 20px;
-  background: #ffffff;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6),
-              inset -4px -4px 10px #ffffff;
+  background: #f9fbfb;
+  box-shadow: var(--card-elevation-icon);
   display: flex;
   align-items: center;
   justify-content: center;

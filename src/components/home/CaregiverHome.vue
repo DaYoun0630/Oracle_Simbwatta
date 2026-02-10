@@ -88,15 +88,6 @@ const quickActions = computed(() => {
       action: 'history',
     },
     {
-      id: 'trend',
-      title: '상태 흐름',
-      value: trendBadgeText.value,
-      desc: '대화 리듬 요약',
-      icon: 'trend',
-      tone: data.value.weeklyTrend.trend === 'down' ? 'alert' : 'mint',
-      action: null,
-    },
-    {
       id: 'recent',
       title: '최근 대화',
       value: lastChatText.value,
@@ -233,9 +224,24 @@ const statusIconPath = computed(() => {
 
 <style scoped>
 .caregiver-home-container {
+  --card-surface: #f7f9fa;
+  --card-elevation-main:
+    0 10px 22px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.11),
+    0 1px 3px rgba(126, 140, 154, 0.06);
+  --card-elevation-sub:
+    0 8px 16px rgba(126, 140, 154, 0.14),
+    0 2px 6px rgba(126, 140, 154, 0.1);
+  --card-elevation-icon:
+    0 10px 18px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --card-elevation-hover:
+    0 11px 20px rgba(126, 140, 154, 0.16),
+    0 4px 10px rgba(126, 140, 154, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
   min-height: 100%;
   overflow: visible;
   justify-content: flex-start;
@@ -263,11 +269,10 @@ const statusIconPath = computed(() => {
 }
 
 .hero-card {
-  background: #f4f7f8;
+  background: var(--card-surface);
   padding: 20px 20px 18px;
   border-radius: 24px;
-  border: 1px solid rgba(46, 46, 46, 0.04);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--card-elevation-main);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -341,12 +346,11 @@ const statusIconPath = computed(() => {
   width: 92px;
   height: 92px;
   border-radius: 24px;
-  background: #ffffff;
-  border: 1px solid rgba(46, 46, 46, 0.06);
+  background: #f9fbfb;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--card-elevation-icon);
 }
 
 .status-visual svg {
@@ -388,12 +392,11 @@ const statusIconPath = computed(() => {
   gap: 10px;
   padding: 10px 14px;
   border-radius: 999px;
-  background: #ffffff;
-  border: 1px solid rgba(46, 46, 46, 0.06);
+  background: #f8fafb;
   font-size: 18px;
   font-weight: 700;
   color: #2e2e2e;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--card-elevation-sub);
 }
 
 .emotion-icon {
@@ -417,11 +420,10 @@ const statusIconPath = computed(() => {
 }
 
 .trend-card {
-  background: #f4f7f8;
+  background: var(--card-surface);
   padding: 20px 20px 16px;
   border-radius: 24px;
-  border: 1px solid rgba(46, 46, 46, 0.04);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--card-elevation-main);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -472,18 +474,17 @@ const statusIconPath = computed(() => {
 
 .quick-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
   align-items: stretch;
 }
 
 .action-card {
   border: none;
-  background: #f4f7f8;
+  background: var(--card-surface);
   padding: 16px 12px;
   border-radius: 24px;
-  border: 1px solid rgba(46, 46, 46, 0.04);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--card-elevation-sub);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -491,30 +492,34 @@ const statusIconPath = computed(() => {
   text-align: center;
   cursor: pointer;
   min-height: 150px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
   overflow: hidden;
   min-width: 0;
 }
 
 .action-card:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.76;
 }
 
 .action-card:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.995);
+}
+
+.action-card:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--card-elevation-hover);
 }
 
 .action-icon {
   width: 64px;
   height: 64px;
   border-radius: 18px;
-  background: #ffffff;
-  border: 1px solid rgba(46, 46, 46, 0.06);
+  background: #f9fbfb;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--card-elevation-icon);
 }
 
 .action-icon svg {
