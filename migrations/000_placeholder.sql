@@ -1,2 +1,0 @@
--- Placeholder migration file.
--- Replace with real schema when ready.

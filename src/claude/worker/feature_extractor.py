@@ -7,11 +7,11 @@ Extracts 1561 features from audio files:
 - ~25 linguistic features (Kiwi Korean NLP)
 """
 
-import os
 import logging
 import numpy as np
 import torch
 import librosa
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -244,12 +244,13 @@ def extract_linguistic_features(transcript: str) -> tuple[np.ndarray, dict]:
     return feature_vector, detail
 
 
-def extract_all_features(file_path: str) -> tuple[str, np.ndarray, dict]:
+def extract_all_features(file_path: str, transcript: Optional[str] = None) -> tuple[str, np.ndarray, dict]:
     """
     Full feature extraction pipeline.
 
     Args:
         file_path: Path to audio file (wav, mp3, etc.)
+        transcript: Optional precomputed transcript. If provided, STT is skipped.
 
     Returns:
         transcript: Korean text transcription
@@ -262,8 +263,12 @@ def extract_all_features(file_path: str) -> tuple[str, np.ndarray, dict]:
     audio, sr = load_audio(file_path)
     logger.info(f"Audio loaded: {len(audio)/sr:.1f}s duration")
 
-    # Step 2: Transcribe with Whisper
-    transcript = transcribe(audio, sr)
+    # Step 2: Transcribe with Whisper (unless transcript is already available)
+    if transcript is not None and transcript.strip():
+        transcript = transcript.strip()
+        logger.info("Using provided transcript from upstream STT")
+    else:
+        transcript = transcribe(audio, sr)
 
     # Step 3: Extract audio embeddings (wav2vec2)
     audio_emb = extract_audio_embeddings(audio, sr)  # (768,)
@@ -279,3 +284,13 @@ def extract_all_features(file_path: str) -> tuple[str, np.ndarray, dict]:
     logger.info(f"Combined features: {features.shape} (expected 1561)")
 
     return transcript, features, ling_detail
+
+
+def extract_features_after_stt(file_path: str, transcript: str) -> tuple[str, np.ndarray, dict]:
+    """
+    STT-first path for the API/chatbot flow.
+
+    The caller provides transcript text, and this function runs the rest of the
+    pipeline (audio embeddings + text embeddings + linguistic features).
+    """
+    return extract_all_features(file_path=file_path, transcript=transcript)

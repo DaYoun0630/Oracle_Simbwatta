@@ -65,10 +65,11 @@ async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
     await manager.connect(patient_id, websocket)
     audio_buffer = BytesIO()
     session_id = None
+    transcript_hints: List[str] = []
 
     try:
         # Verify patient exists
-        patient = await db.fetchrow("SELECT * FROM patients WHERE id = $1", patient_id)
+        patient = await db.fetchrow("SELECT * FROM patients WHERE user_id = $1", patient_id)
         if not patient:
             await websocket.send_json({"error": "Patient not found"})
             await websocket.close()
@@ -86,32 +87,36 @@ async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
             # Text frame: JSON chat message
             if "text" in message and message["text"]:
                 import json as _json
-                data = _json.loads(message["text"])
+                try:
+                    data = _json.loads(message["text"])
+                except Exception:
+                    await websocket.send_json({"error": "Invalid JSON message"})
+                    continue
+
                 user_message = data.get("message", "")
                 session_id = data.get("session_id", session_id)
+                provided_transcript = data.get("transcript")
 
                 if not user_message:
                     await websocket.send_json({"error": "Empty message"})
                     continue
 
+                if isinstance(provided_transcript, str) and provided_transcript.strip():
+                    transcript_hints.append(provided_transcript.strip())
+                elif user_message.strip():
+                    # Fallback transcript hint: text chat payload itself.
+                    transcript_hints.append(user_message.strip())
+
                 # Create session if needed
                 if not session_id:
                     session_id = str(uuid4())
                     await db.execute("""
-                        INSERT INTO training_sessions (id, patient_id, started_at)
-                        VALUES ($1, $2, $3)
-                    """, session_id, patient_id, datetime.utcnow())
+                        INSERT INTO training_sessions (training_id, patient_id, started_at, exercise_type)
+                        VALUES ($1, $2, $3, $4)
+                    """, session_id, patient_id, datetime.utcnow(), "chat")
 
                 # TODO: Call LLM service (OpenAI GPT-4o-mini with Korean optimization)
                 llm_response = f"Echo: {user_message}"
-
-                # Save messages to audit log
-                await db.execute("""
-                    INSERT INTO audit_logs (id, user_id, action, details, created_at)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, str(uuid4()), patient_id, "chat_message",
-                   {"session_id": session_id, "message": user_message, "response": llm_response},
-                   datetime.utcnow())
 
                 # Send response
                 await websocket.send_json({
@@ -127,7 +132,7 @@ async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
         # Close training session
         if session_id:
             await db.execute("""
-                UPDATE training_sessions SET ended_at = $1 WHERE id = $2
+                UPDATE training_sessions SET ended_at = $1 WHERE training_id = $2
             """, now, session_id)
 
         # Auto-save audio and trigger ML pipeline
@@ -135,6 +140,19 @@ async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
         if audio_size > 0:
             recording_id = str(uuid4())
             object_name = f"{patient_id}/{recording_id}.wav"
+            if not session_id:
+                session_id = str(uuid4())
+                await db.execute(
+                    """
+                    INSERT INTO training_sessions (training_id, patient_id, started_at, ended_at, exercise_type)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    session_id,
+                    patient_id,
+                    now,
+                    now,
+                    "chat",
+                )
 
             # Save audio buffer to MinIO
             try:
@@ -146,29 +164,27 @@ async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
                     length=audio_size,
                     content_type="audio/wav",
                 )
+                storage_path = f"voice-recordings/{object_name}"
+                merged_transcript = " ".join(t for t in transcript_hints if t).strip()
+                if not merged_transcript:
+                    raise ValueError("Transcript is required for voice processing")
 
                 # Create recording entry in DB
                 await db.execute("""
                     INSERT INTO recordings
-                        (id, patient_id, session_id, audio_path,
-                         file_size_bytes, format, recorded_at, status)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """, recording_id, patient_id, session_id, object_name,
-                   audio_size, "wav", now, "processing")
+                        (recording_id, training_id, patient_id, file_path,
+                         file_size_bytes, format, recorded_at, uploaded_at, status,
+                         transcription, exercise_type, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            """, recording_id, session_id, patient_id, storage_path,
+               audio_size, "wav", now, now, "pending", merged_transcript, "chat", now)
 
                 # Dispatch Celery ML task
                 celery_app.send_task(
                     "process_voice_recording",
-                    args=[recording_id, patient_id, object_name],
+                    args=[recording_id, patient_id, storage_path],
+                    kwargs={"transcript": merged_transcript},
                 )
-
-                # Log the auto-recording
-                await db.execute("""
-                    INSERT INTO audit_logs (id, user_id, action, details, created_at)
-                    VALUES ($1, $2, $3, $4, $5)
-                """, str(uuid4()), patient_id, "auto_recording",
-                   {"recording_id": recording_id, "size_bytes": audio_size,
-                    "session_id": session_id}, now)
 
             except Exception as e:
                 import logging
@@ -193,9 +209,11 @@ async def list_exercises(patient_id: str = Query(...)):
     Get list of cognitive training exercises for the patient.
     Returns exercises based on patient's MCI stage.
     """
-    patient = await db.fetchrow("SELECT * FROM patients WHERE id = $1", patient_id)
+    patient = await db.fetchrow("SELECT * FROM patients WHERE user_id = $1", patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+
+    stage_hint = patient["risk_level"] or "unknown"
 
     # TODO: Return exercises based on MCI stage and Korean NLP optimization
     # For now, return static list
@@ -205,7 +223,7 @@ async def list_exercises(patient_id: str = Query(...)):
             "title": "기억력 훈련 - 단어 기억하기",
             "description": "제시된 단어들을 기억하고 순서대로 말해보세요.",
             "type": "memory",
-            "difficulty": "easy" if patient["mci_stage"] in ["normal", "mild"] else "medium",
+            "difficulty": "easy" if stage_hint == "low" else "medium",
             "duration_minutes": 10
         },
         {
@@ -226,7 +244,7 @@ async def list_exercises(patient_id: str = Query(...)):
         }
     ]
 
-    return {"exercises": exercises, "patient_stage": patient["mci_stage"]}
+    return {"exercises": exercises, "patient_stage": stage_hint}
 
 
 # ============================================================================
@@ -236,14 +254,15 @@ async def list_exercises(patient_id: str = Query(...)):
 async def upload_recording(
     patient_id: str = Query(...),
     file: UploadFile = File(...),
-    description: str = Query(None)
+    description: str = Query(None),
+    transcript: str = Query(..., min_length=1),
 ):
     """
     Upload a voice recording for cognitive assessment.
     File will be stored in MinIO and queued for ML processing.
     """
     # Verify patient exists
-    patient = await db.fetchrow("SELECT * FROM patients WHERE id = $1", patient_id)
+    patient = await db.fetchrow("SELECT * FROM patients WHERE user_id = $1", patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -275,28 +294,51 @@ async def upload_recording(
 
     # Insert into database
     now = datetime.utcnow()
-    await db.execute("""
-        INSERT INTO recordings (id, patient_id, file_path, file_size, recording_date, description, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-    """, recording_id, patient_id, storage_path, len(content), now, description or "", now)
+    transcript = transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="transcript is required")
 
-    # TODO: Queue Celery task for ML processing (Whisper + wav2vec2 + BERT)
-
-    # Log action
-    await db.execute("""
-        INSERT INTO audit_logs (id, user_id, action, details, created_at)
+    training_id = str(uuid4())
+    await db.execute(
+        """
+        INSERT INTO training_sessions (training_id, patient_id, started_at, ended_at, exercise_type)
         VALUES ($1, $2, $3, $4, $5)
-    """, str(uuid4()), patient_id, "upload_recording",
-       {"recording_id": recording_id, "file_size": len(content)}, now)
+        """,
+        training_id,
+        patient_id,
+        now,
+        now,
+        "upload",
+    )
+    storage_path = f"voice-recordings/{object_name}"
+    await db.execute("""
+        INSERT INTO recordings (
+            recording_id, training_id, patient_id, file_path,
+            file_size_bytes, format, recorded_at, uploaded_at, status,
+            transcription, exercise_type, description, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    """, recording_id, training_id, patient_id, storage_path, len(content), file_extension, now, now, "pending",
+       transcript, "upload", description or "", now)
+
+    # Queue Celery task for transcript-first post-STT pipeline.
+    celery_app.send_task(
+        "process_voice_recording",
+        args=[recording_id, patient_id, storage_path],
+        kwargs={"transcript": transcript},
+    )
 
     return {
         "id": recording_id,
         "patient_id": patient_id,
-        "file_path": storage_path,
-        "file_size": len(content),
-        "recording_date": now,
-        "description": description or "",
-        "created_at": now
+        "session_id": training_id,
+        "audio_path": storage_path,
+        "duration_seconds": None,
+        "file_size_bytes": len(content),
+        "format": file_extension,
+        "recorded_at": now,
+        "uploaded_at": now,
+        "status": "pending",
     }
 
 
@@ -304,9 +346,20 @@ async def upload_recording(
 async def list_recordings(patient_id: str = Query(...), limit: int = Query(50, le=100)):
     """List all voice recordings for a patient."""
     rows = await db.fetch("""
-        SELECT * FROM recordings
+        SELECT
+            recording_id AS id,
+            patient_id,
+            training_id AS session_id,
+            file_path AS audio_path,
+            duration_seconds,
+            file_size_bytes,
+            format,
+            COALESCE(recorded_at, created_at) AS recorded_at,
+            COALESCE(uploaded_at, created_at) AS uploaded_at,
+            COALESCE(status, 'pending') AS status
+        FROM recordings
         WHERE patient_id = $1
-        ORDER BY recording_date DESC
+        ORDER BY COALESCE(recorded_at, created_at) DESC
         LIMIT $2
     """, patient_id, limit)
 
@@ -317,8 +370,19 @@ async def list_recordings(patient_id: str = Query(...), limit: int = Query(50, l
 async def get_recording(recording_id: str, patient_id: str = Query(...)):
     """Get details of a specific recording."""
     row = await db.fetchrow("""
-        SELECT * FROM recordings
-        WHERE id = $1 AND patient_id = $2
+        SELECT
+            recording_id AS id,
+            patient_id,
+            training_id AS session_id,
+            file_path AS audio_path,
+            duration_seconds,
+            file_size_bytes,
+            format,
+            COALESCE(recorded_at, created_at) AS recorded_at,
+            COALESCE(uploaded_at, created_at) AS uploaded_at,
+            COALESCE(status, 'pending') AS status
+        FROM recordings
+        WHERE recording_id = $1 AND patient_id = $2
     """, recording_id, patient_id)
 
     if not row:
@@ -337,7 +401,7 @@ async def get_progress(patient_id: str = Query(...)):
     Includes session count, total duration, recent activity, and trends.
     """
     # Verify patient
-    patient = await db.fetchrow("SELECT * FROM patients WHERE id = $1", patient_id)
+    patient = await db.fetchrow("SELECT * FROM patients WHERE user_id = $1", patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -353,7 +417,7 @@ async def get_progress(patient_id: str = Query(...)):
 
     # Get recent sessions
     recent_sessions = await db.fetch("""
-        SELECT id, started_at, ended_at
+        SELECT training_id AS id, started_at, ended_at
         FROM training_sessions
         WHERE patient_id = $1
         ORDER BY started_at DESC
@@ -363,20 +427,20 @@ async def get_progress(patient_id: str = Query(...)):
     # Get assessment count
     assessment_stats = await db.fetchrow("""
         SELECT
-            COUNT(DISTINCT va.id) as voice_assessments,
-            COUNT(DISTINCT ma.id) as mri_assessments
+            COUNT(DISTINCT va.assessment_id) as voice_assessments,
+            COUNT(DISTINCT ma.assessment_id) as mri_assessments
         FROM patients p
-        LEFT JOIN recordings r ON r.patient_id = p.id
-        LEFT JOIN voice_assessments va ON va.recording_id = r.id
-        LEFT JOIN mri_assessments ma ON ma.patient_id = p.id
-        WHERE p.id = $1
+        LEFT JOIN recordings r ON r.patient_id = p.user_id
+        LEFT JOIN voice_assessments va ON va.recording_id = r.recording_id
+        LEFT JOIN mri_assessments ma ON ma.patient_id = p.user_id
+        WHERE p.user_id = $1
     """, patient_id)
 
     stats = dict(sessions[0]) if sessions else {}
 
     return {
         "patient_id": patient_id,
-        "current_stage": patient["mci_stage"],
+        "current_stage": patient["risk_level"] or "unknown",
         "sessions": {
             "total": stats.get("total_sessions", 0),
             "completed": stats.get("completed_sessions", 0),
@@ -403,7 +467,7 @@ async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, 
     voice_assessments = await db.fetch("""
         SELECT va.*
         FROM voice_assessments va
-        JOIN recordings r ON va.recording_id = r.id
+        JOIN recordings r ON va.recording_id = r.recording_id
         WHERE r.patient_id = $1
         ORDER BY va.assessed_at DESC
         LIMIT $2
@@ -423,7 +487,7 @@ async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, 
     for va in voice_assessments:
         all_assessments.append({
             "type": "voice",
-            "id": va["id"],
+            "id": va["assessment_id"],
             "date": va["assessed_at"],
             "cognitive_score": va["cognitive_score"],
             "mci_probability": va["mci_probability"],
@@ -434,7 +498,7 @@ async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, 
     for ma in mri_assessments:
         all_assessments.append({
             "type": "mri",
-            "id": ma["id"],
+            "id": ma["assessment_id"],
             "date": ma["scan_date"] or ma["processed_at"],
             "classification": ma["classification"],
             "confidence": ma["confidence"],

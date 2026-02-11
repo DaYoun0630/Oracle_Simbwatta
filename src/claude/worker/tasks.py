@@ -11,6 +11,7 @@ import json
 import tempfile
 from datetime import datetime
 from uuid import uuid4
+from typing import Optional, Tuple
 
 from celery import Celery
 from celery.utils.log import get_task_logger
@@ -55,14 +56,43 @@ def _get_db_connection():
     return psycopg2.connect(db_url)
 
 
+def _resolve_bucket_and_key(file_path: str) -> Tuple[str, str]:
+    """
+    Accepts either:
+    - "voice-recordings/path/to/file.wav"
+    - "s3://voice-recordings/path/to/file.wav"
+    - "path/to/file.wav" (defaults bucket to voice-recordings)
+    """
+    path = (file_path or "").strip().replace("s3://", "")
+    if not path:
+        raise ValueError("file_path is empty")
+
+    if "/" not in path:
+        return "voice-recordings", path
+
+    bucket, key = path.split("/", 1)
+    known = {"voice-recordings", "processed", "mri-scans", "exports"}
+    if bucket in known:
+        return bucket, key
+
+    # path doesn't include bucket prefix, treat it as an object key
+    return "voice-recordings", path
+
+
 @app.task(bind=True, name='process_voice_recording')
-def process_voice_recording(self, recording_id: str, patient_id: str, file_path: str):
+def process_voice_recording(
+    self,
+    recording_id: str,
+    patient_id: Optional[str] = None,
+    file_path: Optional[str] = None,
+    transcript: Optional[str] = None,
+):
     """
     Process voice recording for MCI assessment.
 
     Pipeline:
     1. Download audio from MinIO
-    2. Transcribe with Whisper (Korean)
+    2. Use transcript from chatbot/OpenAI STT (required)
     3. Extract audio embeddings (wav2vec2)
     4. Extract text embeddings (klue/bert-base)
     5. Extract linguistic features (Kiwi)
@@ -72,24 +102,75 @@ def process_voice_recording(self, recording_id: str, patient_id: str, file_path:
 
     Args:
         recording_id: UUID of the recording
-        patient_id: UUID of the patient
-        file_path: Object name in MinIO (voice-recordings bucket)
+        patient_id: Optional UUID of the patient. If omitted, loaded from DB.
+        file_path: Optional object path. If omitted, loaded from DB recordings.file_path.
+        transcript: Transcript from upstream chatbot STT (required).
     """
     temp_path = None
     try:
         logger.info(f"Starting voice processing for recording {recording_id}")
+
+        # Resolve source metadata from DB when possible.
+        conn = _get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT patient_id, file_path, transcription, uploaded_at
+                FROM recordings
+                WHERE recording_id = %s
+                """,
+                (recording_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError(f"Recording not found: {recording_id}")
+
+            db_patient_id, db_file_path, db_transcription, db_uploaded_at = row
+            if patient_id is None:
+                patient_id = str(db_patient_id) if db_patient_id else None
+            if file_path is None:
+                file_path = db_file_path
+            if (transcript is None or not str(transcript).strip()) and db_transcription:
+                transcript = db_transcription
+
+            transcript = (transcript or "").strip()
+            if not transcript:
+                raise RuntimeError("Transcript is required for post-STT voice pipeline")
+
+            # Move status to processing as soon as we start.
+            cur.execute(
+                """
+                UPDATE recordings
+                SET status = 'processing',
+                    uploaded_at = COALESCE(uploaded_at, %s)
+                WHERE recording_id = %s
+                """,
+                (datetime.utcnow(), recording_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        if not file_path:
+            raise RuntimeError("No file_path available for recording")
+
+        source_bucket, source_key = _resolve_bucket_and_key(file_path)
 
         # Step 1: Download audio from MinIO
         minio_client = _get_minio_client()
         temp_fd, temp_path = tempfile.mkstemp(suffix=".wav")
         os.close(temp_fd)
 
-        logger.info(f"Downloading from MinIO: voice-recordings/{file_path}")
-        minio_client.fget_object("voice-recordings", file_path, temp_path)
+        logger.info(f"Downloading from MinIO: {source_bucket}/{source_key}")
+        minio_client.fget_object(source_bucket, source_key, temp_path)
 
         # Step 2-6: Feature extraction pipeline
-        from .feature_extractor import extract_all_features
-        transcript, features, linguistic_detail = extract_all_features(temp_path)
+        from .feature_extractor import extract_features_after_stt
+        transcript, features, linguistic_detail = extract_features_after_stt(
+            temp_path,
+            transcript=transcript,
+        )
 
         logger.info(f"Features extracted: {features.shape[0]} dims, transcript: {len(transcript)} chars")
 
@@ -103,6 +184,7 @@ def process_voice_recording(self, recording_id: str, patient_id: str, file_path:
             cur = conn.cursor()
             assessment_id = str(uuid4())
             now = datetime.utcnow()
+            confidence_score = max(result["mci_probability"], 1.0 - result["mci_probability"])
 
             # Build features JSONB
             features_json = json.dumps({
@@ -112,14 +194,24 @@ def process_voice_recording(self, recording_id: str, patient_id: str, file_path:
                 "total_features": int(features.shape[0]),
                 "linguistic_detail": linguistic_detail,
             })
+            acoustic_summary_json = json.dumps({
+                "pipeline": "post_stt_rf",
+                "feature_dims": {
+                    "audio": 768,
+                    "text": 768,
+                    "linguistic": 25,
+                    "total": int(features.shape[0]),
+                },
+            })
 
             # Insert voice assessment
             cur.execute("""
                 INSERT INTO voice_assessments
-                    (id, recording_id, transcript, cognitive_score,
+                    (assessment_id, recording_id, transcript, cognitive_score,
                      mci_probability, flag, flag_reasons, features,
-                     model_version, assessed_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     acoustic_summary, predicted_stage, confidence_score,
+                     model_version, assessed_at, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 assessment_id,
                 recording_id,
@@ -129,23 +221,31 @@ def process_voice_recording(self, recording_id: str, patient_id: str, file_path:
                 result["flag"],
                 json.dumps(result["flag_reasons"]),
                 features_json,
+                acoustic_summary_json,
+                "pMCI" if result["label"] == "MCI" else "CN",
+                round(confidence_score, 4),
                 result["model_version"],
+                now,
                 now,
             ))
 
             # Update recording status
             cur.execute("""
-                UPDATE recordings SET status = 'completed' WHERE id = %s
-            """, (recording_id,))
+                UPDATE recordings
+                SET status = 'completed',
+                    transcription = %s,
+                    uploaded_at = COALESCE(uploaded_at, %s),
+                    description = NULL
+                WHERE recording_id = %s
+            """, (transcript, now, recording_id))
 
             # Send notification to doctor if flag is not normal
-            if result["flag"] != "normal":
+            if result["flag"] != "normal" and patient_id is not None:
                 # Get assigned doctor
                 cur.execute("""
-                    SELECT p.assigned_doctor_id, d.user_id
+                    SELECT p.doctor_id
                     FROM patients p
-                    JOIN doctors d ON p.assigned_doctor_id = d.id
-                    WHERE p.id = %s AND p.assigned_doctor_id IS NOT NULL
+                    WHERE p.user_id = %s AND p.doctor_id IS NOT NULL
                 """, (patient_id,))
                 doctor_row = cur.fetchone()
 
@@ -154,12 +254,12 @@ def process_voice_recording(self, recording_id: str, patient_id: str, file_path:
                     flag_label = "경고" if result["flag"] == "warning" else "위험"
                     cur.execute("""
                         INSERT INTO notifications
-                            (id, user_id, type, title, message,
+                            (notification_id, user_id, type, title, message,
                              related_patient_id, related_type, related_id, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         notification_id,
-                        str(doctor_row[1]),
+                        str(doctor_row[0]),
                         "assessment_alert",
                         f"음성 평가 {flag_label}: MCI 확률 {result['mci_probability']:.1%}",
                         f"환자의 음성 분석 결과 {result['flag']} 단계로 판정되었습니다. "
@@ -196,8 +296,14 @@ def process_voice_recording(self, recording_id: str, patient_id: str, file_path:
             conn = _get_db_connection()
             cur = conn.cursor()
             cur.execute(
-                "UPDATE recordings SET status = 'failed' WHERE id = %s",
-                (recording_id,)
+                """
+                UPDATE recordings
+                SET status = 'failed',
+                    description = %s,
+                    uploaded_at = COALESCE(uploaded_at, %s)
+                WHERE recording_id = %s
+                """,
+                (str(e)[:500], datetime.utcnow(), recording_id),
             )
             conn.commit()
             conn.close()
