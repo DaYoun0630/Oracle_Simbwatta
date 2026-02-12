@@ -2,10 +2,12 @@
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useCaregiverData } from '@/composables/useCaregiverData';
+import { useCaregiverSharingSettings } from '@/composables/useCaregiverSharingSettings';
 import WeeklyChart from '../WeeklyChart.vue';
 
 const router = useRouter();
 const { data, loading, fetchData } = useCaregiverData();
+const sharing = useCaregiverSharingSettings();
 
 onMounted(() => {
   fetchData();
@@ -48,10 +50,16 @@ const subjectName = computed(() => data.value?.subject?.name ?? '대상자');
 const relationText = computed(() => data.value?.subject?.relation ?? '가족');
 
 const statusSummary = computed(() => `${subjectName.value} 님은 오늘 ${statusLabel.value} 상태입니다.`);
-const statusMessage = computed(() => data.value?.todayStatus?.message ?? '오늘 대화 리듬이 안정적으로 유지되었습니다.');
+const statusMessage = computed(() => {
+  if (!sharing.dialogSummary.value) return '대상자가 대화 요약 공유를 철회했습니다.';
+  return data.value?.todayStatus?.message ?? '오늘 대화 리듬이 안정적으로 유지되었습니다.';
+});
 const lastChatText = computed(() => data.value?.todayStatus?.lastChat ?? '오늘 기록 없음');
 
 const trendSummary = computed(() => {
+  if (!sharing.dialogSummary.value) {
+    return '대상자가 대화 요약 공유를 철회하여 주간 대화 요약이 숨김 처리되었습니다.';
+  }
   const trend = data.value?.weeklyTrend?.trend ?? 'stable';
   if (trend === 'down') {
     return '최근 반응 속도의 변화가 있어 추가 관찰이 필요합니다.';
@@ -70,9 +78,16 @@ const trendBadgeText = computed(() => {
 });
 
 const emotionLabel = computed(() => {
+  if (!sharing.dialogSummary.value) return '대화 요약 공유 비활성화';
   if (statusTone.value === 'danger') return '주의가 필요한 대화 톤';
   if (statusTone.value === 'alert') return '관찰이 필요한 대화 톤';
   return '안정적인 대화 톤';
+});
+
+const nextMedicationReminder = computed(() => {
+  const reminder = data.value?.medicationReminders?.[0];
+  if (!reminder) return '등록된 복약 일정이 없습니다.';
+  return `${reminder.time} ${reminder.name}`;
 });
 
 const quickActions = computed(() => {
@@ -90,11 +105,20 @@ const quickActions = computed(() => {
     {
       id: 'recent',
       title: '최근 대화',
-      value: lastChatText.value,
-      desc: '기록 바로 보기',
+      value: sharing.dialogSummary.value ? lastChatText.value : '공유 비활성화',
+      desc: sharing.dialogSummary.value ? '기록 바로 보기' : '대상자가 공유 철회',
       icon: 'doc',
       tone: 'neutral',
       action: 'history',
+    },
+    {
+      id: 'medication',
+      title: '복약 리마인드',
+      value: sharing.medicationReminder.value ? nextMedicationReminder.value : '공유 비활성화',
+      desc: sharing.medicationReminder.value ? '복약 예정 정보' : '대상자가 공유 철회',
+      icon: 'pill',
+      tone: 'mint',
+      action: null,
     },
   ];
 });
@@ -158,13 +182,16 @@ const statusIconPath = computed(() => {
             </svg>
             <span>{{ emotionLabel }}</span>
           </div>
-          <div v-if="data.alerts.length" class="alert-chip">
+          <div v-if="sharing.anomalyAlert.value && data.alerts.length" class="alert-chip">
             알림 {{ data.alerts.length }}건
+          </div>
+          <div v-else-if="!sharing.anomalyAlert.value" class="alert-chip muted">
+            이상 행동 알림 공유 철회
           </div>
         </div>
       </section>
 
-      <section class="trend-card stagger" style="--delay: 120ms">
+      <section v-if="sharing.dialogSummary.value" class="trend-card stagger" style="--delay: 120ms">
         <div class="trend-header">
           <div>
             <h3>최근 7일 대화 흐름</h3>
@@ -203,6 +230,12 @@ const statusIconPath = computed(() => {
               <circle class="icon-dot" cx="18" cy="20" r="3" />
               <circle class="icon-dot" cx="26" cy="28" r="3" />
               <circle class="icon-dot" cx="40" cy="14" r="3" />
+            </svg>
+            <svg v-else-if="item.icon === 'pill'" viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="10" y="20" width="28" height="10" rx="5" />
+              <path d="M24 20v10" />
+              <circle class="icon-dot" cx="16" cy="25" r="1.8" />
+              <circle class="icon-dot" cx="32" cy="25" r="1.8" />
             </svg>
             <svg v-else viewBox="0 0 48 48" aria-hidden="true">
               <rect x="12" y="10" width="24" height="28" rx="6" />
@@ -417,6 +450,11 @@ const statusIconPath = computed(() => {
   font-weight: 800;
   color: #d66a61;
   background: rgba(255, 138, 128, 0.15);
+}
+
+.alert-chip.muted {
+  color: #7a7a7a;
+  background: rgba(130, 130, 130, 0.12);
 }
 
 .trend-card {

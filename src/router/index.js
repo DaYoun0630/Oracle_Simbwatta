@@ -116,6 +116,12 @@ const routes = [
     meta: { requiresAuth: true, roles: ["subject", "caregiver", "doctor"] }
   },
   {
+    path: "/settings/caregiver-sharing",
+    name: "caregiver-sharing-settings",
+    component: () => import("../pages/CaregiverSharingSettingsPage.vue"),
+    meta: { requiresAuth: true, roles: ["subject"] }
+  },
+  {
     path: "/settings/notifications",
     name: "notification-settings",
     component: () => import("../pages/NotificationSettingsPage.vue"),

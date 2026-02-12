@@ -14,7 +14,7 @@ const router = useRouter();
 const roleLabel = computed(() => {
   if (role.value === 'doctor') return '의료진 계정';
   if (role.value === 'caregiver') return '보호자 계정';
-  return '이용자 계정';
+  return '대상자 계정';
 });
 
 const goToPersonalInfo = () => {
@@ -27,6 +27,10 @@ const goToNotifications = () => {
 
 const goToCaregiverManagement = () => {
   router.push({ name: 'caregiver-management' });
+};
+
+const goToCaregiverSharingSettings = () => {
+  router.push({ name: 'caregiver-sharing-settings' });
 };
 
 const handleLogout = () => {
@@ -65,7 +69,24 @@ onMounted(() => {
           </div>
           <div class="card-content">
             <h3>개인정보 수정</h3>
-            <p>이름, 연락처, 아바타 관리</p>
+            <p>이름, 연락처, 기본 프로필 관리</p>
+          </div>
+          <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
+            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>
+          </svg>
+        </button>
+
+        <button v-if="role === 'subject'" class="settings-card" @click="goToCaregiverSharingSettings">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4cb7b7" stroke-width="2">
+              <path d="M12 4a4 4 0 1 0 0 8a4 4 0 0 0 0-8"/>
+              <path d="M4 20v-1a8 8 0 0 1 16 0v1"/>
+              <path d="M17.5 7.5l2 2 3-3"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>보호자 정보 공유 범위</h3>
+            <p>대화 요약, 이상 행동 알림, 복약 리마인드 항목을 언제든 철회할 수 있습니다.</p>
           </div>
           <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>
@@ -81,7 +102,7 @@ onMounted(() => {
           </div>
           <div class="card-content">
             <h3>알림 상세 설정</h3>
-            <p>변화 알림, 주간 리포트, 서비스 안내</p>
+            <p>변화 알림, 주간 리포트, 서비스 공지</p>
           </div>
           <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>

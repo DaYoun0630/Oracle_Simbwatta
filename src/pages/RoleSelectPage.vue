@@ -72,10 +72,13 @@ const selectRole = (role: string) => {
         <button class="role-card" @click="selectRole('doctor')" aria-label="의료진 선택">
           <div class="pictogram pictogram-doctor" aria-hidden="true">
             <svg viewBox="0 0 120 120">
-              <rect class="chart" x="30" y="32" width="60" height="56" rx="10" />
-              <path class="chart-line" d="M40 70l14-12 14 8 14-16" />
-              <circle class="chart-dot" cx="82" cy="50" r="4" />
-              <path class="stethoscope" d="M46 42v12c0 8 6 14 14 14s14-6 14-14V42" />
+              <path class="doctor-hair" d="M40 38c0-13 9-22 20-22s20 9 20 22v4H40z" />
+              <circle class="doctor-head" cx="60" cy="40" r="15" />
+              <path class="doctor-shoulder" d="M24 97c9-14 22-21 36-21s27 7 36 21" />
+              <path class="doctor-coat" d="M34 98c6-8 15-12 26-12s20 4 26 12" />
+              <path class="doctor-collar" d="M50 78l10 12 10-12" />
+              <rect class="doctor-tie" x="54.5" y="86" width="11" height="13.5" rx="4.5" />
+              <path class="doctor-stetho-line" d="M38 80v12c0 5-4 9-9 9M82 80v12c0 5 4 9 9 9" />
             </svg>
           </div>
           <div class="role-info">
@@ -293,30 +296,45 @@ const selectRole = (role: string) => {
   animation: heartPulse 2.4s ease-in-out infinite;
 }
 
-.pictogram-doctor .chart {
-  fill: none;
-  stroke: #4cb7b7;
-  stroke-width: 3;
+.pictogram-doctor .doctor-hair {
+  fill: #2f9f9f;
 }
 
-.pictogram-doctor .chart-line {
+.pictogram-doctor .doctor-head {
+  fill: #dff5f5;
+}
+
+.pictogram-doctor .doctor-shoulder {
+  fill: none;
+  stroke: #2f9f9f;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pictogram-doctor .doctor-coat {
   fill: none;
   stroke: #4cb7b7;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pictogram-doctor .doctor-collar {
+  fill: none;
+  stroke: #2f9f9f;
   stroke-width: 3;
   stroke-linecap: round;
-  stroke-dasharray: 48;
-  stroke-dashoffset: 48;
-  animation: lineFlow 3.2s ease-in-out infinite;
+  stroke-linejoin: round;
 }
 
-.pictogram-doctor .chart-dot {
-  fill: #1f5f5f;
-  animation: dotPulse 2.2s ease-in-out infinite;
+.pictogram-doctor .doctor-tie {
+  fill: #2f9f9f;
 }
 
-.pictogram-doctor .stethoscope {
+.pictogram-doctor .doctor-stetho-line {
   fill: none;
-  stroke: rgba(76, 183, 183, 0.5);
+  stroke: #4cb7b7;
   stroke-width: 3;
   stroke-linecap: round;
 }
@@ -335,17 +353,6 @@ const selectRole = (role: string) => {
 @keyframes heartPulse {
   0%, 100% { transform: scale(1); opacity: 0.7; }
   50% { transform: scale(1.2); opacity: 1; }
-}
-
-@keyframes lineFlow {
-  0% { stroke-dashoffset: 48; opacity: 0.3; }
-  50% { opacity: 1; }
-  100% { stroke-dashoffset: 0; opacity: 0.4; }
-}
-
-@keyframes dotPulse {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.3); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
