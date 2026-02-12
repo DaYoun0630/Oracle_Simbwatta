@@ -30,7 +30,7 @@ interface SpeechRecognitionLike extends EventTarget {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
-  onresult: ((event: SpeechRecognitionResultEvent) => void | Promise<void>) | null;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
   onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: ((event: Event) => void) | null;
   start: () => void;
@@ -45,8 +45,14 @@ const WARMUP_END_SEC = 45;
 const SOFT_WRAP_START_SEC = 240;
 const LISTEN_RETRY_DELAY_MS = 350;
 const PROFILE_ID_STORAGE_KEY = "voice_profile_id";
-const MIC_LEVEL_SENSITIVITY = 7.8;
-const MIC_ACTIVE_THRESHOLD = 0.012;
+const SPEECH_SILENCE_COMMIT_MS = 1300;
+const STT_NO_SPEECH_RETRY_LIMIT = 1;
+const NO_SPEECH_GRACE_RETRIES = 1;
+const NO_SPEECH_RETRY_DELAY_MS = 700;
+const MIC_LEVEL_SENSITIVITY = 6.4;
+const MIC_LEVEL_SILENCE_FLOOR = 0.022;
+const MIC_ACTIVE_THRESHOLD = 0.024;
+const SPEAKING_ACTIVE_THRESHOLD = 0.045;
 const SPEAKING_LEVEL_INTERVAL_MS = 50;
 const NO_SPEECH_PROMPT =
   "잘 못 들었어요. 다시 한번 말씀해 주세요.";
@@ -79,23 +85,27 @@ const isVoiceActive = ref(false);
 
 const conversationPhase = ref<ConversationPhase>("opening");
 
-let recognition: SpeechRecognitionLike | null = null;
-let isRecognitionStopping = false;
 let sessionTimer: number | null = null;
 let softWrapTimer: number | null = null;
 let activeUtterance: SpeechSynthesisUtterance | null = null;
 let resolveSpeaking: (() => void) | null = null;
-let skipRetryOnEndRecognition: SpeechRecognitionLike | null = null;
 let sessionToken = 0;
+let recognition: SpeechRecognitionLike | null = null;
+let isRecognitionStopping = false;
+let silenceCommitTimer: number | null = null;
+let stableTranscriptBuffer = "";
+let interimTranscriptBuffer = "";
 let micStream: MediaStream | null = null;
 let micAudioContext: AudioContext | null = null;
 let micAnalyser: AnalyserNode | null = null;
 let micSourceNode: MediaStreamAudioSourceNode | null = null;
-let micWaveData: Uint8Array | null = null;
+let micWaveData: Uint8Array<ArrayBuffer> | null = null;
 let micMeterRaf: number | null = null;
 let micMeterToken = 0;
 let speakingLevelTimer: number | null = null;
 let speakingLevelPhase = 0;
+let noSpeechRetryCount = 0;
+let sttNoSpeechRetryCount = 0;
 
 const generateId = () =>
   `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -127,6 +137,10 @@ const isCurrentSession = (token: number) =>
   isSessionActive.value && token === sessionToken;
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+const setAwaitingInputState = () => {
+  state.value = isSessionActive.value ? "listening" : "idle";
+};
 
 const clearSessionTimer = () => {
   if (sessionTimer === null) return;
@@ -162,16 +176,30 @@ const stopSpeakingLevelMeter = (resetLevel = true) => {
 const startSpeakingLevelMeter = () => {
   stopSpeakingLevelMeter(false);
   speakingLevelPhase = 0;
-  isVoiceActive.value = true;
+  isVoiceActive.value = false;
 
   speakingLevelTimer = window.setInterval(() => {
-    speakingLevelPhase += 0.34;
-    const pulseA = Math.max(0, Math.sin(speakingLevelPhase)) * 0.58;
-    const pulseB = Math.max(0, Math.sin(speakingLevelPhase * 1.9 + 0.4)) * 0.38;
-    const target = clamp01(0.26 + pulseA + pulseB);
-    const next = voiceLevel.value * 0.52 + target * 0.48;
+    const hasSpeechSynthesis =
+      typeof window !== "undefined" && "speechSynthesis" in window;
+    const isSynthSpeaking =
+      hasSpeechSynthesis &&
+      window.speechSynthesis.speaking &&
+      !window.speechSynthesis.paused;
+
+    if (!isSynthSpeaking) {
+      const decayed = voiceLevel.value * 0.82;
+      voiceLevel.value = decayed < 0.008 ? 0 : decayed;
+      isVoiceActive.value = voiceLevel.value > SPEAKING_ACTIVE_THRESHOLD;
+      return;
+    }
+
+    speakingLevelPhase += 0.22;
+    const pulseA = Math.max(0, Math.sin(speakingLevelPhase)) * 0.22;
+    const pulseB = Math.max(0, Math.sin(speakingLevelPhase * 1.5 + 0.35)) * 0.12;
+    const target = clamp01(0.05 + pulseA + pulseB);
+    const next = voiceLevel.value * 0.74 + target * 0.26;
     voiceLevel.value = clamp01(next);
-    isVoiceActive.value = next > MIC_ACTIVE_THRESHOLD;
+    isVoiceActive.value = next > SPEAKING_ACTIVE_THRESHOLD;
   }, SPEAKING_LEVEL_INTERVAL_MS);
 };
 
@@ -293,8 +321,9 @@ const startMicMeter = async (token: number) => {
     }
 
     const rms = Math.sqrt(energy / micWaveData.length);
-    const measured = clamp01(Math.pow(rms * MIC_LEVEL_SENSITIVITY, 0.78));
-    const next = voiceLevel.value * 0.34 + measured * 0.66;
+    const measuredRaw = clamp01(Math.pow(rms * MIC_LEVEL_SENSITIVITY, 0.78));
+    const measured = measuredRaw > MIC_LEVEL_SILENCE_FLOOR ? measuredRaw : 0;
+    const next = voiceLevel.value * 0.56 + measured * 0.44;
     voiceLevel.value = clamp01(next);
     isVoiceActive.value = next > MIC_ACTIVE_THRESHOLD;
 
@@ -312,8 +341,32 @@ const cancelSpeaking = () => {
   settleSpeakingPromise();
 };
 
+const isRecognitionActive = () => recognition !== null;
+
+const clearSilenceCommitTimer = () => {
+  if (silenceCommitTimer === null) return;
+  clearTimeout(silenceCommitTimer);
+  silenceCommitTimer = null;
+};
+
+const clearRecognitionBuffers = () => {
+  stableTranscriptBuffer = "";
+  interimTranscriptBuffer = "";
+};
+
+const composeBufferedTranscript = () =>
+  [stableTranscriptBuffer, interimTranscriptBuffer].filter(Boolean).join(" ").trim();
+
+const isLikelyFillerUtterance = (text: string) => {
+  const normalized = text.replace(/\s+/g, "").toLowerCase();
+  if (!normalized) return true;
+  const fillers = ["음", "어", "응", "아", "그", "저", "그러니까", "그니까", "음음"];
+  return fillers.includes(normalized) || normalized.length <= 1;
+};
+
 const stopRecognition = () => {
   stopMicMeter();
+  clearSilenceCommitTimer();
   if (!recognition) return;
 
   try {
@@ -450,7 +503,7 @@ const botSpeak = async (text: string, token: number) => {
   stopSpeakingLevelMeter();
   if (!isCurrentSession(token)) return false;
   currentResponse.value = "";
-  state.value = "idle";
+  setAwaitingInputState();
   return true;
 };
 
@@ -459,24 +512,54 @@ const scheduleSoftWrapCue = (token: number) => {
   clearSoftWrapTimer();
 };
 
-const scheduleRecognitionRetry = (token: number) => {
+const scheduleRecognitionRetry = (
+  token: number,
+  delayMs = LISTEN_RETRY_DELAY_MS
+) => {
   window.setTimeout(() => {
     if (!isCurrentSession(token)) return;
     if (state.value === "processing" || state.value === "speaking") return;
-    if (recognition) return;
+    if (isRecognitionActive()) return;
     startLiveRecognition(token);
-  }, LISTEN_RETRY_DELAY_MS);
+  }, delayMs);
 };
 
 const handleNoSpeechDetected = async (token: number) => {
   if (!isCurrentSession(token)) return;
   if (state.value === "processing" || state.value === "speaking") return;
 
+  if (noSpeechRetryCount < NO_SPEECH_GRACE_RETRIES) {
+    noSpeechRetryCount += 1;
+    scheduleRecognitionRetry(token, NO_SPEECH_RETRY_DELAY_MS);
+    return;
+  }
+
+  noSpeechRetryCount = 0;
   const spoke = await botSpeak(NO_SPEECH_PROMPT, token);
   if (!spoke) return;
   if (await stopIfTimedOut(token)) return;
 
   scheduleRecognitionRetry(token);
+};
+
+const extractTranscriptFromResults = (results: SpeechRecognitionResultList) => {
+  let stable = "";
+  let interim = "";
+
+  for (let i = 0; i < results.length; i += 1) {
+    const segment = results[i][0]?.transcript?.trim();
+    if (!segment) continue;
+    if (results[i].isFinal) {
+      stable += `${segment} `;
+    } else {
+      interim += `${segment} `;
+    }
+  }
+
+  return {
+    stable: stable.trim(),
+    interim: interim.trim(),
+  };
 };
 
 const startLiveRecognition = (token: number) => {
@@ -486,52 +569,77 @@ const startLiveRecognition = (token: number) => {
     return;
   }
 
-  stopRecognition();
-  stopSpeakingLevelMeter(false);
-  isRecognitionStopping = false;
-  state.value = "listening";
-  currentTranscript.value = "";
+  if (isRecognitionActive()) return;
+  if (typeof window === "undefined") return;
 
   const speechWindow = window as Window & {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   };
-
   const SpeechRecognition =
-    speechWindow.SpeechRecognition ||
-    speechWindow.webkitSpeechRecognition;
-
+    speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
   if (!SpeechRecognition) {
     console.error("SpeechRecognition is not supported in this browser.");
     void stopSession("manual_stop");
     return;
   }
 
+  stopSpeakingLevelMeter(false);
+  clearSilenceCommitTimer();
+  clearRecognitionBuffers();
+  state.value = "listening";
+  currentTranscript.value = "";
   void startMicMeter(token);
 
   const localRecognition = new SpeechRecognition();
   recognition = localRecognition;
+  isRecognitionStopping = false;
   localRecognition.lang = "ko-KR";
-  localRecognition.interimResults = false;
-  localRecognition.continuous = false;
+  localRecognition.continuous = true;
+  localRecognition.interimResults = true;
+
+  const scheduleSilenceCommit = () => {
+    clearSilenceCommitTimer();
+    silenceCommitTimer = window.setTimeout(() => {
+      if (!isCurrentSession(token)) return;
+
+      const combined = composeBufferedTranscript();
+      if (!combined) return;
+
+      if (isLikelyFillerUtterance(combined)) {
+        clearRecognitionBuffers();
+        currentTranscript.value = "";
+        return;
+      }
+
+      currentTranscript.value = combined;
+      clearRecognitionBuffers();
+      stopRecognition();
+      void handleUserTurn(combined, token);
+    }, SPEECH_SILENCE_COMMIT_MS);
+  };
 
   localRecognition.onresult = (event) => {
     if (!isCurrentSession(token)) return;
-    const transcript = event.results[0][0].transcript?.trim() ?? "";
-    if (!transcript) {
-      skipRetryOnEndRecognition = localRecognition;
-      void handleNoSpeechDetected(token);
-      return;
-    }
-    stopRecognition();
-    void handleUserTurn(transcript, token);
+
+    const next = extractTranscriptFromResults(event.results);
+    stableTranscriptBuffer = next.stable;
+    interimTranscriptBuffer = next.interim;
+
+    const combined = composeBufferedTranscript();
+    if (!combined) return;
+
+    sttNoSpeechRetryCount = 0;
+    noSpeechRetryCount = 0;
+    currentTranscript.value = combined;
+    scheduleSilenceCommit();
   };
 
   localRecognition.onerror = (event) => {
     if (recognition === localRecognition) {
       recognition = null;
     }
-    stopMicMeter();
+    clearSilenceCommitTimer();
 
     if (!isCurrentSession(token)) return;
 
@@ -539,17 +647,26 @@ const startLiveRecognition = (token: number) => {
     console.error("STT error", errorCode, event);
 
     if (errorCode === "aborted") return;
+
     if (errorCode === "no-speech") {
-      skipRetryOnEndRecognition = localRecognition;
+      if (sttNoSpeechRetryCount < STT_NO_SPEECH_RETRY_LIMIT) {
+        sttNoSpeechRetryCount += 1;
+        setAwaitingInputState();
+        scheduleRecognitionRetry(token, NO_SPEECH_RETRY_DELAY_MS);
+        return;
+      }
+
+      sttNoSpeechRetryCount = 0;
       void handleNoSpeechDetected(token);
       return;
     }
+
     if (hasTimedOut()) {
       void stopSession("target_reached");
       return;
     }
 
-    state.value = "idle";
+    setAwaitingInputState();
     scheduleRecognitionRetry(token);
   };
 
@@ -557,14 +674,10 @@ const startLiveRecognition = (token: number) => {
     if (recognition === localRecognition) {
       recognition = null;
     }
-    stopMicMeter();
+    clearSilenceCommitTimer();
 
     if (isRecognitionStopping) {
       isRecognitionStopping = false;
-      return;
-    }
-    if (skipRetryOnEndRecognition === localRecognition) {
-      skipRetryOnEndRecognition = null;
       return;
     }
 
@@ -573,20 +686,18 @@ const startLiveRecognition = (token: number) => {
       void stopSession("target_reached");
       return;
     }
+    if (state.value === "processing" || state.value === "speaking") return;
 
-    if (state.value === "processing" || state.value === "speaking") {
-      return;
-    }
-
-    state.value = "idle";
+    setAwaitingInputState();
     scheduleRecognitionRetry(token);
   };
 
   try {
     localRecognition.start();
   } catch (error) {
-    console.error("Failed to start STT", error);
-    void stopSession("manual_stop");
+    console.error("Failed to start SpeechRecognition", error);
+    if (!isCurrentSession(token)) return;
+    scheduleRecognitionRetry(token, NO_SPEECH_RETRY_DELAY_MS);
   }
 };
 
@@ -594,6 +705,8 @@ const handleUserTurn = async (transcript: string, token: number) => {
   if (!isCurrentSession(token)) return;
   if (await stopIfTimedOut(token)) return;
 
+  noSpeechRetryCount = 0;
+  sttNoSpeechRetryCount = 0;
   const elapsedBefore = getElapsedSeconds();
   const requestClose = shouldRequestClose(elapsedBefore);
 
@@ -694,6 +807,8 @@ const startSession = async () => {
   currentResponse.value = "";
   messages.value = [];
   conversationPhase.value = "opening";
+  noSpeechRetryCount = 0;
+  sttNoSpeechRetryCount = 0;
 
   startSessionTimer(token);
   scheduleSoftWrapCue(token);
@@ -719,7 +834,6 @@ const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
   stopRecognition();
   cancelSpeaking();
   await releaseMicMeterResources();
-  skipRetryOnEndRecognition = null;
 
   isSessionActive.value = false;
   state.value = "idle";
@@ -730,6 +844,8 @@ const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
   dialogState.value = null;
   turnIndex.value = 0;
   conversationPhase.value = "opening";
+  noSpeechRetryCount = 0;
+  sttNoSpeechRetryCount = 0;
 
   if (clearMessages) {
     messages.value = [];
@@ -757,7 +873,6 @@ const resetSession = () => {
     stopRecognition();
     cancelSpeaking();
     void releaseMicMeterResources();
-    skipRetryOnEndRecognition = null;
     state.value = "idle";
     currentTranscript.value = "";
     currentResponse.value = "";
@@ -766,6 +881,8 @@ const resetSession = () => {
     dialogState.value = null;
     turnIndex.value = 0;
     conversationPhase.value = "opening";
+    noSpeechRetryCount = 0;
+    sttNoSpeechRetryCount = 0;
     messages.value = [];
     return;
   }

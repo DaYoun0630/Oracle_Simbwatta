@@ -4,11 +4,20 @@ import SubjectShell from '@/components/shells/SubjectShell.vue';
 import VoiceOrb from '@/components/VoiceOrb.vue';
 import { useVoiceSession } from '@/composables/useVoiceSession';
 
-const { state, startListening, voiceLevel, isVoiceActive } = useVoiceSession();
+const { state, isSessionActive, startListening, voiceLevel, isVoiceActive } = useVoiceSession();
+
+const showIdleLanding = computed(() => !isSessionActive.value && state.value === 'idle');
 
 const statusConfig = computed(() => {
   switch (state.value) {
     case 'idle':
+      if (isSessionActive.value) {
+        return {
+          text: '',
+          subText: '',
+          bgColor: '#eef4f4'
+        };
+      }
       return {
         text: '안녕하세요!',
         subText: '여기를 눌러주세요',
@@ -43,15 +52,15 @@ const statusConfig = computed(() => {
 </script>
 
 <template>
-  <SubjectShell :showHomeButton="state !== 'idle'" :showMenuButton="true">
+  <SubjectShell :showHomeButton="isSessionActive" :showMenuButton="true">
     <div class="chat-wrapper" :style="{ backgroundColor: statusConfig.bgColor }">
-      <div v-if="state === 'idle'" class="status-area">
+      <div v-if="showIdleLanding" class="status-area">
         <h1 class="status-text">{{ statusConfig.text }}</h1>
         <p v-if="statusConfig.subText" class="sub-text">{{ statusConfig.subText }}</p>
       </div>
 
       <div class="orb-area">
-        <div v-if="state === 'idle'" class="idle-button" @click="startListening">
+        <div v-if="showIdleLanding" class="idle-button" @click="startListening">
           <div class="mic-circle">
             <svg width="56" height="56" viewBox="0 0 24 24" fill="white">
               <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
@@ -66,7 +75,7 @@ const statusConfig = computed(() => {
       </div>
 
       <div class="footer-area">
-        <div v-if="state !== 'idle'" class="status-indicator">
+        <div v-if="isSessionActive" class="status-indicator">
           <span class="pulse-dot"></span>
         </div>
       </div>
