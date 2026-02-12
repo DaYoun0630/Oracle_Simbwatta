@@ -4,7 +4,7 @@ import SubjectShell from '@/components/shells/SubjectShell.vue';
 import VoiceOrb from '@/components/VoiceOrb.vue';
 import { useVoiceSession } from '@/composables/useVoiceSession';
 
-const { state, startListening } = useVoiceSession();
+const { state, startListening, voiceLevel, isVoiceActive } = useVoiceSession();
 
 const statusConfig = computed(() => {
   switch (state.value) {
@@ -16,19 +16,19 @@ const statusConfig = computed(() => {
       };
     case 'listening':
       return {
-        text: '잘 듣고 있어요',
-        subText: '편하게 말씀하세요',
+        text: '',
+        subText: '',
         bgColor: '#eef4f4'
       };
     case 'processing':
       return {
-        text: '잠시만 기다려주세요',
+        text: '',
         subText: '',
         bgColor: '#f0f2f5'
       };
     case 'speaking':
       return {
-        text: '대답하고 있어요',
+        text: '',
         subText: '',
         bgColor: '#f5f6f7'
       };
@@ -45,7 +45,7 @@ const statusConfig = computed(() => {
 <template>
   <SubjectShell :showHomeButton="state !== 'idle'" :showMenuButton="true">
     <div class="chat-wrapper" :style="{ backgroundColor: statusConfig.bgColor }">
-      <div class="status-area">
+      <div v-if="state === 'idle'" class="status-area">
         <h1 class="status-text">{{ statusConfig.text }}</h1>
         <p v-if="statusConfig.subText" class="sub-text">{{ statusConfig.subText }}</p>
       </div>
@@ -61,7 +61,7 @@ const statusConfig = computed(() => {
         </div>
 
         <div v-else class="orb-container">
-          <VoiceOrb :state="state" />
+          <VoiceOrb :state="state" :size="258" :level="voiceLevel" :reactive="isVoiceActive" />
         </div>
       </div>
 

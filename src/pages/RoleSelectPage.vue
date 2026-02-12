@@ -1,8 +1,16 @@
-﻿<script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+<script setup lang="ts">
 import { useRouter } from "vue-router";
 
 const router = useRouter();
+
+const goBack = () => {
+  if (window.history.length > 1) {
+    router.back();
+    return;
+  }
+
+  router.push({ name: "landing" });
+};
 
 const selectRole = (role: string) => {
   router.push({ path: "/login", query: { role } });
@@ -13,6 +21,14 @@ const selectRole = (role: string) => {
   <div class="role-page">
     <div class="role-container">
       <header class="role-header">
+        <div class="header-top">
+          <button type="button" class="back-button" @click="goBack" aria-label="뒤로 가기">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+
         <span class="badge">시니어 헬스케어 음성 AI</span>
         <h1>사용자 유형을 선택해 주세요</h1>
         <p>
@@ -103,6 +119,37 @@ const selectRole = (role: string) => {
 .role-header {
   display: grid;
   gap: clamp(10px, 2vmin, 14px);
+}
+
+.header-top {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.back-button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #d5dde5;
+  border-radius: 999px;
+  background: #f5f6f7;
+  box-shadow: 6px 6px 12px #d1d9e6, -6px -6px 12px #ffffff;
+  color: #1f5f5f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.back-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.back-button:active {
+  transform: translateY(1px);
+  box-shadow: inset 3px 3px 7px #d1d9e6, inset -3px -3px 7px #ffffff;
 }
 
 .badge {

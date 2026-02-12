@@ -2,9 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
+import { useSignupStore } from "@/stores/signup";
 
 const router = useRouter();
 const authStore = useAuthStore();
+const signupStore = useSignupStore();
 
 const slides = [
   {
@@ -212,6 +214,16 @@ const startService = () => {
   });
 };
 
+const goToSignup = () => {
+  authStore.clear();
+  // 랜딩에서 회원가입을 다시 시작할 때 항상 초기 상태로 진입한다.
+  signupStore.reset();
+  router.push({ name: "signup-role" }).catch((error) => {
+    console.error("Failed to navigate to signup role:", error);
+    window.location.assign("/signup/role");
+  });
+};
+
 const syncNetworkState = () => {
   isOffline.value = !navigator.onLine;
 };
@@ -318,9 +330,12 @@ onUnmounted(() => {
           ></button>
         </div>
 
-        <button class="cta-button" :disabled="isOffline" @click="startService">
-          {{ isOffline ? "네트워크 연결 필요" : "서비스 시작하기" }}
-        </button>
+        <div class="action-buttons">
+          <button class="cta-button" :disabled="isOffline" @click="startService">
+            {{ isOffline ? "네트워크 연결 필요" : "서비스 시작하기" }}
+          </button>
+          <a class="signup-link" href="/signup/role" @click.prevent="goToSignup">회원가입</a>
+        </div>
       </div>
     </div>
   </div>
@@ -499,6 +514,11 @@ onUnmounted(() => {
   padding-top: clamp(6px, 1.4vmin, 10px);
 }
 
+.action-buttons {
+  display: grid;
+  gap: 10px;
+}
+
 .indicator {
   display: flex;
   justify-content: center;
@@ -544,6 +564,22 @@ onUnmounted(() => {
   background: #9fbcbc;
   box-shadow: none;
   cursor: not-allowed;
+}
+
+.signup-link {
+  justify-self: center;
+  color: #1f5f5f;
+  font-size: clamp(1rem, 0.95rem + 0.4vmin, 1.05rem);
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.signup-link:focus-visible {
+  outline: 2px solid #4cb7b7;
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 
 .pictogram-voice .pg-ring {
