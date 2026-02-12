@@ -46,5 +46,12 @@
 
   alerts: [],
 
+  medicationReminders: [
+    {
+      time: '오늘 20:00',
+      name: '인지기능 보조약'
+    }
+  ],
+
   cognitiveScores: []
 };

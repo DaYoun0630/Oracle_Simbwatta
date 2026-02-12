@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import GenderSelect from "@/components/signup/GenderSelect.vue";
 import RelationshipSelect from "@/components/signup/RelationshipSelect.vue";
@@ -16,6 +16,7 @@ interface FormErrors {
   passwordConfirm: string;
   gender: string;
   relationship: string;
+  relationship_detail: string;
   subject_link_code: string;
   department: string;
   license_number: string;
@@ -27,6 +28,11 @@ const router = useRouter();
 const signupStore = useSignupStore();
 const passwordConfirm = ref("");
 
+const currentYear = new Date().getFullYear();
+const birthYear = ref("");
+const birthMonth = ref("");
+const birthDay = ref("");
+
 const errors = reactive<FormErrors>({
   name: "",
   email: "",
@@ -36,6 +42,7 @@ const errors = reactive<FormErrors>({
   passwordConfirm: "",
   gender: "",
   relationship: "",
+  relationship_detail: "",
   subject_link_code: "",
   department: "",
   license_number: "",
@@ -44,6 +51,27 @@ const errors = reactive<FormErrors>({
 });
 
 const roleTitle = computed(() => signupStore.roleLabel);
+
+const availableYears = computed(() =>
+  Array.from({ length: 120 }, (_, index) => String(currentYear - 1 - index))
+);
+
+const isValidBirthYear = computed(() => {
+  if (!/^\d{4}$/.test(birthYear.value)) return false;
+  const year = Number(birthYear.value);
+  return year >= 1900 && year < currentYear;
+});
+
+const monthOptions = computed(() =>
+  Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0"))
+);
+
+const dayOptions = computed(() => {
+  if (!isValidBirthYear.value || !birthMonth.value) return [] as string[];
+
+  const daysInMonth = new Date(Number(birthYear.value), Number(birthMonth.value), 0).getDate();
+  return Array.from({ length: daysInMonth }, (_, index) => String(index + 1).padStart(2, "0"));
+});
 
 const isNextEnabled = computed(() => {
   const hasPasswordConfirm = passwordConfirm.value.trim().length > 0;
@@ -56,6 +84,62 @@ const resetErrors = () => {
     errors[key] = "";
   });
 };
+
+const formatPhoneNumber = (input: string): string => {
+  let digits = input.replace(/\D/g, "");
+
+  if (!digits.startsWith("010")) {
+    digits = `010${digits.replace(/^010/, "")}`;
+  }
+
+  digits = digits.slice(0, 11);
+  const body = digits.slice(3);
+
+  if (body.length <= 4) {
+    return `010-${body}`;
+  }
+
+  return `010-${body.slice(0, 4)}-${body.slice(4, 8)}`;
+};
+
+const onPhoneFocus = () => {
+  if (!signupStore.phone_number.trim()) {
+    signupStore.phone_number = "010-";
+    return;
+  }
+
+  signupStore.phone_number = formatPhoneNumber(signupStore.phone_number);
+};
+
+const onPhoneInput = () => {
+  signupStore.phone_number = formatPhoneNumber(signupStore.phone_number);
+};
+
+const onBirthYearInput = () => {
+  birthYear.value = birthYear.value.replace(/\D/g, "").slice(0, 4);
+
+  if (!isValidBirthYear.value) {
+    birthMonth.value = "";
+    birthDay.value = "";
+  }
+};
+
+const syncBirthDateFromParts = () => {
+  if (isValidBirthYear.value && birthMonth.value && birthDay.value) {
+    signupStore.date_of_birth = `${birthYear.value}-${birthMonth.value}-${birthDay.value}`;
+    return;
+  }
+
+  signupStore.date_of_birth = "";
+};
+
+watch([birthYear, birthMonth, birthDay], () => {
+  if (birthDay.value && !dayOptions.value.includes(birthDay.value)) {
+    birthDay.value = "";
+  }
+
+  syncBirthDateFromParts();
+});
 
 const validateCommonFields = (): boolean => {
   let isValid = true;
@@ -77,7 +161,7 @@ const validateCommonFields = (): boolean => {
     errors.phone_number = "전화번호를 입력해 주세요.";
     isValid = false;
   } else if (!signupStore.isPhoneValid) {
-    errors.phone_number = "전화번호 형식이 올바르지 않습니다.";
+    errors.phone_number = "전화번호 형식이 올바르지 않습니다. (010-0000-0000)";
     isValid = false;
   }
 
@@ -108,16 +192,19 @@ const validateCommonFields = (): boolean => {
 const validateRoleSpecificFields = (): boolean => {
   let isValid = true;
 
-  if (signupStore.role_code === 0) {
-    if (!signupStore.gender) {
-      errors.gender = "성별을 선택해 주세요.";
-      isValid = false;
-    }
+  if (signupStore.role_code === 0 && !signupStore.gender) {
+    errors.gender = "성별을 선택해 주세요.";
+    isValid = false;
   }
 
   if (signupStore.role_code === 1) {
     if (!signupStore.relationship) {
       errors.relationship = "대상자와의 관계를 선택해 주세요.";
+      isValid = false;
+    }
+
+    if (signupStore.relationship === "other" && !signupStore.relationship_detail.trim()) {
+      errors.relationship_detail = "기타 관계를 입력해 주세요.";
       isValid = false;
     }
 
@@ -135,14 +222,17 @@ const validateRoleSpecificFields = (): boolean => {
       errors.department = "진료과를 입력해 주세요.";
       isValid = false;
     }
+
     if (!signupStore.license_number.trim()) {
       errors.license_number = "면허번호를 입력해 주세요.";
       isValid = false;
     }
+
     if (!signupStore.hospital.trim()) {
       errors.hospital = "병원명을 입력해 주세요.";
       isValid = false;
     }
+
     if (!signupStore.hospital_number.trim()) {
       errors.hospital_number = "병원 연락처를 입력해 주세요.";
       isValid = false;
@@ -169,6 +259,19 @@ const goBack = () => {
 };
 
 onMounted(() => {
+  if (signupStore.date_of_birth) {
+    const match = signupStore.date_of_birth.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      birthYear.value = match[1];
+      birthMonth.value = match[2];
+      birthDay.value = match[3];
+    }
+  }
+
+  if (signupStore.phone_number) {
+    signupStore.phone_number = formatPhoneNumber(signupStore.phone_number);
+  }
+
   if (signupStore.role_code === null) {
     router.replace({ name: "signup-role" });
   }
@@ -180,7 +283,7 @@ onMounted(() => {
     <section class="signup-card">
       <p class="step-label">회원가입 2 / 4</p>
       <h1>{{ roleTitle }} 정보 입력</h1>
-      <p class="description">필수 항목만 먼저 입력해 주세요. 입력 값은 다음 단계로 이동해도 유지됩니다.</p>
+      <p class="description">필수 항목을 먼저 입력해 주세요. 입력값은 다음 단계로 이동해도 유지됩니다.</p>
 
       <section class="section">
         <h2>기본 정보</h2>
@@ -199,13 +302,41 @@ onMounted(() => {
 
           <label class="field">
             <span>전화번호</span>
-            <input v-model="signupStore.phone_number" type="tel" placeholder="010-0000-0000" />
+            <input
+              v-model="signupStore.phone_number"
+              type="tel"
+              inputmode="numeric"
+              placeholder="010-0000-0000"
+              @focus="onPhoneFocus"
+              @input="onPhoneInput"
+            />
             <small v-if="errors.phone_number" class="error">{{ errors.phone_number }}</small>
           </label>
 
           <label class="field">
             <span>생년월일</span>
-            <input v-model="signupStore.date_of_birth" type="date" />
+            <div class="birthdate-row">
+              <input
+                v-model="birthYear"
+                type="text"
+                inputmode="numeric"
+                maxlength="4"
+                placeholder="연도(YYYY)"
+                list="birth-year-options"
+                @input="onBirthYearInput"
+              />
+              <datalist id="birth-year-options">
+                <option v-for="year in availableYears" :key="year" :value="year"></option>
+              </datalist>
+              <select v-model="birthMonth" :disabled="!isValidBirthYear">
+                <option value="">월</option>
+                <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
+              </select>
+              <select v-model="birthDay" :disabled="!isValidBirthYear || !birthMonth">
+                <option value="">일</option>
+                <option v-for="day in dayOptions" :key="day" :value="day">{{ day }}</option>
+              </select>
+            </div>
             <small v-if="errors.date_of_birth" class="error">{{ errors.date_of_birth }}</small>
           </label>
 
@@ -226,18 +357,22 @@ onMounted(() => {
       <section class="section">
         <h2>{{ roleTitle }} 추가 정보</h2>
 
-        <!-- role_code 조건부 렌더링 -->
         <GenderSelect v-if="signupStore.role_code === 0" />
 
         <template v-else-if="signupStore.role_code === 1">
           <RelationshipSelect />
           <SubjectLinkInput />
+          <p class="link-code-guide">
+            ※ 연동 코드는 대상자가 먼저 회원가입을 완료한 후 앱에서 확인할 수 있습니다.<br />
+            대상자 회원가입 후 발급된 코드를 입력해 주세요.
+          </p>
         </template>
 
         <DoctorFields v-else-if="signupStore.role_code === 2" />
 
         <small v-if="errors.gender" class="error">{{ errors.gender }}</small>
         <small v-if="errors.relationship" class="error">{{ errors.relationship }}</small>
+        <small v-if="errors.relationship_detail" class="error">{{ errors.relationship_detail }}</small>
         <small v-if="errors.subject_link_code" class="error">{{ errors.subject_link_code }}</small>
         <small v-if="errors.department" class="error">{{ errors.department }}</small>
         <small v-if="errors.license_number" class="error">{{ errors.license_number }}</small>
@@ -329,7 +464,8 @@ h2 {
   color: #1f2937;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 48px;
   border: 1px solid #cfd8df;
@@ -338,10 +474,23 @@ input {
   font-size: 16px;
 }
 
+.birthdate-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 8px;
+}
+
 .error {
   color: #b91c1c;
   font-size: 14px;
   font-weight: 600;
+}
+
+.link-code-guide {
+  margin: 2px 0 0;
+  color: #8a8a8a;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .button-row {

@@ -9,7 +9,15 @@ import {
 
 export type RoleCode = 0 | 1 | 2;
 export type Gender = "male" | "female" | "";
-export type Relationship = "daughter" | "son" | "spouse" | "sibling" | "other" | "";
+export type Relationship =
+  | "daughter"
+  | "son"
+  | "daughter_in_law"
+  | "son_in_law"
+  | "spouse"
+  | "sibling"
+  | "other"
+  | "";
 
 export interface SignupState {
   role_code: RoleCode | null;
@@ -20,6 +28,7 @@ export interface SignupState {
   password: string;
   gender: Gender;
   relationship: Relationship;
+  relationship_detail: string;
   subject_link_code: string;
   department: string;
   license_number: string;
@@ -33,7 +42,7 @@ export interface SignupState {
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^[0-9\-+\s()]{8,20}$/;
+const PHONE_REGEX = /^010-\d{4}-\d{4}$/;
 
 const getInitialState = (): SignupState => ({
   role_code: null,
@@ -44,6 +53,7 @@ const getInitialState = (): SignupState => ({
   password: "",
   gender: "",
   relationship: "",
+  relationship_detail: "",
   subject_link_code: "",
   department: "",
   license_number: "",
@@ -95,6 +105,7 @@ export const useSignupStore = defineStore("signup", {
       if (state.role_code === 1) {
         return (
           state.relationship !== "" &&
+          (state.relationship !== "other" || state.relationship_detail.trim().length > 0) &&
           state.subject_link_code.trim().length > 0 &&
           state.subjectCodeVerified
         );
@@ -124,6 +135,7 @@ export const useSignupStore = defineStore("signup", {
     clearRoleSpecificFields(): void {
       this.gender = "";
       this.relationship = "";
+      this.relationship_detail = "";
       this.subject_link_code = "";
       this.department = "";
       this.license_number = "";
@@ -178,6 +190,7 @@ export const useSignupStore = defineStore("signup", {
         password: this.password,
         gender: this.gender || undefined,
         relationship: this.relationship || undefined,
+        relationship_detail: this.relationship_detail.trim() || undefined,
         subject_link_code: this.subject_link_code.trim() || undefined,
         department: this.department.trim() || undefined,
         license_number: this.license_number.trim() || undefined,

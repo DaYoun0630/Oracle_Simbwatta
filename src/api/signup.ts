@@ -15,6 +15,7 @@ export interface SignupApiPayload {
   password: string;
   gender?: "male" | "female";
   relationship?: Relationship;
+  relationship_detail?: string;
   subject_link_code?: string;
   department?: string;
   license_number?: string;
