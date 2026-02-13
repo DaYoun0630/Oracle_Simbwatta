@@ -13,7 +13,7 @@ const categories = [
   },
   {
     id: "anomaly",
-    title: "이상 행동 알림 공유",
+    title: "관찰 필요 알림 공유",
     description: "이상 징후 및 관찰 필요 알림을 보호자에게 공유합니다.",
     model: sharing.anomalyAlert,
   },

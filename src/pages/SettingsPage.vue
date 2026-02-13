@@ -68,8 +68,8 @@ onMounted(() => {
             </svg>
           </div>
           <div class="card-content">
-            <h3>개인정보 수정</h3>
-            <p>이름, 연락처, 기본 프로필 관리</p>
+            <h3>{{ role === 'subject' ? '대상자 프로필' : '개인정보 수정' }}</h3>
+            <p>{{ role === 'subject' ? '이름, 연락처, 대상자 회원번호 확인' : '이름, 연락처, 기본 프로필 관리' }}</p>
           </div>
           <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>
@@ -86,7 +86,7 @@ onMounted(() => {
           </div>
           <div class="card-content">
             <h3>보호자 정보 공유 범위</h3>
-            <p>대화 요약, 이상 행동 알림, 복약 리마인드 항목을 언제든 철회할 수 있습니다.</p>
+            <p>대화 요약, 관찰 필요 알림, 복약 리마인드 항목을 언제든 철회할 수 있습니다.</p>
           </div>
           <svg class="chevron" width="24" height="24" viewBox="0 0 24 24">
             <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#aaa"/>

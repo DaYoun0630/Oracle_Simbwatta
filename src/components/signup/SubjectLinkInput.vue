@@ -25,17 +25,17 @@ const checkCode = async () => {
 <template>
   <div class="field-group">
     <label class="field">
-      <span class="field-label">대상자 연동 코드</span>
+      <span class="field-label">대상자 회원번호</span>
       <input
         v-model="signupStore.subject_link_code"
         type="text"
-        placeholder="예: LINK-1200"
+        placeholder="예: SM-123456"
         @input="onCodeInput"
       />
     </label>
 
     <button type="button" class="check-button" :disabled="!canCheckCode" @click="checkCode">
-      {{ signupStore.isCheckingSubjectCode ? "확인 중..." : "코드 확인" }}
+      {{ signupStore.isCheckingSubjectCode ? "확인 중..." : "회원번호 확인" }}
     </button>
 
     <p v-if="signupStore.subjectCodeMessage" :class="messageClass">

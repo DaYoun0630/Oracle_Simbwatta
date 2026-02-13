@@ -1,5 +1,5 @@
-<script setup>
-import { ref, computed } from 'vue';
+﻿<script setup>
+import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import AppShell from '@/components/AppShell.vue';
@@ -27,6 +27,30 @@ const hospitalNumber = ref(localStorage.getItem('doctor-hospital-number') || loc
 
 const showIsenseNumber = ref(false);
 const saveMessage = ref('');
+const currentYear = new Date().getFullYear();
+const birthYear = ref('');
+const birthMonth = ref('');
+const birthDay = ref('');
+
+const availableYears = computed(() =>
+  Array.from({ length: 120 }, (_, index) => String(currentYear - 1 - index))
+);
+
+const isValidBirthYear = computed(() => {
+  if (!/^\d{4}$/.test(birthYear.value)) return false;
+  const year = Number(birthYear.value);
+  return year >= 1900 && year < currentYear;
+});
+
+const monthOptions = computed(() =>
+  Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'))
+);
+
+const dayOptions = computed(() => {
+  if (!isValidBirthYear.value || !birthMonth.value) return [];
+  const daysInMonth = new Date(Number(birthYear.value), Number(birthMonth.value), 0).getDate();
+  return Array.from({ length: daysInMonth }, (_, index) => String(index + 1).padStart(2, '0'));
+});
 
 const avatarFallback = computed(() => doctorName.value?.trim()?.charAt(0) || '의');
 
@@ -47,6 +71,105 @@ const maskedIsenseNumber = computed(() => {
   return `${number.slice(0, 2)}${'*'.repeat(number.length - 2)}`;
 });
 
+const formatPersonalPhoneNumber = (input) => {
+  let digits = String(input ?? '').replace(/\D/g, '');
+
+  if (!digits.startsWith('010')) {
+    digits = `010${digits.replace(/^010/, '')}`;
+  }
+
+  digits = digits.slice(0, 11);
+  const body = digits.slice(3);
+
+  if (body.length <= 4) {
+    return `010-${body}`;
+  }
+
+  return `010-${body.slice(0, 4)}-${body.slice(4, 8)}`;
+};
+
+const formatHospitalPhoneNumber = (input) => {
+  const digits = String(input ?? '').replace(/\D/g, '').slice(0, 10);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  if (digits.length <= 6) {
+    return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+  }
+
+  return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
+};
+
+const onPersonalPhoneFocus = () => {
+  if (!phoneNumber.value.trim()) {
+    phoneNumber.value = '010-';
+    return;
+  }
+
+  phoneNumber.value = formatPersonalPhoneNumber(phoneNumber.value);
+};
+
+const onPersonalPhoneInput = () => {
+  phoneNumber.value = formatPersonalPhoneNumber(phoneNumber.value);
+};
+
+const onHospitalPhoneInput = () => {
+  hospitalNumber.value = formatHospitalPhoneNumber(hospitalNumber.value);
+};
+
+const onBirthYearInput = () => {
+  birthYear.value = birthYear.value.replace(/\D/g, '').slice(0, 4);
+
+  if (!isValidBirthYear.value) {
+    birthMonth.value = '';
+    birthDay.value = '';
+  }
+};
+
+const syncBirthDateFromParts = () => {
+  if (isValidBirthYear.value && birthMonth.value && birthDay.value) {
+    dateOfBirth.value = `${birthYear.value}-${birthMonth.value}-${birthDay.value}`;
+    return;
+  }
+
+  dateOfBirth.value = '';
+};
+
+const initBirthParts = () => {
+  if (!dateOfBirth.value) return;
+
+  const match = String(dateOfBirth.value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    dateOfBirth.value = '';
+    return;
+  }
+
+  birthYear.value = match[1];
+  birthMonth.value = match[2];
+  birthDay.value = match[3];
+
+  if (!isValidBirthYear.value || !monthOptions.value.includes(birthMonth.value) || !dayOptions.value.includes(birthDay.value)) {
+    birthYear.value = '';
+    birthMonth.value = '';
+    birthDay.value = '';
+    dateOfBirth.value = '';
+  }
+};
+
+watch([birthYear, birthMonth, birthDay], () => {
+  if (birthDay.value && !dayOptions.value.includes(birthDay.value)) {
+    birthDay.value = '';
+  }
+
+  syncBirthDateFromParts();
+});
+
+phoneNumber.value = phoneNumber.value ? formatPersonalPhoneNumber(phoneNumber.value) : '';
+hospitalNumber.value = hospitalNumber.value ? formatHospitalPhoneNumber(hospitalNumber.value) : '';
+initBirthParts();
+
 const saveSettings = () => {
   localStorage.setItem('doctor-phone-number', phoneNumber.value.trim());
   localStorage.setItem('doctor-date-of-birth', dateOfBirth.value);
@@ -56,7 +179,6 @@ const saveSettings = () => {
   localStorage.setItem('doctor-hospital', hospital.value.trim());
   localStorage.setItem('doctor-hospital-number', hospitalNumber.value.trim());
 
-  // 기존 키와 호환 유지
   localStorage.setItem('doctor-specialty', department.value.trim());
   localStorage.setItem('doctor-license', isenseNumber.value.trim());
   localStorage.setItem('doctor-hospital-name', hospital.value.trim());
@@ -107,7 +229,7 @@ const handleLogout = () => {
         <div class="card-header">
           <div>
             <h3>의료진 정보</h3>
-            <p>개인 페이지에 필요한 정보만 표시합니다.</p>
+            <p>개인 페이지에 필요한 정보만 표시됩니다.</p>
           </div>
         </div>
 
@@ -121,7 +243,7 @@ const handleLogout = () => {
             <label>면허번호(ISENSE)</label>
             <input v-model="isenseNumber" type="text" placeholder="면허번호를 입력하세요" />
             <div class="inline-row">
-              <strong class="masked-value">표시값: {{ maskedIsenseNumber }}</strong>
+              <strong class="masked-value">표시값 {{ maskedIsenseNumber }}</strong>
               <button class="text-button" @click="showIsenseNumber = !showIsenseNumber">
                 {{ showIsenseNumber ? '가리기' : '전체보기' }}
               </button>
@@ -134,8 +256,13 @@ const handleLogout = () => {
           </div>
 
           <div class="input-group">
-            <label>병원 대표번호</label>
-            <input v-model="hospitalNumber" type="tel" placeholder="02-0000-0000" />
+            <label>병원 대표전화번호</label>
+            <input
+              v-model="hospitalNumber"
+              type="tel"
+              placeholder="02-0000-0000"
+              @input="onHospitalPhoneInput"
+            />
           </div>
         </div>
       </section>
@@ -151,12 +278,39 @@ const handleLogout = () => {
         <div class="input-grid">
           <div class="input-group">
             <label>개인 연락처</label>
-            <input v-model="phoneNumber" type="tel" placeholder="010-0000-0000" />
+            <input
+              v-model="phoneNumber"
+              type="tel"
+              placeholder="010-0000-0000"
+              @focus="onPersonalPhoneFocus"
+              @input="onPersonalPhoneInput"
+            />
           </div>
 
           <div class="input-group">
             <label>생년월일 (선택)</label>
-            <input v-model="dateOfBirth" type="date" />
+            <div class="birthdate-row">
+              <input
+                v-model="birthYear"
+                type="text"
+                inputmode="numeric"
+                maxlength="4"
+                placeholder="연도(YYYY)"
+                list="doctor-birth-year-options"
+                @input="onBirthYearInput"
+              />
+              <datalist id="doctor-birth-year-options">
+                <option v-for="year in availableYears" :key="year" :value="year"></option>
+              </datalist>
+              <select v-model="birthMonth" :disabled="!isValidBirthYear">
+                <option value="">월</option>
+                <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
+              </select>
+              <select v-model="birthDay" :disabled="!isValidBirthYear || !birthMonth">
+                <option value="">일</option>
+                <option v-for="day in dayOptions" :key="day" :value="day">{{ day }}</option>
+              </select>
+            </div>
           </div>
         </div>
       </section>
@@ -284,7 +438,8 @@ const handleLogout = () => {
   color: #2e2e2e;
 }
 
-.input-group input {
+.input-group input,
+.input-group select {
   width: 100%;
   padding: 14px 16px;
   border-radius: 16px;
@@ -296,6 +451,12 @@ const handleLogout = () => {
   color: #2e2e2e;
   outline: none;
   box-sizing: border-box;
+}
+
+.birthdate-row {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  gap: 8px;
 }
 
 .inline-row {
@@ -365,6 +526,10 @@ const handleLogout = () => {
   .inline-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .birthdate-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -18,6 +18,11 @@ const {
 } = useDoctorData(); // 환자 데이터와 선택 상태를 관리한다
 
 const searchQuery = ref(''); // 환자 검색어를 저장한다
+const normalizeSearchKeyword = (value) => String(value ?? '')
+  .toLowerCase()
+  .normalize('NFC')
+  .replace(/\s+/g, '')
+  .trim();
 
 const getRoutePatientId = () => {
   const raw = route.query.patientId; // 쿼리에서 환자 ID를 읽는다
@@ -37,15 +42,15 @@ watch(() => route.query.patientId, (value) => {
 
 const patients = computed(() => doctorData.value?.patients || []); // 환자 목록을 계산한다
 
-const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase()); // 검색어를 정규화한다
+const normalizedQuery = computed(() => normalizeSearchKeyword(searchQuery.value)); // 검색어를 정규화한다
 
 const filteredPatients = computed(() => {
   if (!normalizedQuery.value) return patients.value; // 검색어가 없으면 전체를 노출한다
   return patients.value.filter((patient) => {
-    const name = String(patient?.name ?? '').toLowerCase(); // 이름을 비교한다
-    const id = String(patient?.id ?? '').toLowerCase(); // ID를 비교한다
-    const rid = String(patient?.rid ?? '').toLowerCase(); // RID를 비교한다
-    const hospital = String(patient?.hospital ?? '').toLowerCase(); // 병원을 비교한다
+    const name = normalizeSearchKeyword(patient?.name); // 이름을 비교한다
+    const id = normalizeSearchKeyword(patient?.id); // ID를 비교한다
+    const rid = normalizeSearchKeyword(patient?.rid); // RID를 비교한다
+    const hospital = normalizeSearchKeyword(patient?.hospital); // 병원을 비교한다
     return (
       name.includes(normalizedQuery.value) ||
       id.includes(normalizedQuery.value) ||

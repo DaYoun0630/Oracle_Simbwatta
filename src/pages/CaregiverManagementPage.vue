@@ -1,11 +1,8 @@
-<script setup>
-import { ref, computed } from 'vue';
-import { useAuthStore } from '@/stores/auth';
+﻿<script setup>
+import { ref } from 'vue';
 import CaregiverShell from '@/components/shells/CaregiverShell.vue';
+import { verifySubjectLinkCode } from '@/api/signup';
 
-const authStore = useAuthStore();
-
-// 현재 계정에 연결된 피보호자 목록 데이터
 const connectedSubjects = ref([
   {
     id: 1,
@@ -16,24 +13,64 @@ const connectedSubjects = ref([
   }
 ]);
 
-// 대기 중인 초대 목록 (확장성 고려)
-const pendingInvites = ref([]);
+const memberNumberInput = ref('');
+const inviteMessage = ref('');
+const inviteError = ref(false);
+const isSubmitting = ref(false);
 
-// 연결 해제 로직: 전달받은 ID를 제외한 목록으로 재할당
 const removeConnection = (subjectId) => {
-  connectedSubjects.value = connectedSubjects.value.filter(s => s.id !== subjectId);
+  connectedSubjects.value = connectedSubjects.value.filter((subject) => subject.id !== subjectId);
 };
 
-// 신규 연결 요청 전송: API 연동 필요 구간
-const sendInvite = () => {
-  // 초대 기능 (추후 구현)
+const sendInvite = async () => {
+  const code = memberNumberInput.value.trim().toUpperCase();
+
+  if (!code) {
+    inviteMessage.value = '대상자 회원번호를 입력해 주세요.';
+    inviteError.value = true;
+    return;
+  }
+
+  isSubmitting.value = true;
+  inviteMessage.value = '';
+
+  try {
+    const result = await verifySubjectLinkCode(code);
+
+    if (!result.valid) {
+      inviteMessage.value = result.message;
+      inviteError.value = true;
+      return;
+    }
+
+    const alreadyConnected = connectedSubjects.value.some((subject) => subject.memberNumber === code);
+    if (!alreadyConnected) {
+      connectedSubjects.value.unshift({
+        id: Date.now(),
+        name: result.linked_subject_name || '대상자',
+        relation: '연결됨',
+        status: 'active',
+        lastActive: '방금 전',
+        memberNumber: code
+      });
+    }
+
+    inviteMessage.value = '대상자 회원번호 확인이 완료되어 연결 요청을 보냈습니다.';
+    inviteError.value = false;
+    memberNumberInput.value = '';
+  } catch (error) {
+    console.error('Failed to validate member number:', error);
+    inviteMessage.value = '회원번호 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
+    inviteError.value = true;
+  } finally {
+    isSubmitting.value = false;
+  }
 };
 </script>
 
 <template>
   <CaregiverShell title="보호자 연결 관리">
     <div class="caregiver-management">
-      
       <section class="section">
         <h2 class="section-title">연결된 대상자</h2>
 
@@ -64,8 +101,11 @@ const sendInvite = () => {
               <p>{{ subject.relation }}</p>
               <span class="last-active">최근 활동: {{ subject.lastActive }}</span>
             </div>
-            <div class="subject-status" :class="subject.status">
-              {{ subject.status === 'active' ? '활성' : '비활성' }}
+            <div class="subject-actions">
+              <div class="subject-status" :class="subject.status">
+                {{ subject.status === 'active' ? '활성' : '비활성' }}
+              </div>
+              <button type="button" class="remove-button" @click="removeConnection(subject.id)">연결 해제</button>
             </div>
           </div>
         </div>
@@ -73,18 +113,20 @@ const sendInvite = () => {
 
       <section class="section">
         <h2 class="section-title">새 대상자 연결</h2>
-        <p class="section-desc">대상자 기기에서 생성된 연결 코드를 입력하여 연결할 수 있습니다.</p>
+        <p class="section-desc">대상자에게 공유받은 회원번호를 입력해 연결할 수 있습니다.</p>
 
         <div class="invite-form">
           <input
+            v-model="memberNumberInput"
             type="text"
-            placeholder="연결 코드 입력"
+            placeholder="대상자 회원번호 입력 (예: SM-123456)"
             class="invite-input"
           />
-          <button class="invite-button" @click="sendInvite">
-            연결하기
+          <button class="invite-button" :disabled="isSubmitting" @click="sendInvite">
+            {{ isSubmitting ? '확인 중...' : '연결하기' }}
           </button>
         </div>
+        <p v-if="inviteMessage" :class="['invite-message', inviteError ? 'error' : 'success']">{{ inviteMessage }}</p>
       </section>
 
       <section class="section help-section">
@@ -96,8 +138,8 @@ const sendInvite = () => {
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <div>
-            <h4>연결 코드는 어디서 확인하나요?</h4>
-            <p>대상자 기기의 설정 → 보호자 연결에서 연결 코드를 생성할 수 있습니다.</p>
+            <h4>대상자 회원번호는 어디서 확인하나요?</h4>
+            <p>대상자의 기기의 설정 -> 프로필에서 대상자의 회원번호를 확인할 수 있습니다.</p>
           </div>
         </div>
       </section>
@@ -106,21 +148,18 @@ const sendInvite = () => {
 </template>
 
 <style scoped>
-/* 메인 컨테이너 레이아웃 */
 .caregiver-management {
   display: flex;
   flex-direction: column;
   gap: 28px;
 }
 
-/* 섹션 공통 간격 제어 */
 .section {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* 타이포그래피: 섹션 제목 */
 .section-title {
   font-size: 20px;
   font-weight: 800;
@@ -128,7 +167,6 @@ const sendInvite = () => {
   margin: 0;
 }
 
-/* 설명 문구 스타일 */
 .section-desc {
   font-size: 15px;
   font-weight: 600;
@@ -137,7 +175,6 @@ const sendInvite = () => {
   line-height: 1.5;
 }
 
-/* 빈 목록 상태의 뉴모피즘 스타일 적용 */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -156,14 +193,12 @@ const sendInvite = () => {
   margin: 0;
 }
 
-/* 대상자 카드 리스트 간격 */
 .subject-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-/* 카드 아이템의 입체감 효과(Drop Shadow) */
 .subject-card {
   display: flex;
   align-items: center;
@@ -174,15 +209,13 @@ const sendInvite = () => {
   box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
 }
 
-/* 아바타 배경의 내측 그림자 효과 */
 .subject-avatar {
   width: 52px;
   height: 52px;
   min-width: 52px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6),
-              inset -4px -4px 10px #ffffff;
+  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -212,7 +245,13 @@ const sendInvite = () => {
   color: #999;
 }
 
-/* 상태 뱃지 공통 스타일 */
+.subject-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
 .subject-status {
   padding: 8px 16px;
   border-radius: 999px;
@@ -220,25 +259,30 @@ const sendInvite = () => {
   font-weight: 700;
 }
 
-/* 활성 상태 컬러 스킴 */
 .subject-status.active {
   background: rgba(76, 183, 183, 0.15);
   color: #4cb7b7;
 }
 
-/* 비활성 상태 컬러 스킴 */
 .subject-status.inactive {
   background: rgba(153, 153, 153, 0.15);
   color: #999;
 }
 
-/* 입력 폼 가로 배치 */
+.remove-button {
+  border: none;
+  background: transparent;
+  color: #ef4444;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .invite-form {
   display: flex;
   gap: 12px;
 }
 
-/* 인풋 필드 내측 그림자 및 포커스 스타일 */
 .invite-input {
   flex: 1;
   padding: 16px 20px;
@@ -263,7 +307,6 @@ const sendInvite = () => {
               0 0 0 3px rgba(76, 183, 183, 0.3);
 }
 
-/* 강조 버튼 스타일 및 클릭 피드백(Scale) */
 .invite-button {
   padding: 16px 24px;
   border: none;
@@ -278,16 +321,34 @@ const sendInvite = () => {
   transition: all 0.2s;
 }
 
+.invite-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .invite-button:active {
   transform: scale(0.98);
   box-shadow: 0 4px 8px rgba(76, 183, 183, 0.2);
+}
+
+.invite-message {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.invite-message.success {
+  color: #176a3a;
+}
+
+.invite-message.error {
+  color: #b91c1c;
 }
 
 .help-section {
   margin-top: 8px;
 }
 
-/* 도움말 카드 내측 그림자 디자인 */
 .help-card {
   display: flex;
   gap: 16px;
@@ -310,5 +371,19 @@ const sendInvite = () => {
   color: #777;
   margin: 0;
   line-height: 1.5;
+}
+
+@media (max-width: 680px) {
+  .invite-form {
+    flex-direction: column;
+  }
+
+  .subject-card {
+    align-items: flex-start;
+  }
+
+  .subject-actions {
+    align-items: flex-start;
+  }
 }
 </style>

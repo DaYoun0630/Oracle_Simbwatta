@@ -182,7 +182,7 @@ const selectRole = (role: string) => {
 .role-list {
   display: flex;
   flex-direction: column;
-  gap: clamp(14px, 2.6vmin, 24px);
+  gap: clamp(22px, 3.2vmin, 34px);
 }
 
 .role-card {

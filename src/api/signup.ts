@@ -44,7 +44,9 @@ const VALID_SUBJECT_CODES: Record<string, string> = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 보호자 연동 코드 유효성 검증 Mock API
+const MEMBER_NUMBER_REGEX = /^SM-\d{6}$/;
+
+// 보호자 대상자 회원번호 유효성 검증 Mock API
 export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCodeResult> {
   await sleep(MOCK_DELAY_MS);
 
@@ -52,7 +54,15 @@ export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCo
   if (!normalizedCode) {
     return {
       valid: false,
-      message: "코드를 입력해 주세요.",
+      message: "대상자 회원번호를 입력해 주세요.",
+    };
+  }
+
+  if (MEMBER_NUMBER_REGEX.test(normalizedCode)) {
+    return {
+      valid: true,
+      linked_subject_name: "대상자",
+      message: "유효한 대상자 회원번호입니다.",
     };
   }
 
@@ -60,14 +70,14 @@ export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCo
   if (!linkedSubjectName) {
     return {
       valid: false,
-      message: "유효하지 않은 코드입니다. 다시 확인해 주세요.",
+      message: "유효하지 않은 대상자 회원번호입니다. 다시 확인해 주세요.",
     };
   }
 
   return {
     valid: true,
     linked_subject_name: linkedSubjectName,
-    message: `연동 가능한 대상자: ${linkedSubjectName}`,
+    message: `연결 가능한 대상자: ${linkedSubjectName}`,
   };
 }
 
@@ -82,7 +92,7 @@ export async function signupWithMockApi(payload: SignupApiPayload): Promise<Sign
   if (payload.role_code === 1 && payload.subject_link_code) {
     const verifyResult = await verifySubjectLinkCode(payload.subject_link_code);
     if (!verifyResult.valid) {
-      throw new Error("대상자 연동 코드 검증이 필요합니다.");
+      throw new Error("대상자 회원번호 검증이 필요합니다.");
     }
   }
 

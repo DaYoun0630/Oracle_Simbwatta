@@ -13,19 +13,19 @@ const slides = [
     id: "voice",
     title: "정밀 분석",
     subtitle: "음성 변화를 빠르게 포착",
-    description: "소리 파형을 정밀하게 스캔하여 작은 변화도 놓치지 않습니다."
+    description: "소리의 파형을 정밀하게 스캔하여 / 작은 변화도 놓치지 않습니다."
   },
   {
     id: "ai",
-    title: "인지 판별",
-    subtitle: "AI 기반 신뢰도 제시",
-    description: "데이터 포인트가 연결되며 결과를 명확하게 보여줍니다."
+    title: "인지 상태 분석",
+    subtitle: "AI 분석을 통한 평가",
+    description: "음성, MRI, 인지검사 점수를 함께 분석해 / 현재 인지 상태와 언어 훈련에 따른 / 변화를 확인할 수 있습니다."
   },
   {
     id: "monitor",
     title: "안심 알림",
     subtitle: "보호자와 실시간 공유",
-    description: "중요한 변화를 부드러운 알림으로 빠르게 전달합니다."
+    description: "중요한 변화를 부드러운 알림으로 / 빠르게 전달합니다."
   }
 ];
 
@@ -271,38 +271,32 @@ onUnmounted(() => {
               <div class="slide-card">
                 <div class="pictogram" :class="`pictogram-${slide.id}`">
                   <svg v-if="slide.id === 'voice'" viewBox="0 0 140 140" aria-hidden="true">
-                    <circle class="pg-ring ring-1" cx="70" cy="70" r="20" />
-                    <circle class="pg-ring ring-2" cx="70" cy="70" r="32" />
-                    <circle class="pg-ring ring-3" cx="70" cy="70" r="44" />
-                    <path class="pg-wave" d="M24 70c10-12 20-12 30 0s20 12 30 0 20-12 30 0" />
-                    <rect class="pg-scan" x="28" y="56" width="84" height="6" rx="3" />
-                    <rect class="pg-mic" x="64" y="50" width="12" height="30" rx="6" />
-                    <rect class="pg-mic-base" x="56" y="82" width="28" height="8" rx="4" />
+                    <path class="pg-wave" d="M34 80c6-7 12-7 18 0s12 7 18 0s12-7 18 0s12 7 18 0" />
+                    <circle class="pg-ring ring-1" cx="70" cy="70" r="16" />
+                    <circle class="pg-ring ring-2" cx="70" cy="70" r="26" />
+                    <circle class="pg-ring ring-3" cx="70" cy="70" r="36" />
+                    <rect class="pg-mic" x="64" y="52" width="12" height="30" rx="6" />
+                    <rect class="pg-mic-base" x="58" y="84" width="24" height="8" rx="4" />
+                    <path class="pg-mic-stand" d="M70 92v10" />
                   </svg>
 
                   <svg v-else-if="slide.id === 'ai'" viewBox="0 0 140 140" aria-hidden="true">
-                    <circle class="pg-head" cx="70" cy="58" r="26" />
-                    <rect class="pg-neck" x="60" y="84" width="20" height="16" rx="8" />
-                    <circle class="pg-node" cx="58" cy="52" r="4" />
-                    <circle class="pg-node" cx="78" cy="46" r="4" />
-                    <circle class="pg-node" cx="84" cy="68" r="4" />
-                    <circle class="pg-node" cx="60" cy="72" r="4" />
-                    <line class="pg-link" x1="58" y1="52" x2="78" y2="46" />
-                    <line class="pg-link" x1="78" y1="46" x2="84" y2="68" />
-                    <line class="pg-link" x1="84" y1="68" x2="60" y2="72" />
-                    <circle class="pg-badge" cx="96" cy="88" r="14" />
-                    <path class="pg-check" d="M90 88l4 4 8-8" />
+                    <path class="pg-brain-outline" d="M46 96c-10 0-18-8-18-19c0-8 4-14 10-17c0-11 9-20 20-20c4 0 8 1 11 3c4-5 10-8 17-8c12 0 22 10 22 22c8 3 13 10 13 19c0 10-8 19-19 19H78l10 14h-12l-12-14H46z" />
+                    <path class="pg-brain-line" d="M50 70c0-8 5-14 12-17" />
+                    <path class="pg-brain-line" d="M60 49c4 0 8 2 10 6" />
+                    <path class="pg-brain-line" d="M69 86c-8 3-18 1-24-6" />
+                    <path class="pg-brain-line" d="M88 46c-7 3-11 9-11 16" />
+                    <path class="pg-brain-line" d="M92 61c8 0 15 5 18 12" />
+                    <path class="pg-brain-line" d="M83 84c7 3 15 1 20-4" />
                   </svg>
 
                   <svg v-else viewBox="0 0 140 140" aria-hidden="true">
                     <circle class="pg-person" cx="40" cy="56" r="12" />
-                    <rect class="pg-body" x="30" y="70" width="20" height="20" rx="8" />
+                    <rect class="pg-body" x="27" y="68" width="26" height="26" rx="10" />
                     <circle class="pg-person" cx="100" cy="56" r="12" />
-                    <rect class="pg-body" x="90" y="70" width="20" height="20" rx="8" />
-                    <path class="pg-signal" d="M52 62c12-14 24-14 36 0" />
+                    <rect class="pg-body" x="87" y="68" width="26" height="26" rx="10" />
                     <path class="pg-signal" d="M52 74c12-14 24-14 36 0" />
-                    <path class="pg-signal" d="M52 86c12-14 24-14 36 0" />
-                    <path class="pg-heart" d="M70 100c-8-6-12-10-12-16a6 6 0 0 1 12-3a6 6 0 0 1 12 3c0 6-4 10-12 16z" />
+                    <path class="pg-heart" d="M70 69c-3-2-5-4-5-7a3 3 0 0 1 5-1a3 3 0 0 1 5 1c0 3-2 5-5 7z" />
                   </svg>
                 </div>
 
@@ -310,7 +304,7 @@ onUnmounted(() => {
                   <span class="highlight">{{ slide.title }}</span>
                   <span class="subtitle">{{ slide.subtitle }}</span>
                 </h3>
-                <p class="slide-desc">{{ slide.description }}</p>
+                <p class="slide-desc">{{ slide.description.replaceAll(" / ", "\n") }}</p>
               </div>
             </article>
           </div>
@@ -444,16 +438,16 @@ onUnmounted(() => {
   min-width: 100%;
   height: 100%;
   display: flex;
-  padding: clamp(6px, 1.4vmin, 10px);
+  padding: 0;
 }
 
 .slide-card {
   flex: 1;
   width: 100%;
   min-width: 0;
-  background: #ffffff;
+  background: transparent;
   border-radius: clamp(18px, 3.6vmin, 26px);
-  box-shadow: 10px 10px 20px #d1d9e6, -10px -10px 20px #ffffff;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -464,14 +458,16 @@ onUnmounted(() => {
 }
 
 .pictogram {
-  width: clamp(92px, 22vmin, 156px);
-  height: clamp(92px, 22vmin, 156px);
+  width: clamp(161px, 38.5vmin, 273px);
+  height: clamp(161px, 38.5vmin, 273px);
   border-radius: clamp(18px, 3.6vmin, 26px);
   background: #f5f6f7;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: inset 6px 6px 12px rgba(209, 217, 230, 0.7), inset -6px -6px 12px #ffffff;
+  overflow: hidden;
+  margin-bottom: 0;
 }
 
 .pictogram svg {
@@ -506,6 +502,7 @@ onUnmounted(() => {
   margin: 0;
   max-width: 48ch;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .footer {
@@ -600,8 +597,8 @@ onUnmounted(() => {
 
 .pictogram-voice .pg-wave {
   fill: none;
-  stroke: #4cb7b7;
-  stroke-width: 3.2;
+  stroke: rgba(76, 183, 183, 0.4);
+  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -619,45 +616,39 @@ onUnmounted(() => {
   opacity: 0.85;
 }
 
-.pictogram-ai .pg-head {
-  fill: none;
-  stroke: #4cb7b7;
-  stroke-width: 3.2;
-}
-
-.pictogram-ai .pg-neck {
-  fill: rgba(76, 183, 183, 0.8);
-}
-
-.pictogram-ai .pg-node {
-  fill: #1f5f5f;
-  animation: nodePulse 2.6s ease-in-out infinite;
-}
-
-.pictogram-ai .pg-link {
-  stroke: #4cb7b7;
-  stroke-width: 2.4;
-  stroke-dasharray: 40;
-  stroke-dashoffset: 40;
-  animation: linkDraw 3.2s ease-in-out infinite;
-}
-
-.pictogram-ai .pg-badge {
-  fill: rgba(76, 183, 183, 0.2);
-  stroke: #4cb7b7;
-  stroke-width: 2.4;
-  animation: badgeGlow 2.8s ease-in-out infinite;
-}
-
-.pictogram-ai .pg-check {
+.pictogram-voice .pg-mic-stand {
   fill: none;
   stroke: #1f5f5f;
-  stroke-width: 3.2;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.pictogram-voice svg {
+  width: 120%;
+  height: 120%;
+}
+
+.pictogram-ai .pg-brain-outline {
+  fill: rgba(76, 183, 183, 0.1);
+  stroke: #1f5f5f;
+  stroke-width: 4.6;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-dasharray: 22;
-  stroke-dashoffset: 22;
-  animation: checkDraw 3.2s ease-in-out infinite;
+}
+
+.pictogram-ai .pg-brain-line {
+  fill: none;
+  stroke: #1f5f5f;
+  stroke-width: 3.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pictogram-ai .pg-brain-mid {
+  fill: none;
+  stroke: #4cb7b7;
+  stroke-width: 3;
+  stroke-linecap: round;
 }
 
 .pictogram-monitor .pg-person {
@@ -754,8 +745,9 @@ onUnmounted(() => {
   }
 
   .pictogram {
-    width: clamp(84px, 24vw, 120px);
-    height: clamp(84px, 24vw, 120px);
+    width: clamp(147px, 42vw, 210px);
+    height: clamp(147px, 42vw, 210px);
+    margin-bottom: 0;
   }
 
   .footer {
@@ -846,8 +838,9 @@ onUnmounted(() => {
   }
 
   .pictogram {
-    width: clamp(74px, 16vh, 102px);
-    height: clamp(74px, 16vh, 102px);
+    width: clamp(130px, 28vh, 179px);
+    height: clamp(130px, 28vh, 179px);
+    margin-bottom: 0;
   }
 
   .cta-button {

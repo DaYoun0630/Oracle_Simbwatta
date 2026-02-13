@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -9,10 +9,27 @@ import SubjectShell from '@/components/shells/SubjectShell.vue';
 const authStore = useAuthStore();
 const router = useRouter();
 const role = computed(() => authStore.role);
+const isSubject = computed(() => role.value === 'subject');
 
 const userName = ref(authStore.userName || '');
 const phoneNumber = ref(localStorage.getItem('user-phone') || '');
 const avatarUrl = ref(localStorage.getItem('user-avatar') || null);
+const memberActionMessage = ref('');
+const memberNumberPattern = /^SM-\d{6}$/;
+
+const generateSubjectMemberNumber = () => `SM-${Math.floor(100000 + Math.random() * 900000)}`;
+
+const subjectMemberNumber = ref('');
+if (isSubject.value) {
+  const saved = localStorage.getItem('subject-member-number');
+  const fromUser = authStore.user?.member_number || authStore.user?.subject_member_number || authStore.user?.id;
+  const normalizedUserValue = typeof fromUser === 'string' && fromUser.trim() ? fromUser.trim().toUpperCase() : '';
+  const usableSaved = saved && memberNumberPattern.test(saved) ? saved : '';
+  const usableUserValue = memberNumberPattern.test(normalizedUserValue) ? normalizedUserValue : '';
+  const nextValue = usableSaved || usableUserValue || generateSubjectMemberNumber();
+  subjectMemberNumber.value = nextValue;
+  localStorage.setItem('subject-member-number', nextValue);
+}
 
 const handleAvatarUpload = (event) => {
   const file = event.target.files[0];
@@ -29,11 +46,61 @@ const triggerAvatarUpload = () => {
   document.getElementById('avatar-input').click();
 };
 
+const setMemberMessage = (text) => {
+  memberActionMessage.value = text;
+  setTimeout(() => {
+    if (memberActionMessage.value === text) {
+      memberActionMessage.value = '';
+    }
+  }, 1800);
+};
+
+const copyMemberNumber = async () => {
+  if (!subjectMemberNumber.value) return;
+
+  try {
+    await navigator.clipboard.writeText(subjectMemberNumber.value);
+    setMemberMessage('회원번호가 클립보드에 복사되었습니다.');
+  } catch (error) {
+    console.error('Failed to copy member number:', error);
+    setMemberMessage('복사에 실패했습니다. 다시 시도해 주세요.');
+  }
+};
+
+const shareMemberNumber = async () => {
+  if (!subjectMemberNumber.value) return;
+
+  const message = `대상자 회원번호: ${subjectMemberNumber.value}`;
+
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: '대상자 회원번호',
+        text: message
+      });
+      setMemberMessage('회원번호를 공유했습니다.');
+      return;
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      console.error('Share failed. Falling back to copy:', error);
+    }
+  }
+
+  try {
+    await navigator.clipboard.writeText(message);
+    setMemberMessage('공유 기능을 지원하지 않아 메시지를 복사했습니다.');
+  } catch (error) {
+    console.error('Fallback copy failed:', error);
+    setMemberMessage('공유에 실패했습니다. 다시 시도해 주세요.');
+  }
+};
+
 const saveChanges = () => {
   if (userName.value) {
     authStore.setUser({
-      ...authStore.user,
-      name: userName.value
+      ...(authStore.user || {}),
+      name: userName.value,
+      role: role.value || 'subject'
     });
   }
   if (phoneNumber.value) {
@@ -97,6 +164,16 @@ const saveChanges = () => {
             class="neumorphic-input"
           />
         </div>
+      </section>
+
+      <section v-if="isSubject" class="member-number-card">
+        <p class="member-label">대상자 회원번호</p>
+        <strong class="member-value">{{ subjectMemberNumber }}</strong>
+        <div class="member-actions">
+          <button type="button" class="member-action-btn" @click="copyMemberNumber">회원번호 복사</button>
+          <button type="button" class="member-action-btn secondary" @click="shareMemberNumber">메시지로 공유</button>
+        </div>
+        <p v-if="memberActionMessage" class="member-message">{{ memberActionMessage }}</p>
       </section>
 
       <button class="save-button" @click="saveChanges">
@@ -207,6 +284,55 @@ const saveChanges = () => {
   font-weight: 600;
 }
 
+.member-number-card {
+  border-radius: 22px;
+  padding: 18px;
+  background: #f5f6f7;
+  box-shadow: inset 4px 4px 10px #d1d9e6, inset -4px -4px 10px #ffffff;
+  display: grid;
+  gap: 10px;
+}
+
+.member-label {
+  margin: 0;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.member-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: #1f2937;
+}
+
+.member-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.member-action-btn {
+  border: none;
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: #4cb7b7;
+  color: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.member-action-btn.secondary {
+  background: #3b82f6;
+}
+
+.member-message {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: #4c7d7d;
+  font-weight: 700;
+}
+
 .save-button {
   width: 100%;
   padding: 20px;
@@ -219,7 +345,7 @@ const saveChanges = () => {
   color: #ffffff;
   cursor: pointer;
   transition: all 0.2s;
-  margin-top: 16px;
+  margin-top: 8px;
 }
 
 .save-button:active {

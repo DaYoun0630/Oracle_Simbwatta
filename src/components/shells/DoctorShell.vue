@@ -175,16 +175,21 @@ const patientSheetOpen = ref(false);
 
 /* 환자 검색어 */
 const patientQuery = ref('');
+const normalizeSearchKeyword = (value) => String(value ?? '')
+  .toLowerCase()
+  .normalize('NFC')
+  .replace(/\s+/g, '')
+  .trim();
 
 /* 환자 목록을 필터링 */
 const filteredPatients = computed(() => {
-  const q = patientQuery.value.trim().toLowerCase();
+  const q = normalizeSearchKeyword(patientQuery.value);
   if (!q) return props.patients;
 
   return props.patients.filter((p) => {
-    const name = String(p?.name ?? '').toLowerCase();
-    const id = String(p?.id ?? '').toLowerCase();
-    const rid = String(p?.rid ?? '').toLowerCase();
+    const name = normalizeSearchKeyword(p?.name);
+    const id = normalizeSearchKeyword(p?.id);
+    const rid = normalizeSearchKeyword(p?.rid);
     return name.includes(q) || id.includes(q) || rid.includes(q);
   });
 });
