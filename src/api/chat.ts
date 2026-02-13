@@ -3,11 +3,17 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 console.log("API BASE URL:", BASE_URL);
 
 export type VoiceSessionMode = "live" | "mock";
+export type ConversationMode = "daily" | "therapy" | "mixed";
+export type SttEventType = "speech" | "no_speech" | "stt_error";
 
 export interface ChatMetaPayload {
   session_id?: string;
   profile_id?: string;
   session_mode?: VoiceSessionMode;
+  conversation_mode?: ConversationMode;
+  session_event?: "session_start";
+  stt_event?: SttEventType;
+  closing_reason?: string;
   turn_index?: number;
   elapsed_sec?: number;
   remaining_sec?: number;
@@ -28,6 +34,9 @@ export interface ChatResponse {
     conversation_phase?: "opening" | "warmup" | "dialog" | "closing";
     turn_index?: number;
     request_close?: boolean;
+    conversation_mode?: ConversationMode;
+    stt_event?: SttEventType;
+    closing_reason?: string;
     stimulus_count?: number;
     recall_hits?: number;
   } | null;

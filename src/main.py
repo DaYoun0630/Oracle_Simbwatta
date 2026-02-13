@@ -150,6 +150,12 @@ class SessionMeta(BaseModel):
     session_id: str | None = None
     profile_id: str | None = None
     session_mode: str | None = None
+    conversation_mode: str | None = None
+    conversation_phase: str | None = None
+    request_close: bool | None = None
+    session_event: str | None = None
+    stt_event: str | None = None
+    closing_reason: str | None = None
     turn_index: int | None = None
     elapsed_sec: float | None = None
     remaining_sec: float | None = None
@@ -180,43 +186,44 @@ class EndSessionRequest(BaseModel):
     session_mode: str | None = None
 
 
+def normalize_conversation_mode(raw_mode: str | None) -> str:
+    mode = str(raw_mode or "").strip().lower()
+    aliases = {
+        "daily": "daily",
+        "일상": "daily",
+        "therapy": "therapy",
+        "치료": "therapy",
+        "상담": "therapy",
+        "mixed": "mixed",
+        "both": "mixed",
+        "hybrid": "mixed",
+        "일상+치료": "mixed",
+    }
+    return aliases.get(mode, "mixed")
+
+
+def normalize_event_name(raw_value: str | None) -> str:
+    return str(raw_value or "").strip().lower().replace("-", "_")
+
+
 def build_fallback_reply(
     user_text: str,
     state_payload: dict[str, Any],
     model_result: dict[str, Any],
     meta: SessionMeta | None,
 ) -> str:
-    if meta and meta.should_wrap_up:
-        return (
-            "오늘 대화 감사해요. 지금까지 이야기한 내용을 잘 기억해 둘게요. "
-            "필요하면 다음에 이어서 편하게 말해 주세요."
-        )
+    del user_text, state_payload, model_result
+    session_event = normalize_event_name(meta.session_event if meta else None)
+    stt_event = normalize_event_name(meta.stt_event if meta else None)
+    request_close = bool(meta.request_close) if meta else False
 
-    dialog_mode = str(state_payload.get("dialog_state", "session_open"))
-    stage = str(model_result.get("stage", "unknown"))
-
-    if dialog_mode == "cognitive_training":
-        return (
-            "좋아요. 방금 말씀하신 내용을 기억하고 있어요. "
-            "다음 내용을 이어서 천천히 말해 주세요."
-        )
-
-    if dialog_mode == "recovery_dialog":
-        return (
-            "괜찮아요. 잠깐 쉬었다가 다시 해도 됩니다. "
-            "원하시면 지금까지 이야기한 기억을 이어서 정리해 볼게요."
-        )
-
-    if dialog_mode == "session_wrap":
-        return (
-            "오늘 대화 내용을 기억해 두겠습니다. "
-            "수고 많으셨고 다음에 다시 이어서 이야기해요."
-        )
-
-    return (
-        f"말씀해 주신 내용을 기억하겠습니다. 현재 단계는 {stage}로 보고 있어요. "
-        "조금 더 이야기해 주시면 이전 내용과 연결해서 도와드릴게요."
-    )
+    if request_close or (meta and meta.should_wrap_up):
+        return "오늘 대화는 여기서 마무리할게요. 다음에 이어서 이야기해요."
+    if stt_event == "no_speech":
+        return "잠시 잘 들리지 않았어요. 편한 속도로 다시 말씀해 주세요."
+    if session_event == "session_start":
+        return "안녕하세요. 연결이 잠시 불안정해요. 편하게 시작해 주세요."
+    return "지금 응답 생성이 잠시 불안정해요. 잠깐 후 다시 말씀해 주세요."
 
 def run_dialog_reply(
     user_text: str,
@@ -227,6 +234,11 @@ def run_dialog_reply(
 ) -> str:
     if external_run_llm:
         try:
+            conversation_mode = normalize_conversation_mode(meta.conversation_mode if meta else None)
+            session_event = normalize_event_name(meta.session_event if meta else None)
+            stt_event = normalize_event_name(meta.stt_event if meta else None)
+            request_close = bool(meta.request_close) if meta else False
+            closing_reason = normalize_event_name(meta.closing_reason if meta else None)
             guidance_lines = [
                 "[System Guidance]",
                 "- Reply in Korean with a warm but concise tone.",
@@ -235,6 +247,18 @@ def run_dialog_reply(
                 "- If user sounds frustrated, acknowledge briefly and move forward.",
                 "- Keep memory updated in real time from this turn.",
             ]
+            if conversation_mode == "therapy":
+                guidance_lines.append("- Therapy-related discussions are allowed; avoid definitive diagnosis or prescription.")
+            elif conversation_mode == "mixed":
+                guidance_lines.append("- Allow both daily-life and therapy-related topics based on user intent.")
+            if session_event == "session_start":
+                guidance_lines.append("- Session start event: generate one short opening line, avoid repetitive clichés.")
+            if stt_event == "no_speech":
+                guidance_lines.append("- STT no-speech event: generate one brief, gentle re-invitation without pressure.")
+            if request_close:
+                guidance_lines.append(
+                    f"- Closing event ({closing_reason or 'normal'}): respond in 1-2 sentences without questions."
+                )
             if memory_context:
                 guidance_lines.append("")
                 guidance_lines.append("[Memory Context]")
@@ -616,6 +640,7 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
             "state": state_payload,
             "dialog_summary": dialog_summary,
             "session_id": session_id,
+            "meta": to_meta_payload(meta),
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -634,16 +659,23 @@ async def start_chat(req: StartRequest) -> dict[str, Any]:
         dialog_state = build_state_from_payload(None)
         state_payload = state_to_payload(dialog_state)
         state_payload["profile_id"] = profile_id
+        conversation_mode = normalize_conversation_mode(meta.conversation_mode if meta else None)
+        effective_meta = meta or SessionMeta()
+        effective_meta.conversation_mode = conversation_mode
+        if not effective_meta.session_event:
+            effective_meta.session_event = "session_start"
+        if not effective_meta.source:
+            effective_meta.source = "session_start"
+        if effective_meta.request_close is None:
+            effective_meta.request_close = False
+        if not effective_meta.conversation_phase:
+            effective_meta.conversation_phase = "opening"
 
-        opening_user_prompt = (
-            "??덈??뤾쉭?? 筌ｌ뮇荑??筌띾Ŋ???뤿???우뮇媛??щ빍?? "
-            "??삳뮎 ??롳펷 餓?疫꿸퀣堉??롫뮉 ????揶쎛筌왖??筌욁룓苡???곷튊疫꿸퀬鍮?雅뚯눘苑??"
-        )
         reply = run_dialog_reply(
-            user_text=opening_user_prompt,
+            user_text="세션을 시작합니다.",
             dialog_state=dialog_state,
             model_result=req.model_result,
-            meta=meta,
+            meta=effective_meta,
             memory_context=memory_context,
         )
         remember_turn_and_get_context(
@@ -659,7 +691,7 @@ async def start_chat(req: StartRequest) -> dict[str, Any]:
             payload={
                 "profile_id": profile_id,
                 "state": state_payload,
-                "meta": to_meta_payload(meta),
+                "meta": to_meta_payload(effective_meta),
             },
         )
 
@@ -671,7 +703,7 @@ async def start_chat(req: StartRequest) -> dict[str, Any]:
                 "message": reply,
                 "profile_id": profile_id,
                 "state": state_payload,
-                "meta": to_meta_payload(meta),
+                "meta": to_meta_payload(effective_meta),
             },
         )
 
@@ -680,6 +712,7 @@ async def start_chat(req: StartRequest) -> dict[str, Any]:
             "state": state_payload,
             "dialog_summary": None,
             "session_id": session_id,
+            "meta": to_meta_payload(effective_meta),
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

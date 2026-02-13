@@ -54,14 +54,9 @@ const MIC_LEVEL_SILENCE_FLOOR = 0.022;
 const MIC_ACTIVE_THRESHOLD = 0.024;
 const SPEAKING_ACTIVE_THRESHOLD = 0.045;
 const SPEAKING_LEVEL_INTERVAL_MS = 50;
-const NO_SPEECH_PROMPT =
-  "잘 못 들었어요. 다시 한번 말씀해 주세요.";
-
-const OPENING_FALLBACK =
-  "안녕하세요. 오늘도 만나서 반가워요. 먼저 가볍게 일상 이야기를 나눠볼까요?";
-
-const CLOSING_FALLBACK =
-  "오늘 대화 정말 잘해주셨어요. 수고 많으셨고, 다음에도 편하게 이야기해요.";
+const DEFAULT_CONVERSATION_MODE = "mixed";
+const EMERGENCY_RESPONSE_FALLBACK =
+  "지금 연결이 잠시 불안정해요. 잠깐 후 다시 시도해 주세요.";
 
 const DEFAULT_MODEL_RESULT: Record<string, unknown> = {
   stage: "경도 인지저하 의심 단계",
@@ -419,7 +414,17 @@ const shouldRequestClose = (elapsedSec: number) => {
   return elapsedSec >= SOFT_WRAP_START_SEC;
 };
 
-const buildMetaPayload = (source: string, requestClose: boolean): ChatMetaPayload => {
+const inferClosingReason = (elapsedSec: number) => {
+  if (elapsedSec >= SESSION_LIMIT_SEC - 8) return "timeout_hard";
+  if (elapsedSec >= SOFT_WRAP_START_SEC) return "timeout_soft";
+  return undefined;
+};
+
+const buildMetaPayload = (
+  source: string,
+  requestClose: boolean,
+  overrides: Partial<ChatMetaPayload> = {}
+): ChatMetaPayload => {
   const elapsedSec = getElapsedSeconds();
   const inferredPhase = inferPhaseByTime(elapsedSec);
 
@@ -439,10 +444,14 @@ const buildMetaPayload = (source: string, requestClose: boolean): ChatMetaPayloa
   }
   conversationPhase.value = phase;
 
+  const closingReason =
+    overrides.closing_reason ?? (requestClose ? inferClosingReason(elapsedSec) : undefined);
+
   return {
     session_id: sessionId.value ?? undefined,
     profile_id: getOrCreateProfileId(),
     session_mode: "live",
+    conversation_mode: DEFAULT_CONVERSATION_MODE,
     turn_index: turnIndex.value,
     elapsed_sec: elapsedSec,
     remaining_sec: Math.max(0, SESSION_LIMIT_SEC - elapsedSec),
@@ -452,6 +461,8 @@ const buildMetaPayload = (source: string, requestClose: boolean): ChatMetaPayloa
     source,
     conversation_phase: phase,
     request_close: requestClose,
+    closing_reason: closingReason,
+    ...overrides,
   };
 };
 
@@ -460,13 +471,6 @@ const stopIfTimedOut = async (token: number) => {
   if (!hasTimedOut()) return false;
   await stopSession("target_reached");
   return true;
-};
-
-const containsClosingTone = (text: string) => {
-  const compact = text.replace(/\s+/g, "");
-  return ["수고", "잘하", "고마워", "마무리", "다음에", "오늘은여기까지"].some(
-    (keyword) => compact.includes(keyword)
-  );
 };
 
 const botSpeak = async (text: string, token: number) => {
@@ -535,11 +539,55 @@ const handleNoSpeechDetected = async (token: number) => {
   }
 
   noSpeechRetryCount = 0;
-  const spoke = await botSpeak(NO_SPEECH_PROMPT, token);
-  if (!spoke) return;
   if (await stopIfTimedOut(token)) return;
 
-  scheduleRecognitionRetry(token);
+  const elapsedBefore = getElapsedSeconds();
+  const requestClose = shouldRequestClose(elapsedBefore);
+  state.value = "processing";
+
+  try {
+    const response = await sendChat(
+      "",
+      DEFAULT_MODEL_RESULT,
+      dialogState.value,
+      buildMetaPayload("live_stt_no_speech", requestClose, {
+        stt_event: "no_speech",
+      })
+    );
+
+    if (!isCurrentSession(token)) return;
+
+    if (response.session_id) {
+      sessionId.value = response.session_id;
+    }
+    dialogState.value = response.state ?? dialogState.value;
+    const backendPhase = normalizeConversationPhase(response.meta?.conversation_phase);
+    if (backendPhase) {
+      conversationPhase.value = backendPhase;
+    }
+    const backendRequestClose = Boolean(response.meta?.request_close);
+
+    const reply = response.response?.trim() || EMERGENCY_RESPONSE_FALLBACK;
+    const spoke = await botSpeak(reply, token);
+    if (!spoke) return;
+
+    if (backendRequestClose || requestClose) {
+      conversationPhase.value = "closing";
+      await stopSession("target_reached");
+      return;
+    }
+
+    if (await stopIfTimedOut(token)) return;
+    scheduleRecognitionRetry(token);
+  } catch (error) {
+    console.error("No-speech follow-up request failed", error);
+    if (!isCurrentSession(token)) return;
+
+    const spoke = await botSpeak(EMERGENCY_RESPONSE_FALLBACK, token);
+    if (!spoke) return;
+    if (await stopIfTimedOut(token)) return;
+    scheduleRecognitionRetry(token, NO_SPEECH_RETRY_DELAY_MS);
+  }
 };
 
 const extractTranscriptFromResults = (results: SpeechRecognitionResultList) => {
@@ -720,7 +768,9 @@ const handleUserTurn = async (transcript: string, token: number) => {
       transcript,
       DEFAULT_MODEL_RESULT,
       dialogState.value,
-      buildMetaPayload("live_stt", requestClose)
+      buildMetaPayload("live_stt", requestClose, {
+        stt_event: "speech",
+      })
     );
 
     if (!isCurrentSession(token)) return;
@@ -740,10 +790,6 @@ const handleUserTurn = async (transcript: string, token: number) => {
 
     if (backendRequestClose || requestClose) {
       conversationPhase.value = "closing";
-      if (!containsClosingTone(response.response)) {
-        const fallbackSpoke = await botSpeak(CLOSING_FALLBACK, token);
-        if (!fallbackSpoke) return;
-      }
       await stopSession("target_reached");
       return;
     }
@@ -761,10 +807,12 @@ const getOpeningMessage = async (token: number) => {
   try {
     const response = await startChatSession(
       DEFAULT_MODEL_RESULT,
-      buildMetaPayload("session_start", false)
+      buildMetaPayload("session_start", false, {
+        session_event: "session_start",
+      })
     );
 
-    if (!isCurrentSession(token)) return OPENING_FALLBACK;
+    if (!isCurrentSession(token)) return EMERGENCY_RESPONSE_FALLBACK;
 
     if (response.session_id) {
       sessionId.value = response.session_id;
@@ -776,10 +824,10 @@ const getOpeningMessage = async (token: number) => {
     }
 
     const opening = response.response?.trim();
-    return opening || OPENING_FALLBACK;
+    return opening || EMERGENCY_RESPONSE_FALLBACK;
   } catch (error) {
     console.error("Start chat request failed", error);
-    return OPENING_FALLBACK;
+    return EMERGENCY_RESPONSE_FALLBACK;
   }
 };
 
