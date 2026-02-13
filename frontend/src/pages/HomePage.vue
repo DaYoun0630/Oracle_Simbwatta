@@ -24,6 +24,11 @@ const {
 const doctorPatientStore = useDoctorPatientStore(); // 선택 환자 메타를 저장한다
 
 const searchQuery = ref(''); // 환자 검색어를 저장한다
+const normalizeSearchKeyword = (value) => String(value ?? '')
+  .toLowerCase()
+  .normalize('NFC')
+  .replace(/\s+/g, '')
+  .trim();
 
 onMounted(() => {
   if (userRole.value === 'doctor') {
@@ -34,15 +39,15 @@ onMounted(() => {
 
 const patients = computed(() => doctorData.value?.patients || []); // 환자 목록을 계산한다
 
-const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase()); // 검색어를 정규화한다
+const normalizedQuery = computed(() => normalizeSearchKeyword(searchQuery.value)); // 검색어를 정규화한다
 
 const filteredPatients = computed(() => {
   if (!normalizedQuery.value) return patients.value; // 검색어가 없으면 전체를 노출한다
   return patients.value.filter((patient) => {
-    const name = String(patient?.name ?? '').toLowerCase(); // 이름을 비교한다
-    const id = String(patient?.id ?? '').toLowerCase(); // ID를 비교한다
-    const rid = String(patient?.rid ?? '').toLowerCase(); // RID를 비교한다
-    const hospital = String(patient?.hospital ?? '').toLowerCase(); // 병원을 비교한다
+    const name = normalizeSearchKeyword(patient?.name); // 이름을 비교한다
+    const id = normalizeSearchKeyword(patient?.id); // ID를 비교한다
+    const rid = normalizeSearchKeyword(patient?.rid); // RID를 비교한다
+    const hospital = normalizeSearchKeyword(patient?.hospital); // 병원을 비교한다
     return (
       name.includes(normalizedQuery.value) ||
       id.includes(normalizedQuery.value) ||

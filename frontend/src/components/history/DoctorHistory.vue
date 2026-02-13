@@ -233,7 +233,6 @@ const mriAnalysis = computed(() => props.data?.mriAnalysis || null);
 
 const aiAnalysis = computed(() => mriAnalysis.value?.aiAnalysis || null);
 const originalImage = computed(() => aiAnalysis.value?.originalImage || '');
-const originalNifti = computed(() => aiAnalysis.value?.originalNifti || '');
 const attentionMap = computed(() => aiAnalysis.value?.attentionMap || '');
 const regionContributions = computed(() => aiAnalysis.value?.regionContributions || []);
 
@@ -970,7 +969,6 @@ watch(
                 <h4>MRI 이미지</h4>
                 <MRIImageDisplay
                   :original-image="originalImage"
-                  :original-nifti="originalNifti"
                   :attention-map="attentionMap"
                   :loading="isLoading"
                 />

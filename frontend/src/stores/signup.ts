@@ -156,7 +156,7 @@ export const useSignupStore = defineStore("signup", {
       const normalizedCode = this.subject_link_code.trim();
       if (!normalizedCode) {
         this.subjectCodeVerified = false;
-        this.subjectCodeMessage = "연동 코드를 입력해 주세요.";
+        this.subjectCodeMessage = "대상자 회원번호를 입력해 주세요.";
         return false;
       }
 
@@ -169,7 +169,7 @@ export const useSignupStore = defineStore("signup", {
       } catch (error) {
         console.error("Subject link validation failed:", error);
         this.subjectCodeVerified = false;
-        this.subjectCodeMessage = "코드 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+        this.subjectCodeMessage = "회원번호 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
         return false;
       } finally {
         this.isCheckingSubjectCode = false;

@@ -209,10 +209,10 @@ const validateRoleSpecificFields = (): boolean => {
     }
 
     if (!signupStore.subject_link_code.trim()) {
-      errors.subject_link_code = "대상자 연동 코드를 입력해 주세요.";
+      errors.subject_link_code = "대상자 회원번호를 입력해 주세요.";
       isValid = false;
     } else if (!signupStore.subjectCodeVerified) {
-      errors.subject_link_code = "코드 확인 버튼으로 유효성 검증을 완료해 주세요.";
+      errors.subject_link_code = "회원번호 확인 버튼으로 유효성 검증을 완료해 주세요.";
       isValid = false;
     }
   }
@@ -363,8 +363,8 @@ onMounted(() => {
           <RelationshipSelect />
           <SubjectLinkInput />
           <p class="link-code-guide">
-            ※ 연동 코드는 대상자가 먼저 회원가입을 완료한 후 앱에서 확인할 수 있습니다.<br />
-            대상자 회원가입 후 발급된 코드를 입력해 주세요.
+            ※ 대상자 회원번호는 어디서 확인하나요?<br />
+            대상자의 기기의 설정 -> 프로필에서 대상자의 회원번호를 확인할 수 있습니다.
           </p>
         </template>
 

@@ -181,9 +181,9 @@ const handleLogin = () => {
   max-width: 420px;
   padding: 20px;
   border-radius: 32px;
-  background: #f5f6f7;
+  background: #fbfcfe;
   box-shadow:
-    18px 18px 36px rgba(207, 214, 223, 0.9),
+    18px 18px 36px rgba(214, 221, 232, 0.72),
     -18px -18px 36px #ffffff;
 }
 
@@ -232,11 +232,9 @@ const handleLogin = () => {
 */
 .login-card {
   padding: 32px 28px;
-  border-radius: 28px;
-  background: #f8f9fa;
-  box-shadow:
-    inset 6px 6px 12px rgba(209, 217, 230, 0.7),
-    inset -6px -6px 12px #ffffff;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -287,7 +285,7 @@ const handleLogin = () => {
   border-radius: 999px;
   border: none;
   padding: 0 20px;
-  background: #eef1f3;
+  background: #f4f7fa;
   box-shadow:
     inset 4px 4px 8px rgba(209, 217, 230, 0.9),
     inset -4px -4px 8px #ffffff;
