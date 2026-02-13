@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 import VoiceOrb from "../components/VoiceOrb.vue";
@@ -13,13 +13,17 @@ const {
   messages,
   currentTranscript,
   currentResponse,
+  voiceLevel,
+  isVoiceActive,
+  isSessionActive,
+  isMockMode,
   startListening,
   stopListening,
   resetSession,
 } = useVoiceSession();
 
-// 시각화 컴포넌트에 전달할 상태(일시정지는 processing으로 치환)
-const visualState = computed(() => (state.value === "pause" ? "processing" : state.value));
+// 시각화 컴포넌트에 전달할 상태
+const visualState = computed(() => state.value);
 
 // 마지막 assistant 발화만 추출(없으면 빈 문자열)
 const lastAssistantMessage = computed(() => {
@@ -62,6 +66,9 @@ const supportiveText = computed(() => {
   if (lastAssistantMessage.value) {
     return "궁금한 점이 있으면 언제든 말씀해 주세요.";
   }
+  if (isMockMode.value) {
+    return "버튼을 한 번 누르면 약 4분 동안 자동 대화가 진행됩니다.";
+  }
   return "마이크 버튼을 누르면 대화가 시작됩니다.";
 });
 
@@ -74,6 +81,9 @@ const transcriptText = computed(() => {
     return "말씀을 들으며 내용을 정리하고 있어요.";
   }
   if (state.value === "idle") {
+    if (isMockMode.value) {
+      return "자동 모의 대화를 시작하려면 마이크 버튼을 눌러주세요.";
+    }
     return "마이크 버튼을 눌러 대화를 시작하세요.";
   }
   return "";
@@ -81,26 +91,32 @@ const transcriptText = computed(() => {
 
 // 마이크 버튼 하단 라벨 텍스트
 const micLabel = computed(() => {
-  if (state.value === "listening") return "듣는 중";
-  if (state.value === "processing") return "생각 중";
-  if (state.value === "speaking") return "답변 중";
-  return "말하기 시작";
+  if (!isSessionActive.value) {
+    return isMockMode.value ? "자동 대화 시작" : "말하기 시작";
+  }
+  if (state.value === "idle" && !isMockMode.value) return "다시 듣기";
+  if (state.value === "listening") return "대화 중지";
+  if (state.value === "processing") return "처리 중, 중지 가능";
+  if (state.value === "speaking") return "답변 중, 중지 가능";
+  return "대화 중지";
 });
 
 // 마이크가 청취 중인지 여부
 const isListening = computed(() => state.value === "listening");
-// 마이크 버튼 비활성 조건(대기/청취 외에는 클릭 불가)
-const isMicDisabled = computed(() => !["idle", "listening"].includes(state.value));
+// 세션 중에도 언제든 중지할 수 있도록 항상 활성화
+const isMicDisabled = computed(() => false);
 
-// 마이크 버튼 클릭 처리: 대기 → 청취 시작, 청취 → 청취 종료
+// 마이크 버튼 클릭 처리: 대기 -> 시작, 진행 중 -> 중지
 const handleMicClick = () => {
-  if (state.value === "idle") {
+  if (!isSessionActive.value) {
     startListening();
     return;
   }
-  if (state.value === "listening") {
-    stopListening();
+  if (state.value === "idle" && !isMockMode.value) {
+    startListening();
+    return;
   }
+  stopListening();
 };
 
 // 대화 종료: 세션 초기화 후 홈으로 이동
@@ -134,7 +150,7 @@ const handleEndConversation = () => {
         <!-- 음성 오브(시각화) -->
         <div class="orb-stage" aria-hidden="true">
           <div class="orb-frame">
-            <VoiceOrb :state="visualState" :size="340" />
+            <VoiceOrb :state="visualState" :size="312" :level="voiceLevel" :reactive="isVoiceActive" />
           </div>
         </div>
 

@@ -5,15 +5,17 @@ from uuid import UUID
 
 
 class RecordingBase(BaseModel):
-    audio_path: str
+    file_path: str
     duration_seconds: Optional[float] = None
     file_size_bytes: Optional[int] = None
     format: Optional[str] = "wav"
+    transcription: Optional[str] = None
+    description: Optional[str] = None
 
 
 class RecordingCreate(RecordingBase):
-    patient_id: UUID
-    session_id: Optional[UUID] = None
+    patient_id: int
+    training_id: Optional[UUID] = None
 
 
 class RecordingUpdate(BaseModel):
@@ -21,9 +23,9 @@ class RecordingUpdate(BaseModel):
 
 
 class RecordingOut(RecordingBase):
-    id: UUID
-    patient_id: UUID
-    session_id: Optional[UUID] = None
+    recording_id: UUID
+    patient_id: int
+    training_id: Optional[UUID] = None
     recorded_at: datetime
     uploaded_at: datetime
     status: str

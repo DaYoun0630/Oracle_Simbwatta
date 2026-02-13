@@ -14,14 +14,14 @@ router = APIRouter(prefix="/api/family", tags=["family"])
 # ============================================================================
 # Helper function to verify family access
 # ============================================================================
-async def verify_family_access(family_id: str) -> str:
+async def verify_family_access(family_id: int) -> int:
     """
     Verify family member exists and return their patient_id.
     Raises HTTPException if not found.
     """
     row = await db.fetchrow("""
-        SELECT patient_id FROM family_members
-        WHERE id = $1
+        SELECT patient_id FROM caregiver
+        WHERE user_id = $1
     """, family_id)
 
     if not row:
@@ -34,7 +34,7 @@ async def verify_family_access(family_id: str) -> str:
 # Patient Information (Read-Only)
 # ============================================================================
 @router.get("/patient", response_model=PatientOut)
-async def get_patient(family_id: str = Query(...)):
+async def get_patient(family_id: int = Query(...)):
     """
     Get patient information for the family member.
     Family members have read-only access to their assigned patient.
@@ -43,10 +43,10 @@ async def get_patient(family_id: str = Query(...)):
 
     # Get patient with user info
     row = await db.fetchrow("""
-        SELECT p.*, u.name, u.email, u.profile_picture
+        SELECT p.*, u.name, u.email, u.profile_image_url
         FROM patients p
-        JOIN users u ON p.user_id = u.id
-        WHERE p.id = $1
+        JOIN users u ON p.user_id = u.user_id
+        WHERE p.user_id = $1
     """, patient_id)
 
     if not row:
@@ -56,7 +56,7 @@ async def get_patient(family_id: str = Query(...)):
 
 
 @router.get("/patient/progress")
-async def get_patient_progress(family_id: str = Query(...)):
+async def get_patient_progress(family_id: int = Query(...)):
     """
     Get patient's training progress and analytics.
     Read-only view for family members to monitor patient's activity.
@@ -85,23 +85,23 @@ async def get_patient_progress(family_id: str = Query(...)):
     # Get assessment count
     assessment_stats = await db.fetchrow("""
         SELECT
-            COUNT(DISTINCT va.id) as voice_assessments,
-            COUNT(DISTINCT ma.id) as mri_assessments
+            COUNT(DISTINCT va.assessment_id) as voice_assessments,
+            COUNT(DISTINCT ma.assessment_id) as mri_assessments
         FROM patients p
-        LEFT JOIN recordings r ON r.patient_id = p.id
-        LEFT JOIN voice_assessments va ON va.recording_id = r.id
-        LEFT JOIN mri_assessments ma ON ma.patient_id = p.id
-        WHERE p.id = $1
+        LEFT JOIN recordings r ON r.patient_id = p.user_id
+        LEFT JOIN voice_assessments va ON va.recording_id = r.recording_id
+        LEFT JOIN mri_assessments ma ON ma.patient_id = p.user_id
+        WHERE p.user_id = $1
     """, patient_id)
 
     # Get patient's current stage
-    patient = await db.fetchrow("SELECT mci_stage FROM patients WHERE id = $1", patient_id)
+    patient = await db.fetchrow("SELECT risk_level FROM patients WHERE user_id = $1", patient_id)
 
     stats = dict(sessions[0]) if sessions else {}
 
     return {
         "patient_id": patient_id,
-        "current_stage": patient["mci_stage"] if patient else "unknown",
+        "current_stage": patient.get("risk_level") or "unknown",
         "sessions": {
             "total": stats.get("total_sessions", 0),
             "completed": stats.get("completed_sessions", 0),
@@ -114,9 +114,14 @@ async def get_patient_progress(family_id: str = Query(...)):
         }
     }
 
+@router.get("/dashboard")
+async def get_dashboard(family_id: int = Query(...)):
+    """Dashboard data for the caregiver (alias for patient/progress)"""
+    return await get_patient_progress(family_id)
+
 
 @router.get("/patient/assessments")
-async def get_patient_assessments(family_id: str = Query(...), limit: int = Query(50, le=100)):
+async def get_patient_assessments(family_id: int = Query(...), limit: int = Query(50, le=100)):
     """
     List all assessments (voice + MRI) for the patient.
     Family members can view assessment results to monitor patient's condition.
@@ -127,7 +132,7 @@ async def get_patient_assessments(family_id: str = Query(...), limit: int = Quer
     voice_assessments = await db.fetch("""
         SELECT va.*, r.recording_date
         FROM voice_assessments va
-        JOIN recordings r ON va.recording_id = r.id
+        JOIN recordings r ON va.recording_id = r.recording_id
         WHERE r.patient_id = $1
         ORDER BY va.created_at DESC
         LIMIT $2
@@ -147,7 +152,7 @@ async def get_patient_assessments(family_id: str = Query(...), limit: int = Quer
     for va in voice_assessments:
         all_assessments.append({
             "type": "voice",
-            "id": va["id"],
+            "assessment_id": va["assessment_id"],
             "date": va["recording_date"],
             "predicted_stage": va["predicted_stage"],
             "confidence": va["confidence_score"],
@@ -162,7 +167,7 @@ async def get_patient_assessments(family_id: str = Query(...), limit: int = Quer
     for ma in mri_assessments:
         all_assessments.append({
             "type": "mri",
-            "id": ma["id"],
+            "assessment_id": ma["assessment_id"],
             "date": ma["scan_date"],
             "predicted_stage": ma["predicted_stage"],
             "confidence": ma["confidence_score"],
@@ -180,27 +185,13 @@ async def get_patient_assessments(family_id: str = Query(...), limit: int = Quer
 
 
 @router.get("/patient/diagnoses", response_model=List[DiagnosisOut])
-async def get_patient_diagnoses(family_id: str = Query(...)):
-    """
-    List all diagnoses for the patient.
-    Family members can view diagnosis history to understand patient's condition.
-    """
-    patient_id = await verify_family_access(family_id)
-
-    rows = await db.fetch("""
-        SELECT d.*, u.name as doctor_name
-        FROM diagnoses d
-        JOIN doctors doc ON d.doctor_id = doc.id
-        JOIN users u ON doc.user_id = u.id
-        WHERE d.patient_id = $1
-        ORDER BY d.diagnosis_date DESC
-    """, patient_id)
-
-    return [dict(r) for r in rows]
+async def get_patient_diagnoses(family_id: int = Query(...)):
+    # DEPRECATED
+    return []
 
 
 @router.get("/patient/sessions", response_model=List[TrainingSessionOut])
-async def get_patient_sessions(family_id: str = Query(...), limit: int = Query(50, le=100)):
+async def get_patient_sessions(family_id: int = Query(...), limit: int = Query(50, le=100)):
     """
     List patient's training sessions.
     Family members can monitor patient's chat activity and engagement.
@@ -221,17 +212,17 @@ async def get_patient_sessions(family_id: str = Query(...), limit: int = Query(5
 # Family Member Profile
 # ============================================================================
 @router.get("/profile", response_model=FamilyMemberOut)
-async def get_profile(family_id: str = Query(...)):
+async def get_profile(family_id: int = Query(...)):
     """
     Get family member profile with user information.
     Includes relationship to patient and notification preferences.
     """
     row = await db.fetchrow("""
-        SELECT fm.*, u.name, u.email, u.profile_picture, p.id as patient_id
-        FROM family_members fm
-        JOIN users u ON fm.user_id = u.id
-        JOIN patients p ON fm.patient_id = p.id
-        WHERE fm.id = $1
+        SELECT fm.*, u.name, u.email, u.profile_image_url, p.user_id as patient_id
+        FROM caregiver fm
+        JOIN users u ON fm.user_id = u.user_id
+        JOIN patients p ON fm.patient_id = p.user_id
+        WHERE fm.user_id = $1
     """, family_id)
 
     if not row:

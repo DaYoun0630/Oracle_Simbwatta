@@ -6,31 +6,30 @@ from uuid import UUID
 
 class PatientBase(BaseModel):
     date_of_birth: Optional[date] = None
-    phone: Optional[str] = None
-    mci_stage: Optional[str] = None  # 'normal', 'early_mci', 'late_mci', 'mild_dementia'
-    diagnosis_date: Optional[date] = None
-    notes: Optional[str] = None
+    gender: Optional[int] = None
+    education_years: Optional[int] = None
+    risk_level: Optional[str] = None
+    rid: Optional[int] = None
+    subject_id: Optional[str] = None
 
 
 class PatientCreate(PatientBase):
-    user_id: UUID
-    assigned_doctor_id: Optional[UUID] = None
+    user_id: int
+    doctor_id: Optional[int] = None
 
 
 class PatientUpdate(BaseModel):
     date_of_birth: Optional[date] = None
-    phone: Optional[str] = None
-    mci_stage: Optional[str] = None
-    diagnosis_date: Optional[date] = None
-    assigned_doctor_id: Optional[UUID] = None
-    notes: Optional[str] = None
+    risk_level: Optional[str] = None
+    doctor_id: Optional[int] = None
+    notes: Optional[str] = None  # Note: notes might not be in patients table in 004, but keeping for now
 
 
 class PatientOut(PatientBase):
-    id: UUID
-    user_id: UUID
-    assigned_doctor_id: Optional[UUID] = None
+    user_id: int
+    doctor_id: Optional[int] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -40,4 +39,4 @@ class PatientWithUser(PatientOut):
     """Patient with user info embedded"""
     name: str
     email: str
-    profile_picture: Optional[str] = None
+    profile_image_url: Optional[str] = None

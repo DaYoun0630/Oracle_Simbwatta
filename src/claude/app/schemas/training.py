@@ -15,20 +15,20 @@ class TrainingSessionBase(BaseModel):
 
 
 class TrainingSessionCreate(TrainingSessionBase):
-    patient_id: UUID
+    patient_id: int
 
 
 class TrainingSessionUpdate(BaseModel):
     ended_at: Optional[datetime] = None
-    conversation: Optional[List[Dict[str, Any]]] = None
+    conversation_log: Optional[List[Dict[str, Any]]] = None
 
 
 class TrainingSessionOut(TrainingSessionBase):
-    id: UUID
-    patient_id: UUID
+    training_id: UUID
+    patient_id: int
     started_at: datetime
     ended_at: Optional[datetime] = None
-    conversation: Optional[List[Dict[str, Any]]] = None
+    conversation_log: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True

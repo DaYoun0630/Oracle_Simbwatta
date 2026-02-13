@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from celery import Celery
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query, WebSocket, WebSocketDisconnect
+import logging
 from pydantic import BaseModel
 
 from .. import db
@@ -17,6 +18,7 @@ from ..schemas.diagnosis import DiagnosisOut
 from ..schemas.training import TrainingSessionOut, Message
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
+logger = logging.getLogger(__name__)
 
 # Celery client for dispatching ML tasks
 celery_app = Celery(
@@ -34,23 +36,23 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
 
-    async def connect(self, patient_id: str, websocket: WebSocket):
+    async def connect(self, patient_id: int, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections[patient_id] = websocket
+        self.active_connections[str(patient_id)] = websocket
 
-    def disconnect(self, patient_id: str):
-        self.active_connections.pop(patient_id, None)
+    def disconnect(self, patient_id: int):
+        self.active_connections.pop(str(patient_id), None)
 
-    async def send_message(self, patient_id: str, message: str):
-        if patient_id in self.active_connections:
-            await self.active_connections[patient_id].send_text(message)
+    async def send_message(self, patient_id: int, message: str):
+        if str(patient_id) in self.active_connections:
+            await self.active_connections[str(patient_id)].send_text(message)
 
 
 manager = ConnectionManager()
 
 
 @router.websocket("/chat")
-async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
+async def chat_ws(websocket: WebSocket, patient_id: int = Query(...)):
     """
     WebSocket endpoint for real-time voice chat with LLM.
 
@@ -204,7 +206,7 @@ async def chat_ws(websocket: WebSocket, patient_id: str = Query(...)):
 # Cognitive Exercises
 # ============================================================================
 @router.get("/exercises")
-async def list_exercises(patient_id: str = Query(...)):
+async def list_exercises(patient_id: int = Query(...)):
     """
     Get list of cognitive training exercises for the patient.
     Returns exercises based on patient's MCI stage.
@@ -213,7 +215,7 @@ async def list_exercises(patient_id: str = Query(...)):
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    stage_hint = patient["risk_level"] or "unknown"
+    stage_hint = patient.get("risk_level") or "unknown"
 
     # TODO: Return exercises based on MCI stage and Korean NLP optimization
     # For now, return static list
@@ -252,7 +254,7 @@ async def list_exercises(patient_id: str = Query(...)):
 # ============================================================================
 @router.post("/recordings", response_model=RecordingOut)
 async def upload_recording(
-    patient_id: str = Query(...),
+    patient_id: int = Query(...),
     file: UploadFile = File(...),
     description: str = Query(None),
     transcript: str = Query(..., min_length=1),
@@ -343,14 +345,14 @@ async def upload_recording(
 
 
 @router.get("/recordings", response_model=List[RecordingOut])
-async def list_recordings(patient_id: str = Query(...), limit: int = Query(50, le=100)):
+async def list_recordings(patient_id: int = Query(...), limit: int = Query(50, le=100)):
     """List all voice recordings for a patient."""
     rows = await db.fetch("""
         SELECT
-            recording_id AS id,
+            recording_id,
             patient_id,
-            training_id AS session_id,
-            file_path AS audio_path,
+            training_id,
+            file_path,
             duration_seconds,
             file_size_bytes,
             format,
@@ -367,14 +369,14 @@ async def list_recordings(patient_id: str = Query(...), limit: int = Query(50, l
 
 
 @router.get("/recordings/{recording_id}", response_model=RecordingOut)
-async def get_recording(recording_id: str, patient_id: str = Query(...)):
+async def get_recording(recording_id: str, patient_id: int = Query(...)):
     """Get details of a specific recording."""
     row = await db.fetchrow("""
         SELECT
-            recording_id AS id,
+            recording_id,
             patient_id,
-            training_id AS session_id,
-            file_path AS audio_path,
+            training_id,
+            file_path,
             duration_seconds,
             file_size_bytes,
             format,
@@ -395,7 +397,7 @@ async def get_recording(recording_id: str, patient_id: str = Query(...)):
 # Progress Tracking
 # ============================================================================
 @router.get("/progress")
-async def get_progress(patient_id: str = Query(...)):
+async def get_progress(patient_id: int = Query(...)):
     """
     Get patient's training progress and analytics.
     Includes session count, total duration, recent activity, and trends.
@@ -440,7 +442,7 @@ async def get_progress(patient_id: str = Query(...)):
 
     return {
         "patient_id": patient_id,
-        "current_stage": patient["risk_level"] or "unknown",
+        "current_stage": patient.get("risk_level") or "unknown",
         "sessions": {
             "total": stats.get("total_sessions", 0),
             "completed": stats.get("completed_sessions", 0),
@@ -453,12 +455,21 @@ async def get_progress(patient_id: str = Query(...)):
         }
     }
 
+# Alias for frontend compatibility
+@router.get("/dashboard")
+async def get_dashboard(patient_id: int = Query(None)):
+    """Dashboard data for the patient (alias for progress)"""
+    # If patient_id is not provided, it should be extracted from token in real app
+    # For now, require it or use a default if testing
+    if not patient_id:
+        raise HTTPException(status_code=400, detail="patient_id is required")
+    return await get_progress(patient_id)
 
 # ============================================================================
 # Assessments
 # ============================================================================
 @router.get("/assessments")
-async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, le=100)):
+async def list_assessments(patient_id: int = Query(...), limit: int = Query(50, le=100)):
     """
     List all assessments (voice + MRI) for the patient.
     Returns combined list sorted by date.
@@ -487,7 +498,7 @@ async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, 
     for va in voice_assessments:
         all_assessments.append({
             "type": "voice",
-            "id": va["assessment_id"],
+            "assessment_id": va["assessment_id"],
             "date": va["assessed_at"],
             "cognitive_score": va["cognitive_score"],
             "mci_probability": va["mci_probability"],
@@ -498,7 +509,7 @@ async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, 
     for ma in mri_assessments:
         all_assessments.append({
             "type": "mri",
-            "id": ma["assessment_id"],
+            "assessment_id": ma["assessment_id"],
             "date": ma["scan_date"] or ma["processed_at"],
             "classification": ma["classification"],
             "confidence": ma["confidence"],
@@ -515,31 +526,26 @@ async def list_assessments(patient_id: str = Query(...), limit: int = Query(50, 
 # Diagnoses
 # ============================================================================
 @router.get("/diagnoses", response_model=List[DiagnosisOut])
-async def list_diagnoses(patient_id: str = Query(...)):
-    """List all diagnoses for the patient."""
-    rows = await db.fetch("""
-        SELECT d.*, u.name as doctor_name
-        FROM diagnoses d
-        JOIN doctors doc ON d.doctor_id = doc.id
-        JOIN users u ON doc.user_id = u.id
-        WHERE d.patient_id = $1
-        ORDER BY d.diagnosis_date DESC
-    """, patient_id)
-
-    return [dict(r) for r in rows]
+async def list_diagnoses(patient_id: int = Query(...)):
+    """
+    List all diagnoses for the patient.
+    DEPRECATED: diagnoses table removed in 004 schema.
+    Returns empty list for compatibility.
+    """
+    return []
 
 
 # ============================================================================
 # Profile Management
 # ============================================================================
 @router.get("/profile", response_model=PatientOut)
-async def get_profile(patient_id: str = Query(...)):
+async def get_profile(patient_id: int = Query(...)):
     """Get patient profile with user information."""
     row = await db.fetchrow("""
-        SELECT p.*, u.name, u.email, u.profile_picture
+        SELECT p.*, u.name, u.email, u.profile_image_url
         FROM patients p
-        JOIN users u ON p.user_id = u.id
-        WHERE p.id = $1
+        JOIN users u ON p.user_id = u.user_id
+        WHERE p.user_id = $1
     """, patient_id)
 
     if not row:
@@ -549,7 +555,7 @@ async def get_profile(patient_id: str = Query(...)):
 
 
 @router.put("/profile", response_model=PatientOut)
-async def update_profile(patient_id: str = Query(...), payload: PatientUpdate = None):
+async def update_profile(patient_id: int = Query(...), payload: PatientUpdate = None):
     """
     Update patient profile.
     Only allows updating: emergency_contact, emergency_phone, notes.
@@ -592,7 +598,7 @@ async def update_profile(patient_id: str = Query(...), payload: PatientUpdate = 
     query = f"""
         UPDATE patients
         SET {', '.join(updates)}
-        WHERE id = ${param_count}
+        WHERE user_id = ${param_count}
         RETURNING *
     """
 
@@ -602,19 +608,15 @@ async def update_profile(patient_id: str = Query(...), payload: PatientUpdate = 
         raise HTTPException(status_code=404, detail="Patient not found")
 
     # Get user info
-    user = await db.fetchrow("SELECT * FROM users WHERE id = $1", row["user_id"])
+    user = await db.fetchrow("SELECT * FROM users WHERE user_id = $1", row["user_id"])
 
     result = dict(row)
     result.update({
         "name": user["name"],
         "email": user["email"],
-        "profile_picture": user["profile_picture"]
+        "profile_image_url": user["profile_image_url"]
     })
 
-    # Log action
-    await db.execute("""
-        INSERT INTO audit_logs (id, user_id, action, details, created_at)
-        VALUES ($1, $2, $3, $4, $5)
-    """, str(uuid4()), patient_id, "update_profile", payload.dict(exclude_unset=True), datetime.utcnow())
+    logger.info(f"Profile updated for patient {patient_id}")
 
     return result

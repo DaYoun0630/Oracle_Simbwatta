@@ -3,35 +3,14 @@ from typing import Optional
 from datetime import datetime, date
 from uuid import UUID
 
-
+# DEPRECATED: diagnoses table removed in 004 schema
+# Placeholder to prevent import errors
 class DiagnosisBase(BaseModel):
-    mci_stage: str  # 'normal', 'early_mci', 'late_mci', 'mild_dementia', 'AD'
-    confidence: str  # 'confirmed', 'suspected', 'uncertain'
-    notes: Optional[str] = None
-    follow_up_date: Optional[date] = None
+    pass
 
-
-class DiagnosisCreate(DiagnosisBase):
-    patient_id: UUID
-    doctor_id: UUID
-    based_on_mri: Optional[UUID] = None
-    based_on_voice: Optional[UUID] = None
-
-
+class DiagnosisOut(BaseModel):
+    pass
+class DiagnosisCreate(BaseModel):
+    pass
 class DiagnosisUpdate(BaseModel):
-    mci_stage: Optional[str] = None
-    confidence: Optional[str] = None
-    notes: Optional[str] = None
-    follow_up_date: Optional[date] = None
-
-
-class DiagnosisOut(DiagnosisBase):
-    id: UUID
-    patient_id: UUID
-    doctor_id: UUID
-    based_on_mri: Optional[UUID] = None
-    based_on_voice: Optional[UUID] = None
-    diagnosis_date: datetime
-
-    class Config:
-        from_attributes = True
+    pass

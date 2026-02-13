@@ -68,6 +68,8 @@ services:
       - JWT_SECRET=${JWT_SECRET}
     volumes:
       - ../models:/models:ro
+      - ../data:/app/data:ro
+      - ../minio-data:/app/minio-data:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -100,6 +102,8 @@ services:
       - OPENBLAS_NUM_THREADS=4
     volumes:
       - ../models:/models:ro
+      - ../data:/app/data
+      - ../minio-data:/app/minio-data
     depends_on:
       postgres:
         condition: service_healthy

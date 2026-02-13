@@ -8,10 +8,10 @@ router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 
 @router.get("", response_model=List[NotificationOut])
-async def list_notifications(user_id: str = Query(...)):
+async def list_notifications(user_id: int = Query(...)):
     rows = await db.fetch(
         """
-        SELECT id, user_id, type, title, message, related_patient_id,
+        SELECT notification_id, user_id, type, title, message, related_patient_id,
                related_type, related_id, is_read, created_at
         FROM notifications
         WHERE user_id = $1
@@ -24,7 +24,7 @@ async def list_notifications(user_id: str = Query(...)):
 
 
 @router.get("/unread-count")
-async def unread_count(user_id: str = Query(...)):
+async def unread_count(user_id: int = Query(...)):
     row = await db.fetchrow(
         "SELECT COUNT(*) AS count FROM notifications WHERE user_id = $1 AND is_read = false",
         user_id,
@@ -38,7 +38,7 @@ async def create_notification(payload: NotificationCreate):
         """
         INSERT INTO notifications (user_id, type, title, message, related_patient_id, related_type, related_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, user_id, type, title, message, related_patient_id, related_type, related_id, is_read, created_at
+        RETURNING notification_id, user_id, type, title, message, related_patient_id, related_type, related_id, is_read, created_at
         """,
         payload.user_id,
         payload.type,
@@ -54,12 +54,12 @@ async def create_notification(payload: NotificationCreate):
 
 
 @router.put("/{notification_id}/read")
-async def mark_read(notification_id: str, user_id: str = Query(...)):
+async def mark_read(notification_id: str, user_id: int = Query(...)):
     result = await db.execute(
         """
         UPDATE notifications
         SET is_read = true, read_at = NOW()
-        WHERE id = $1 AND user_id = $2
+        WHERE notification_id = $1 AND user_id = $2
         """,
         notification_id,
         user_id,
@@ -70,7 +70,7 @@ async def mark_read(notification_id: str, user_id: str = Query(...)):
 
 
 @router.put("/read-all")
-async def mark_all_read(user_id: str = Query(...)):
+async def mark_all_read(user_id: int = Query(...)):
     await db.execute(
         "UPDATE notifications SET is_read = true, read_at = NOW() WHERE user_id = $1",
         user_id,
@@ -79,9 +79,9 @@ async def mark_all_read(user_id: str = Query(...)):
 
 
 @router.delete("/{notification_id}")
-async def delete_notification(notification_id: str, user_id: str = Query(...)):
+async def delete_notification(notification_id: str, user_id: int = Query(...)):
     result = await db.execute(
-        "DELETE FROM notifications WHERE id = $1 AND user_id = $2",
+        "DELETE FROM notifications WHERE notification_id = $1 AND user_id = $2",
         notification_id,
         user_id,
     )

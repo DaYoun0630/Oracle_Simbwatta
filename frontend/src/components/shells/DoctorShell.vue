@@ -66,9 +66,6 @@ const currentTopTab = ref('clinical');
 // 현재 라우트 기준으로 활성 네비게이션을 계산한다
 const currentBottomTab = computed(() => {
   const name = route.name;
-  if (name === 'doctor-profile-edit' || name === 'doctor-notification') {
-    return 'doctor-settings';
-  }
   if (name === 'doctor-patients') return 'doctor-patients';
   if (name === 'doctor-patient') return 'doctor-patients';
   if (name === 'doctor-report' || name === 'history') return 'doctor-report';

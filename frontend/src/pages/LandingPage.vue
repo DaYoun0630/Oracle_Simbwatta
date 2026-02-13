@@ -1,10 +1,12 @@
 ﻿<script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
+import { useSignupStore } from "@/stores/signup";
 
 const router = useRouter();
 const authStore = useAuthStore();
+const signupStore = useSignupStore();
 
 const slides = [
   {
@@ -27,17 +29,100 @@ const slides = [
   }
 ];
 
-const currentIndex = ref(0);
+const visualIndex = ref(slides.length > 1 ? 1 : 0);
+const currentIndex = computed(() => {
+  const total = slides.length;
+  if (total === 0) return 0;
+  return ((visualIndex.value - 1) % total + total) % total;
+});
+const isOffline = ref(!navigator.onLine);
+const isDragging = ref(false);
+const dragStartX = ref(0);
+const dragCurrentX = ref(0);
+const activePointerId = ref<number | null>(null);
+const isTransitionEnabled = ref(true);
+
+const DRAG_THRESHOLD_PX = 48;
+const LOOP_TRANSITION = "transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1)";
+
+const loopSlides = computed(() => {
+  if (slides.length <= 1) return slides;
+  const first = slides[0];
+  const last = slides[slides.length - 1];
+  return [last, ...slides, first];
+});
 
 const slideTrackStyle = computed(() => ({
-  transform: `translateX(-${currentIndex.value * 100}%)`
+  transform: `translateX(calc(-${visualIndex.value * 100}% + ${isDragging.value ? dragCurrentX.value - dragStartX.value : 0}px))`,
+  transition: isDragging.value || !isTransitionEnabled.value ? "none" : LOOP_TRANSITION
 }));
 
 let slideTimer: ReturnType<typeof setInterval> | null = null;
 
+const normalizeIndex = (index: number, total: number) => ((index % total) + total) % total;
+
+const jumpWithoutAnimation = (target: number) => {
+  isTransitionEnabled.value = false;
+  visualIndex.value = target;
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      isTransitionEnabled.value = true;
+    });
+  });
+};
+
+const syncLoopPosition = () => {
+  const total = slides.length;
+  if (total <= 1) return;
+
+  if (visualIndex.value === total + 1) {
+    jumpWithoutAnimation(1);
+    return;
+  }
+
+  if (visualIndex.value === 0) {
+    jumpWithoutAnimation(total);
+  }
+};
+
+const goToSlide = (index: number, shouldRestart = true) => {
+  const total = slides.length;
+  if (total <= 0) return;
+  isTransitionEnabled.value = true;
+  visualIndex.value = total > 1 ? normalizeIndex(index, total) + 1 : 0;
+  if (shouldRestart) {
+    stopAutoSlide();
+    startAutoSlide();
+  }
+};
+
+const nextSlide = (shouldRestart = true) => {
+  if (slides.length <= 1) return;
+  syncLoopPosition();
+  isTransitionEnabled.value = true;
+  visualIndex.value += 1;
+  if (shouldRestart) {
+    stopAutoSlide();
+    startAutoSlide();
+  }
+};
+
+const prevSlide = (shouldRestart = true) => {
+  if (slides.length <= 1) return;
+  syncLoopPosition();
+  isTransitionEnabled.value = true;
+  visualIndex.value -= 1;
+  if (shouldRestart) {
+    stopAutoSlide();
+    startAutoSlide();
+  }
+};
+
 const startAutoSlide = () => {
+  if (slides.length <= 1) return;
+  if (slideTimer) return;
   slideTimer = window.setInterval(() => {
-    currentIndex.value = (currentIndex.value + 1) % slides.length;
+    nextSlide(false);
   }, 5000);
 };
 
@@ -48,14 +133,112 @@ const stopAutoSlide = () => {
   }
 };
 
-const startService = () => {
-  // 기존 세션을 초기화하고 역할 선택으로 이동
-  authStore.clear();
-  router.push("/select-role");
+const onPointerDown = (event: PointerEvent) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  activePointerId.value = event.pointerId;
+  isDragging.value = true;
+  isTransitionEnabled.value = true;
+  dragStartX.value = event.clientX;
+  dragCurrentX.value = event.clientX;
+  (event.currentTarget as HTMLElement)?.setPointerCapture?.(event.pointerId);
+  stopAutoSlide();
 };
 
-onMounted(startAutoSlide);
-onUnmounted(stopAutoSlide);
+const onPointerMove = (event: PointerEvent) => {
+  if (!isDragging.value || activePointerId.value !== event.pointerId) return;
+  dragCurrentX.value = event.clientX;
+};
+
+const endPointerInteraction = (event: PointerEvent) => {
+  if (!isDragging.value || activePointerId.value !== event.pointerId) return;
+
+  const deltaX = dragCurrentX.value - dragStartX.value;
+  const absDelta = Math.abs(deltaX);
+
+  if (absDelta >= DRAG_THRESHOLD_PX) {
+    if (deltaX < 0) nextSlide(false);
+    else prevSlide(false);
+  } else {
+    const container = event.currentTarget as HTMLElement;
+    const rect = container.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    if (localX >= rect.width / 2) nextSlide(false);
+    else prevSlide(false);
+  }
+
+  (event.currentTarget as HTMLElement)?.releasePointerCapture?.(event.pointerId);
+  isDragging.value = false;
+  dragStartX.value = 0;
+  dragCurrentX.value = 0;
+  activePointerId.value = null;
+  startAutoSlide();
+};
+
+const cancelPointerInteraction = (event: PointerEvent) => {
+  if (activePointerId.value !== event.pointerId) return;
+  (event.currentTarget as HTMLElement)?.releasePointerCapture?.(event.pointerId);
+  isDragging.value = false;
+  dragStartX.value = 0;
+  dragCurrentX.value = 0;
+  activePointerId.value = null;
+  startAutoSlide();
+};
+
+const handleSlideTransitionEnd = (event: TransitionEvent) => {
+  if (event.target !== event.currentTarget) return;
+  if (event.propertyName !== "transform") return;
+  syncLoopPosition();
+};
+
+watch(visualIndex, (value) => {
+  const total = slides.length;
+  if (total <= 1) return;
+
+  // Safety net: prevent blank viewport if index drifts outside clone range.
+  if (value > total + 1 || value < 0) {
+    jumpWithoutAnimation(normalizeIndex(value - 1, total) + 1);
+  }
+});
+
+const startService = () => {
+  if (isOffline.value) {
+    window.alert("네트워크 연결을 확인한 뒤 다시 시도해주세요.");
+    return;
+  }
+
+  // 기존 세션을 초기화하고 역할 선택으로 이동
+  authStore.clear();
+  router.push({ name: "select-role" }).catch((error) => {
+    console.error("Failed to navigate to role selection:", error);
+    window.location.assign("/select-role");
+  });
+};
+
+const goToSignup = () => {
+  authStore.clear();
+  // 랜딩에서 회원가입을 다시 시작할 때 항상 초기 상태로 진입한다.
+  signupStore.reset();
+  router.push({ name: "signup-role" }).catch((error) => {
+    console.error("Failed to navigate to signup role:", error);
+    window.location.assign("/signup/role");
+  });
+};
+
+const syncNetworkState = () => {
+  isOffline.value = !navigator.onLine;
+};
+
+onMounted(() => {
+  startAutoSlide();
+  window.addEventListener("online", syncNetworkState);
+  window.addEventListener("offline", syncNetworkState);
+});
+
+onUnmounted(() => {
+  stopAutoSlide();
+  window.removeEventListener("online", syncNetworkState);
+  window.removeEventListener("offline", syncNetworkState);
+});
 </script>
 
 <template>
@@ -75,9 +258,16 @@ onUnmounted(stopAutoSlide);
       </header>
 
       <section class="carousel" aria-label="서비스 기능 소개">
-        <div class="carousel-window">
-          <div class="slides" :style="slideTrackStyle">
-            <article v-for="slide in slides" :key="slide.id" class="slide">
+        <div
+          class="carousel-window"
+          :class="{ dragging: isDragging }"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="endPointerInteraction"
+          @pointercancel="cancelPointerInteraction"
+        >
+          <div class="slides" :style="slideTrackStyle" @transitionend="handleSlideTransitionEnd">
+            <article v-for="(slide, loopIndex) in loopSlides" :key="`${slide.id}-${loopIndex}`" class="slide">
               <div class="slide-card">
                 <div class="pictogram" :class="`pictogram-${slide.id}`">
                   <svg v-if="slide.id === 'voice'" viewBox="0 0 140 140" aria-hidden="true">
@@ -129,15 +319,23 @@ onUnmounted(stopAutoSlide);
 
       <div class="footer">
         <div class="indicator" role="presentation">
-          <span
+          <button
             v-for="(_, index) in slides"
             :key="index"
+            type="button"
             class="dot"
             :class="{ active: index === currentIndex }"
-          ></span>
+            @click="goToSlide(index)"
+            :aria-label="`슬라이드 ${index + 1}로 이동`"
+          ></button>
         </div>
 
-        <button class="cta-button" @click="startService">서비스 시작하기</button>
+        <div class="action-buttons">
+          <button class="cta-button" :disabled="isOffline" @click="startService">
+            {{ isOffline ? "네트워크 연결 필요" : "서비스 시작하기" }}
+          </button>
+          <a class="signup-link" href="/signup/role" @click.prevent="goToSignup">회원가입</a>
+        </div>
       </div>
     </div>
   </div>
@@ -151,25 +349,26 @@ onUnmounted(stopAutoSlide);
 
 .landing-viewport {
   width: 100%;
-  min-height: 100vh;
-  height: auto;
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #f5f6f7;
-  padding: clamp(16px, 3vmin, 32px);
-  overflow-y: auto;
+  padding: clamp(12px, 2.6vmin, 32px);
+  overflow: hidden;
 }
 
 .landing {
-  width: 100%;
-  max-width: 720px;
+  width: min(100%, 900px);
+  max-width: 100%;
+  height: min(calc(100dvh - clamp(24px, 5vmin, 64px)), 860px);
+  min-height: 0;
   background: transparent;
   padding: clamp(16px, 3vmin, 28px);
   display: grid;
   grid-template-rows:
     auto
-    1fr
+    minmax(0, 1fr)
     auto;
   gap: clamp(12px, 2.5vmin, 20px);
   color: #2e2e2e;
@@ -178,6 +377,7 @@ onUnmounted(stopAutoSlide);
 .hero {
   display: grid;
   gap: clamp(8px, 2vmin, 12px);
+  padding-inline: 4px;
 }
 
 .service-badge {
@@ -215,13 +415,22 @@ onUnmounted(stopAutoSlide);
   border-radius: clamp(18px, 3.6vmin, 28px);
   box-shadow: inset 6px 6px 14px rgba(209, 217, 230, 0.7), inset -6px -6px 14px #ffffff;
   display: flex;
-  min-height: clamp(260px, 36vmin, 420px);
+  min-height: clamp(240px, 34vmin, 400px);
   padding: clamp(8px, 1.6vmin, 14px);
+  min-width: 0;
 }
 
 .carousel-window {
   width: 100%;
   overflow: hidden;
+  min-width: 0;
+  touch-action: pan-y;
+  cursor: grab;
+  user-select: none;
+}
+
+.carousel-window.dragging {
+  cursor: grabbing;
 }
 
 .slides {
@@ -231,6 +440,7 @@ onUnmounted(stopAutoSlide);
 }
 
 .slide {
+  flex: 0 0 100%;
   min-width: 100%;
   height: 100%;
   display: flex;
@@ -239,6 +449,8 @@ onUnmounted(stopAutoSlide);
 
 .slide-card {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   background: #ffffff;
   border-radius: clamp(18px, 3.6vmin, 26px);
   box-shadow: 10px 10px 20px #d1d9e6, -10px -10px 20px #ffffff;
@@ -292,12 +504,19 @@ onUnmounted(stopAutoSlide);
   line-height: 1.5;
   color: #5f5f5f;
   margin: 0;
+  max-width: 48ch;
+  overflow-wrap: anywhere;
 }
 
 .footer {
   display: grid;
   gap: clamp(8px, 1.6vmin, 12px);
   padding-top: clamp(6px, 1.4vmin, 10px);
+}
+
+.action-buttons {
+  display: grid;
+  gap: 10px;
 }
 
 .indicator {
@@ -311,7 +530,10 @@ onUnmounted(stopAutoSlide);
   height: clamp(10px, 2.6vmin, 16px);
   background: #c9d6d6;
   border-radius: 999px;
+  border: none;
+  padding: 0;
   transition: all 0.3s ease;
+  cursor: pointer;
 }
 
 .dot.active {
@@ -321,6 +543,7 @@ onUnmounted(stopAutoSlide);
 }
 
 .cta-button {
+  width: 100%;
   height: clamp(48px, 6.5vmin, 60px);
   border: none;
   border-radius: clamp(16px, 3vmin, 22px);
@@ -335,6 +558,28 @@ onUnmounted(stopAutoSlide);
 .cta-button:active {
   transform: translateY(1px);
   box-shadow: 0 8px 16px rgba(76, 183, 183, 0.25);
+}
+
+.cta-button:disabled {
+  background: #9fbcbc;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.signup-link {
+  justify-self: center;
+  color: #1f5f5f;
+  font-size: clamp(1rem, 0.95rem + 0.4vmin, 1.05rem);
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.signup-link:focus-visible {
+  outline: 2px solid #4cb7b7;
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 
 .pictogram-voice .pg-ring {
@@ -481,7 +726,133 @@ onUnmounted(stopAutoSlide);
 
 @media (max-width: 480px) {
   .landing-viewport {
-    align-items: flex-start;
+    align-items: center;
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .landing {
+    width: min(100%, 420px);
+    height: calc(100dvh - 24px);
+    padding: 16px 14px 18px;
+    gap: 12px;
+  }
+
+  .hero {
+    padding-inline: 8px;
+  }
+
+  .carousel {
+    min-height: clamp(250px, 38vh, 360px);
+  }
+
+  .slide-card {
+    gap: 10px;
+    padding: 14px 14px 16px;
+  }
+
+  .pictogram {
+    width: clamp(84px, 24vw, 120px);
+    height: clamp(84px, 24vw, 120px);
+  }
+
+  .footer {
+    gap: 10px;
+    padding-top: 8px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .landing {
+    width: min(100%, 1080px);
+    height: min(calc(100dvh - 64px), 860px);
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      "hero carousel"
+      "footer footer";
+    column-gap: clamp(24px, 4vw, 52px);
+    row-gap: clamp(14px, 2.2vh, 24px);
+    align-items: stretch;
+  }
+
+  .hero {
+    grid-area: hero;
+    align-content: center;
+  }
+
+  .carousel {
+    grid-area: carousel;
+    min-height: 0;
+  }
+
+  .footer {
+    grid-area: footer;
+    width: min(100%, 560px);
+    margin: 0 auto;
+  }
+}
+
+@media (max-height: 760px) {
+  .landing {
+    height: calc(100dvh - 24px);
+    gap: 10px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  .service-badge {
+    font-size: 0.86rem;
+    padding: 5px 11px;
+  }
+
+  .hero h1 {
+    font-size: 1.35rem;
+    line-height: 1.24;
+  }
+
+  .hero p {
+    font-size: 0.9rem;
+    line-height: 1.42;
+  }
+
+  .hero {
+    gap: 8px;
+  }
+
+  .carousel {
+    min-height: 210px;
+  }
+
+  .slide-card {
+    gap: 8px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .slide-title .highlight {
+    font-size: 1.25rem;
+  }
+
+  .slide-title .subtitle {
+    font-size: 0.96rem;
+  }
+
+  .slide-desc {
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+
+  .pictogram {
+    width: clamp(74px, 16vh, 102px);
+    height: clamp(74px, 16vh, 102px);
+  }
+
+  .cta-button {
+    height: 46px;
+    font-size: 0.98rem;
   }
 }
 </style>

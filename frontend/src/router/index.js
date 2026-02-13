@@ -18,6 +18,30 @@ const routes = [
     component: () => import("../pages/LoginPage.vue")
   },
   {
+    path: "/signup",
+    redirect: { name: "signup-role" }
+  },
+  {
+    path: "/signup/role",
+    name: "signup-role",
+    component: () => import("../views/SignupRoleView.vue")
+  },
+  {
+    path: "/signup/form",
+    name: "signup-form",
+    component: () => import("../views/SignupFormView.vue")
+  },
+  {
+    path: "/signup/terms",
+    name: "signup-terms",
+    component: () => import("../views/SignupTermsView.vue")
+  },
+  {
+    path: "/signup/complete",
+    name: "signup-complete",
+    component: () => import("../views/SignupCompleteView.vue")
+  },
+  {
     path: "/home",
     name: "home",
     component: () => import("../pages/HomePage.vue"),
@@ -79,21 +103,23 @@ const routes = [
   },
   {
     path: "/doctor-settings/profile",
-    name: "doctor-profile-edit",
-    component: () => import("../pages/DoctorProfileEdit.vue"),
-    meta: { requiresAuth: true, roles: ["doctor"] }
+    redirect: { name: "doctor-settings" }
   },
   {
     path: "/doctor-settings/notifications",
-    name: "doctor-notification",
-    component: () => import("../pages/DoctorNotification.vue"),
-    meta: { requiresAuth: true, roles: ["doctor"] }
+    redirect: { name: "doctor-settings" }
   },
   {
     path: "/settings/personal-info",
     name: "personal-info",
     component: () => import("../pages/PersonalInfoPage.vue"),
     meta: { requiresAuth: true, roles: ["subject", "caregiver", "doctor"] }
+  },
+  {
+    path: "/settings/caregiver-sharing",
+    name: "caregiver-sharing-settings",
+    component: () => import("../pages/CaregiverSharingSettingsPage.vue"),
+    meta: { requiresAuth: true, roles: ["subject"] }
   },
   {
     path: "/settings/notifications",
@@ -131,7 +157,15 @@ router.beforeEach((to, from, next) => {
   const role = authStore.role;
 
   // 비인증 사용자 허용 페이지 목록
-  const publicPages = ["landing", "select-role", "login"];
+  const publicPages = [
+    "landing",
+    "select-role",
+    "login",
+    "signup-role",
+    "signup-form",
+    "signup-terms",
+    "signup-complete",
+  ];
   const isPublicPage = publicPages.includes(to.name);
 
   // 이미 로그인된 사용자가 로그인/역할선택 페이지 접근 시 홈으로 이동

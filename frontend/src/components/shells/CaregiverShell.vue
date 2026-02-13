@@ -80,39 +80,45 @@ watch(fontScale, (value) => {
 
 <style scoped>
 .caregiver-shell {
+  --shell-max-width: 520px;
+  --shell-nav-width: 520px;
+  --shell-gutter: clamp(14px, 4vw, 20px);
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #f5f6f7;
+  background-color: #f4f7f8;
   position: relative;
 }
 
 
 .content {
   flex: 1;
-  padding: 16px;
-  padding-bottom: 90px;
-  max-width: 460px;
+  padding: 8px var(--shell-gutter);
+  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  width: min(100%, var(--shell-max-width));
   margin: 0 auto;
-  width: 100%;
   box-sizing: border-box;
+  overflow-x: visible;
 }
 
 .bottom-nav {
   position: fixed;
   bottom: 0;
-  left: 0;
-  right: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, var(--shell-nav-width));
   height: 70px;
-  background: #f5f6f7;
+  background: rgba(244, 247, 248, 0.98);
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  border-top: 1px solid rgba(46, 46, 46, 0.05);
   display: flex;
   justify-content: space-around;
   align-items: center;
-  padding: 8px 16px 12px;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
-  max-width: 460px;
-  margin: 0 auto;
+  padding: 8px var(--shell-gutter) calc(12px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -2px 8px rgba(46, 46, 46, 0.08);
   z-index: 90;
+  box-sizing: border-box;
 }
 
 .nav-item {
@@ -130,7 +136,7 @@ watch(fontScale, (value) => {
 
 .nav-item.active {
   background: #fff;
-  box-shadow: 2px 2px 6px #d1d9e6, -2px -2px 6px #ffffff;
+  box-shadow: 0 2px 6px rgba(46, 46, 46, 0.08);
 }
 
 .icon {
@@ -149,6 +155,14 @@ watch(fontScale, (value) => {
 
 .nav-item.active .label {
   color: #4cb7b7;
+}
+
+@media (min-width: 900px) {
+  .caregiver-shell {
+    --shell-max-width: 860px;
+    --shell-nav-width: 620px;
+    --shell-gutter: 24px;
+  }
 }
 
 </style>

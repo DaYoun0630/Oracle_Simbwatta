@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 import httpx
+import logging
 
 from .. import db
 from ..config import settings
@@ -15,6 +16,7 @@ from ..schemas.user import UserOut
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -54,6 +56,50 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     token = credentials.credentials
     return verify_token(token)
 
+
+# ============================================================================
+# Development Login (No OAuth required)
+# ============================================================================
+@router.post("/dev-login")
+async def dev_login(role: str = Query("doctor", regex="^(doctor|patient|caregiver)$")):
+    """
+    Development only: Get a JWT token for a specific role without Google OAuth.
+    Creates a mock user if one doesn't exist for the role.
+    """
+    if settings.environment == "production":
+        raise HTTPException(status_code=403, detail="Not available in production")
+
+    # Find or create a dev user for this role
+    email = f"dev_{role}@example.com"
+    user = await db.fetchrow("SELECT * FROM users WHERE email = $1", email)
+
+    if not user:
+        now = datetime.utcnow()
+        # Create base user
+        row = await db.fetchrow("""
+            INSERT INTO users (email, name, oauth_provider_id, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING user_id
+        """, email, f"Dev {role.capitalize()}", "dev-mock-id", now, now)
+        user_id = row["user_id"]
+        
+        # Create role-specific entry
+        if role == "doctor":
+            await db.execute("INSERT INTO doctor (user_id) VALUES ($1)", user_id)
+        elif role == "patient":
+            await db.execute("INSERT INTO patients (user_id, enrollment_date) VALUES ($1, CURRENT_DATE)", user_id)
+        elif role == "caregiver":
+            # Need a patient to link to. For dev, just link to self or create a dummy patient if needed.
+            # For simplicity in dev-login, we might skip creating the relation row or create a dummy patient.
+            pass 
+    else:
+        user_id = user["user_id"]
+
+    # Create token
+    token_data = {"sub": str(user_id), "role": role, "email": email}
+    access_token = create_access_token(token_data)
+    
+    return {"access_token": access_token, "token_type": "bearer", "role": role}
 
 # ============================================================================
 # Google OAuth Flow
@@ -140,62 +186,59 @@ async def google_oauth_callback(code: str = Query(...), state: str = Query(None)
         raise HTTPException(status_code=400, detail="Invalid user data from Google")
 
     # Check if user exists
-    user = await db.fetchrow("SELECT * FROM users WHERE google_id = $1", google_id)
+    user = await db.fetchrow("SELECT * FROM users WHERE oauth_provider_id = $1", google_id)
 
     now = datetime.utcnow()
     if user:
         # Update existing user
-        user_id = user["id"]
+        user_id = str(user["user_id"])
         await db.execute("""
             UPDATE users
-            SET name = $1, email = $2, profile_picture = $3, updated_at = $4
-            WHERE id = $5
+            SET name = $1, email = $2, profile_image_url = $3, updated_at = $4
+            WHERE user_id = $5
         """, name, email, picture, now, user_id)
     else:
-        # Create new user (default role: patient)
-        user_id = str(uuid4())
+        # Create new user
+        row = await db.fetchrow("""
+            INSERT INTO users (oauth_provider_id, email, name, profile_image_url, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING user_id
+        """, google_id, email, name, picture, now, now)
+        user_id = row["user_id"]
+
+        # Default role assignment logic would go here. 
+        # For now, we assume they are a patient by default or handle registration separately.
+        # Inserting into patients table as default:
         await db.execute("""
-            INSERT INTO users (id, google_id, email, name, role, profile_picture, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        """, user_id, google_id, email, name, "patient", picture, now, now)
+            INSERT INTO patients (user_id, enrollment_date, created_at, updated_at)
+            VALUES ($1, CURRENT_DATE, $2, $3)
+        """, user_id, now, now)
 
-        # Create patient record
-        patient_id = str(uuid4())
-        await db.execute("""
-            INSERT INTO patients (id, user_id, mci_stage, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5)
-        """, patient_id, user_id, "unknown", now, now)
-
-    # Get user role and entity_id
-    user = await db.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
-    role = user["role"]
-
-    # Get entity_id based on role
+    # Determine role based on table existence
+    role = "patient" # default
     entity_id = None
-    if role == "doctor":
-        doctor = await db.fetchrow("SELECT id FROM doctors WHERE user_id = $1", user_id)
-        entity_id = doctor["id"] if doctor else None
-    elif role == "patient":
-        patient = await db.fetchrow("SELECT id FROM patients WHERE user_id = $1", user_id)
-        entity_id = patient["id"] if patient else None
-    elif role == "family":
-        family = await db.fetchrow("SELECT id FROM family_members WHERE user_id = $1", user_id)
-        entity_id = family["id"] if family else None
+    
+    if await db.fetchrow("SELECT user_id FROM doctor WHERE user_id = $1", user_id):
+        role = "doctor"
+        entity_id = user_id
+    elif await db.fetchrow("SELECT user_id FROM caregiver WHERE user_id = $1", user_id):
+        role = "caregiver"
+        entity_id = user_id
+    else:
+        # Default to patient
+        role = "patient"
+        entity_id = user_id
 
     # Create JWT token
     token_data = {
-        "sub": user_id,
+        "sub": str(user_id),
         "role": role,
         "entity_id": entity_id,
         "email": email
     }
     access_token = create_access_token(token_data)
 
-    # Log successful login
-    await db.execute("""
-        INSERT INTO audit_logs (id, user_id, action, details, created_at)
-        VALUES ($1, $2, $3, $4, $5)
-    """, str(uuid4()), user_id, "login", {"method": "google_oauth"}, now)
+    logger.info(f"User logged in: {user_id} ({role})")
 
     # TODO: Retrieve redirect_uri from state if stored in Redis
     # For now, return token directly
@@ -208,7 +251,7 @@ async def google_oauth_callback(code: str = Query(...), state: str = Query(None)
             "name": name,
             "role": role,
             "entity_id": entity_id,
-            "profile_picture": picture
+            "profile_image_url": picture
         }
     }
 
@@ -222,7 +265,7 @@ async def get_current_user_info(current_user: TokenData = Depends(get_current_us
     Get current authenticated user's information.
     Requires valid JWT token in Authorization header.
     """
-    user = await db.fetchrow("SELECT * FROM users WHERE id = $1", current_user.user_id)
+    user = await db.fetchrow("SELECT * FROM users WHERE user_id = $1", current_user.user_id)
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -240,10 +283,6 @@ async def logout(current_user: TokenData = Depends(get_current_user)):
     Client should delete the JWT token.
     TODO: Add token to blacklist in Redis if needed.
     """
-    # Log logout
-    await db.execute("""
-        INSERT INTO audit_logs (id, user_id, action, details, created_at)
-        VALUES ($1, $2, $3, $4, $5)
-    """, str(uuid4()), current_user.user_id, "logout", {}, datetime.utcnow())
+    logger.info(f"User logged out: {current_user.user_id}")
 
     return {"status": "ok", "message": "Logged out successfully"}

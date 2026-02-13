@@ -4,14 +4,13 @@ from uuid import UUID
 
 
 class DoctorBase(BaseModel):
-    hospital: Optional[str] = None
-    department: Optional[str] = None
+    hospital_name: Optional[str] = None
+    hospital_number: Optional[str] = None
     license_number: Optional[str] = None
-    specialization: Optional[str] = None
 
 
 class DoctorCreate(DoctorBase):
-    user_id: UUID
+    user_id: int
 
 
 class DoctorUpdate(DoctorBase):
@@ -19,8 +18,7 @@ class DoctorUpdate(DoctorBase):
 
 
 class DoctorOut(DoctorBase):
-    id: UUID
-    user_id: UUID
+    user_id: int
 
     class Config:
         from_attributes = True

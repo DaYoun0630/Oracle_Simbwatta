@@ -20,7 +20,7 @@ class VoiceAssessmentCreate(VoiceAssessmentBase):
 
 
 class VoiceAssessmentOut(VoiceAssessmentBase):
-    id: UUID
+    assessment_id: UUID
     recording_id: UUID
     assessed_at: datetime
 
@@ -38,13 +38,13 @@ class MRIAssessmentBase(BaseModel):
 
 
 class MRIAssessmentCreate(MRIAssessmentBase):
-    patient_id: UUID
+    patient_id: int
     scan_date: Optional[datetime] = None
 
 
 class MRIAssessmentOut(MRIAssessmentBase):
-    id: UUID
-    patient_id: UUID
+    assessment_id: UUID
+    patient_id: int
     scan_date: Optional[datetime] = None
     processed_at: Optional[datetime] = None
 

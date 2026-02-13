@@ -15,6 +15,8 @@ from typing import Optional, Tuple
 
 from celery import Celery
 from celery.utils.log import get_task_logger
+# Lazy import: only needed when preprocessing from scratch
+# from .mri_utils import preprocess_single_subject, convert_dicom_to_nifti
 
 logger = get_task_logger(__name__)
 
@@ -37,6 +39,10 @@ app.conf.update(
     worker_prefetch_multiplier=1,  # Process one task at a time
 )
 
+# Define MRI Template path relative to this file
+# Location: src/claude/worker/templates/mni_icbm152_t1_tal_nlin_sym_09a.nii
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MRI_TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "mni_icbm152_t1_tal_nlin_sym_09a.nii")
 
 def _get_minio_client():
     """Create MinIO client for file downloads."""
@@ -52,7 +58,7 @@ def _get_minio_client():
 def _get_db_connection():
     """Create sync database connection for worker tasks."""
     import psycopg2
-    db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/mci")
+    db_url = os.getenv("DATABASE_URL", "postgresql://mci_user:change_me@postgres:5432/cognitive")
     return psycopg2.connect(db_url)
 
 
@@ -333,14 +339,123 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
     """
     try:
         logger.info(f"Starting MRI processing for scan {mri_id}")
+        
+        # Verify template exists
+        if not os.path.exists(MRI_TEMPLATE_PATH):
+            raise FileNotFoundError(f"MNI Template not found at {MRI_TEMPLATE_PATH}")
 
-        # TODO: Implement full MRI ML pipeline
-        logger.info(f"MRI processing completed for scan {mri_id}")
+        # Check for preprocessed data on disk to skip preprocessing
+        conn = _get_db_connection()
+        subject_id = None
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT subject_id FROM patients WHERE user_id = %s", (patient_id,))
+            row = cur.fetchone()
+            if row:
+                subject_id = row[0]
+        finally:
+            conn.close()
+
+        candidates = [
+            "/srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final/minio-data/processed",
+            "/app/minio-data/processed"
+        ]
+        preprocessed_dir = candidates[0]
+        for p in candidates:
+            if os.path.exists(p):
+                preprocessed_dir = p
+                break
+
+        final_path = None
+
+        if subject_id and os.path.exists(preprocessed_dir):
+            # Find file matching subject_id
+            candidates = [
+                f for f in os.listdir(preprocessed_dir)
+                if subject_id in f and f.endswith('.nii.gz')
+            ]
+            if candidates:
+                # 가장 최근 파일 선택 (mtime 기준)
+                candidates.sort(key=lambda f: os.path.getmtime(os.path.join(preprocessed_dir, f)), reverse=True)
+                final_path = os.path.join(preprocessed_dir, candidates[0])
+                logger.info(f"Found preprocessed file for subject {subject_id}: {final_path}")
+
+                # Update DB to point to this existing preprocessed file
+                conn = _get_db_connection()
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "UPDATE mri_assessments SET file_path = %s, processed_at = NOW() WHERE assessment_id = %s",
+                        (final_path, mri_id)
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+        if not final_path:
+            # Lazy import: only needed when preprocessing from scratch
+            from .mri_utils import preprocess_single_subject, convert_dicom_to_nifti
+
+            # 1. Raw Data Ingestion: Convert DICOM to NIfTI (.nii.gz) and update DB
+            current_path = file_path
+            if os.path.isdir(file_path):
+                output_dir = os.path.dirname(file_path.rstrip("/"))
+                nifti_path = os.path.join(output_dir, f"{mri_id}.nii.gz")
+
+                logger.info(f"Converting DICOM folder {file_path} to {nifti_path}")
+                convert_dicom_to_nifti(file_path, nifti_path)
+                current_path = nifti_path
+
+                conn = _get_db_connection()
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "UPDATE mri_assessments SET file_path = %s, processed_at = NOW() WHERE assessment_id = %s",
+                        (current_path, mri_id)
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            # 2. Preprocessing (Skull Strip + Normalization)
+            output_path = current_path.replace(".nii", "_preprocessed.nii").replace(".gz", "") + ".gz"
+            final_path = preprocess_single_subject(current_path, output_path, MRI_TEMPLATE_PATH)
+
+        # 3. Model Inference (Placeholder / Integration)
+        logger.info(f"Running 3D CNN Inference on {final_path}")
+        
+        from .model_inference import predict_mri
+        mri_result = predict_mri(final_path, patient_id=patient_id)
+        
+        predicted_stage = mri_result['label']
+        confidence = mri_result['confidence']
+        probabilities = mri_result['probabilities']
+        
+        logger.info(f"Inference Result: {predicted_stage} (Confidence: {confidence:.4f})")
+
+        # 4. Save Results to DB
+        conn = _get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE mri_assessments
+                SET classification = %s,
+                    predicted_stage = %s,
+                    confidence = %s,
+                    probabilities = %s,
+                    preprocessing_status = 'completed',
+                    processed_at = NOW()
+                WHERE assessment_id = %s
+            """, (predicted_stage, predicted_stage, confidence, json.dumps(probabilities), mri_id))
+            conn.commit()
+        finally:
+            conn.close()
 
         return {
             'status': 'completed',
             'mri_id': mri_id,
-            'message': 'MRI processing pipeline not yet implemented'
+            'result': predicted_stage,
+            'confidence': confidence
         }
 
     except Exception as e:

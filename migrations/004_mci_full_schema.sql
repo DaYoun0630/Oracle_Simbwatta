@@ -29,7 +29,7 @@
 -- ============================================================================
 
 CREATE TABLE users (
-    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id SERIAL PRIMARY KEY,
     name VARCHAR(100) NULL,
     phone_number VARCHAR(30) NULL,
     email VARCHAR(255) NULL,
@@ -41,7 +41,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE doctor (
-    user_id UUID PRIMARY KEY,
+    user_id INTEGER PRIMARY KEY,
     department VARCHAR(50) NULL,
     license_number VARCHAR(50) NULL,
     hospital VARCHAR(100) NULL,
@@ -51,8 +51,8 @@ CREATE TABLE doctor (
 );
 
 CREATE TABLE patients (
-    user_id UUID PRIMARY KEY,
-    doctor_id UUID NULL,
+    user_id INTEGER PRIMARY KEY,
+    doctor_id INTEGER NULL,
     enrollment_date DATE NOT NULL DEFAULT CURRENT_DATE,
     rid INTEGER NULL,                    -- ADNI Roster ID (integer, not UUID)
     subject_id VARCHAR(50) NULL,         -- ADNI Subject ID (string, not UUID)
@@ -72,8 +72,8 @@ CREATE TABLE patients (
 );
 
 CREATE TABLE caregiver (
-    user_id UUID PRIMARY KEY,
-    patient_id UUID NOT NULL,
+    user_id INTEGER PRIMARY KEY,
+    patient_id INTEGER NOT NULL,
     relationship VARCHAR(50) NULL,       -- spouse, child, sibling, etc.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
@@ -86,7 +86,7 @@ CREATE TABLE caregiver (
 
 CREATE TABLE training_sessions (
     training_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     exercise_type VARCHAR(50) NULL,
     started_at TIMESTAMP NULL,
     ended_at TIMESTAMP NULL,
@@ -102,7 +102,7 @@ CREATE TABLE training_sessions (
 CREATE TABLE recordings (
     recording_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     training_id UUID NOT NULL,
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     file_path VARCHAR(500) NULL,
     duration_seconds FLOAT NULL,
     file_size_bytes BIGINT NULL,
@@ -142,7 +142,7 @@ CREATE TABLE voice_assessments (
 
 CREATE TABLE mri_assessments (
     assessment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     image_id INTEGER NULL,               -- ADNI Image ID
     file_path VARCHAR(500) NULL,
     image_paths JSONB NULL,              -- multiple slices/views
@@ -176,7 +176,7 @@ CREATE TABLE mri_files (
     file_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     assessment_id UUID NOT NULL,
     visit_id UUID NULL,
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     mri_id INTEGER NULL,
     bucket VARCHAR(63) NULL,
     raw_object_key TEXT NULL,
@@ -198,7 +198,7 @@ CREATE TABLE mri_files (
 
 CREATE TABLE visits (
     visit_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     exam_date DATE NULL,
     viscode2 VARCHAR(10) NULL,           -- sc, bl, m06, m12, m18, m24
     origprot VARCHAR(10) NULL,
@@ -214,7 +214,7 @@ CREATE TABLE visits (
 CREATE TABLE clinical_assessments (
     assessment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     visit_id UUID NOT NULL,
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     exam_date DATE NULL,
     viscode2 VARCHAR(10) NULL,
     mmse INTEGER NULL,                   -- Mini-Mental State Exam (0-30)
@@ -236,7 +236,7 @@ CREATE TABLE clinical_assessments (
 CREATE TABLE neuropsych_tests (
     test_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     visit_id UUID NOT NULL,
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     exam_date DATE NULL,
     viscode2 VARCHAR(10) NULL,
     -- RAVLT (Rey Auditory Verbal Learning Test)
@@ -268,7 +268,7 @@ CREATE TABLE neuropsych_tests (
 CREATE TABLE biomarkers (
     biomarker_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     visit_id UUID NOT NULL,
-    patient_id UUID NOT NULL,
+    patient_id INTEGER NOT NULL,
     collected_date DATE NULL,
     sample_type VARCHAR(20) NULL,        -- CSF, serum, plasma
     abeta42 FLOAT NULL,                  -- Amyloid-beta 42
@@ -290,11 +290,11 @@ CREATE TABLE biomarkers (
 
 CREATE TABLE notifications (
     notification_id UUID DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
+    user_id INTEGER NOT NULL,
     type VARCHAR(50) NULL,
     title VARCHAR(200) NULL,
     message TEXT NULL,
-    related_patient_id UUID NULL,
+    related_patient_id INTEGER NULL,
     related_type VARCHAR(50) NULL,       -- Fixed typo: reladted_type → related_type
     related_id UUID NULL,
     is_read BOOLEAN DEFAULT FALSE,
@@ -328,7 +328,7 @@ CREATE TABLE storage_objects (
     source_type VARCHAR(50) NULL,
     source_id UUID NULL,
     metadata JSONB NULL,                 -- Fixed typo: JASONB → JSONB
-    uploaded_by_user_id UUID NULL,
+    uploaded_by_user_id INTEGER NULL,
     uploaded_at TIMESTAMP NULL,
     deleted_at TIMESTAMP NULL,
     FOREIGN KEY (uploaded_by_user_id) REFERENCES users(user_id) ON DELETE SET NULL

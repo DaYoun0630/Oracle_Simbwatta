@@ -2,10 +2,12 @@
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useCaregiverData } from '@/composables/useCaregiverData';
+import { useCaregiverSharingSettings } from '@/composables/useCaregiverSharingSettings';
 import WeeklyChart from '../WeeklyChart.vue';
 
 const router = useRouter();
 const { data, loading, fetchData } = useCaregiverData();
+const sharing = useCaregiverSharingSettings();
 
 onMounted(() => {
   fetchData();
@@ -48,10 +50,16 @@ const subjectName = computed(() => data.value?.subject?.name ?? '대상자');
 const relationText = computed(() => data.value?.subject?.relation ?? '가족');
 
 const statusSummary = computed(() => `${subjectName.value} 님은 오늘 ${statusLabel.value} 상태입니다.`);
-const statusMessage = computed(() => data.value?.todayStatus?.message ?? '오늘 대화 리듬이 안정적으로 유지되었습니다.');
+const statusMessage = computed(() => {
+  if (!sharing.dialogSummary.value) return '대상자가 대화 요약 공유를 철회했습니다.';
+  return data.value?.todayStatus?.message ?? '오늘 대화 리듬이 안정적으로 유지되었습니다.';
+});
 const lastChatText = computed(() => data.value?.todayStatus?.lastChat ?? '오늘 기록 없음');
 
 const trendSummary = computed(() => {
+  if (!sharing.dialogSummary.value) {
+    return '대상자가 대화 요약 공유를 철회하여 주간 대화 요약이 숨김 처리되었습니다.';
+  }
   const trend = data.value?.weeklyTrend?.trend ?? 'stable';
   if (trend === 'down') {
     return '최근 반응 속도의 변화가 있어 추가 관찰이 필요합니다.';
@@ -70,9 +78,16 @@ const trendBadgeText = computed(() => {
 });
 
 const emotionLabel = computed(() => {
+  if (!sharing.dialogSummary.value) return '대화 요약 공유 비활성화';
   if (statusTone.value === 'danger') return '주의가 필요한 대화 톤';
   if (statusTone.value === 'alert') return '관찰이 필요한 대화 톤';
   return '안정적인 대화 톤';
+});
+
+const nextMedicationReminder = computed(() => {
+  const reminder = data.value?.medicationReminders?.[0];
+  if (!reminder) return '등록된 복약 일정이 없습니다.';
+  return `${reminder.time} ${reminder.name}`;
 });
 
 const quickActions = computed(() => {
@@ -88,22 +103,22 @@ const quickActions = computed(() => {
       action: 'history',
     },
     {
-      id: 'trend',
-      title: '상태 흐름',
-      value: trendBadgeText.value,
-      desc: '대화 리듬 요약',
-      icon: 'trend',
-      tone: data.value.weeklyTrend.trend === 'down' ? 'alert' : 'mint',
-      action: null,
-    },
-    {
       id: 'recent',
       title: '최근 대화',
-      value: lastChatText.value,
-      desc: '기록 바로 보기',
+      value: sharing.dialogSummary.value ? lastChatText.value : '공유 비활성화',
+      desc: sharing.dialogSummary.value ? '기록 바로 보기' : '대상자가 공유 철회',
       icon: 'doc',
       tone: 'neutral',
       action: 'history',
+    },
+    {
+      id: 'medication',
+      title: '복약 리마인드',
+      value: sharing.medicationReminder.value ? nextMedicationReminder.value : '공유 비활성화',
+      desc: sharing.medicationReminder.value ? '복약 예정 정보' : '대상자가 공유 철회',
+      icon: 'pill',
+      tone: 'mint',
+      action: null,
     },
   ];
 });
@@ -167,13 +182,16 @@ const statusIconPath = computed(() => {
             </svg>
             <span>{{ emotionLabel }}</span>
           </div>
-          <div v-if="data.alerts.length" class="alert-chip">
+          <div v-if="sharing.anomalyAlert.value && data.alerts.length" class="alert-chip">
             알림 {{ data.alerts.length }}건
+          </div>
+          <div v-else-if="!sharing.anomalyAlert.value" class="alert-chip muted">
+            이상 행동 알림 공유 철회
           </div>
         </div>
       </section>
 
-      <section class="trend-card stagger" style="--delay: 120ms">
+      <section v-if="sharing.dialogSummary.value" class="trend-card stagger" style="--delay: 120ms">
         <div class="trend-header">
           <div>
             <h3>최근 7일 대화 흐름</h3>
@@ -213,6 +231,12 @@ const statusIconPath = computed(() => {
               <circle class="icon-dot" cx="26" cy="28" r="3" />
               <circle class="icon-dot" cx="40" cy="14" r="3" />
             </svg>
+            <svg v-else-if="item.icon === 'pill'" viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="10" y="20" width="28" height="10" rx="5" />
+              <path d="M24 20v10" />
+              <circle class="icon-dot" cx="16" cy="25" r="1.8" />
+              <circle class="icon-dot" cx="32" cy="25" r="1.8" />
+            </svg>
             <svg v-else viewBox="0 0 48 48" aria-hidden="true">
               <rect x="12" y="10" width="24" height="28" rx="6" />
               <path d="M18 20h12M18 26h12M18 32h8" />
@@ -233,12 +257,28 @@ const statusIconPath = computed(() => {
 
 <style scoped>
 .caregiver-home-container {
+  --card-surface: #f7f9fa;
+  --card-elevation-main:
+    0 10px 22px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.11),
+    0 1px 3px rgba(126, 140, 154, 0.06);
+  --card-elevation-sub:
+    0 8px 16px rgba(126, 140, 154, 0.14),
+    0 2px 6px rgba(126, 140, 154, 0.1);
+  --card-elevation-icon:
+    0 10px 18px rgba(126, 140, 154, 0.18),
+    0 3px 8px rgba(126, 140, 154, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --card-elevation-hover:
+    0 11px 20px rgba(126, 140, 154, 0.16),
+    0 4px 10px rgba(126, 140, 154, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100%;
-  overflow: hidden;
-  justify-content: space-between;
+  gap: 24px;
+  min-height: 100%;
+  overflow: visible;
+  justify-content: flex-start;
+  padding-bottom: 12px;
 }
 
 .loading {
@@ -262,10 +302,10 @@ const statusIconPath = computed(() => {
 }
 
 .hero-card {
-  background: #f5f6f7;
+  background: var(--card-surface);
   padding: 20px 20px 18px;
-  border-radius: 32px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  border-radius: 24px;
+  box-shadow: var(--card-elevation-main);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -303,6 +343,7 @@ const statusIconPath = computed(() => {
   background: #e6f3f3;
   color: #1f5f5f;
   white-space: nowrap;
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.08), inset -2px -2px 4px rgba(255, 255, 255, 0.9);
 }
 
 .status-pill.stable {
@@ -325,7 +366,6 @@ const statusIconPath = computed(() => {
   height: 10px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 8px currentColor;
 }
 
 .hero-body {
@@ -339,11 +379,11 @@ const statusIconPath = computed(() => {
   width: 92px;
   height: 92px;
   border-radius: 24px;
-  background: #ffffff;
+  background: #f9fbfb;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 6px 6px 12px rgba(209, 217, 230, 0.7), inset -6px -6px 12px #ffffff;
+  box-shadow: var(--card-elevation-icon);
 }
 
 .status-visual svg {
@@ -384,12 +424,12 @@ const statusIconPath = computed(() => {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 20px;
-  background: #ffffff;
+  border-radius: 999px;
+  background: #f8fafb;
   font-size: 18px;
   font-weight: 700;
   color: #2e2e2e;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  box-shadow: var(--card-elevation-sub);
 }
 
 .emotion-icon {
@@ -412,16 +452,20 @@ const statusIconPath = computed(() => {
   background: rgba(255, 138, 128, 0.15);
 }
 
+.alert-chip.muted {
+  color: #7a7a7a;
+  background: rgba(130, 130, 130, 0.12);
+}
+
 .trend-card {
-  background: #f5f6f7;
+  background: var(--card-surface);
   padding: 20px 20px 16px;
-  border-radius: 32px;
-  box-shadow: 14px 14px 28px #cfd6df, -14px -14px 28px #ffffff;
+  border-radius: 24px;
+  box-shadow: var(--card-elevation-main);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  flex: 1;
-  min-height: 0;
+  flex: none;
 }
 
 .trend-header {
@@ -468,16 +512,17 @@ const statusIconPath = computed(() => {
 
 .quick-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  align-items: stretch;
 }
 
 .action-card {
   border: none;
-  background: #f5f6f7;
+  background: var(--card-surface);
   padding: 16px 12px;
   border-radius: 24px;
-  box-shadow: 10px 10px 20px #cfd6df, -10px -10px 20px #ffffff;
+  box-shadow: var(--card-elevation-sub);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -485,27 +530,34 @@ const statusIconPath = computed(() => {
   text-align: center;
   cursor: pointer;
   min-height: 150px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .action-card:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.76;
 }
 
 .action-card:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.995);
+}
+
+.action-card:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--card-elevation-hover);
 }
 
 .action-icon {
   width: 64px;
   height: 64px;
   border-radius: 18px;
-  background: #ffffff;
+  background: #f9fbfb;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  box-shadow: var(--card-elevation-icon);
 }
 
 .action-icon svg {

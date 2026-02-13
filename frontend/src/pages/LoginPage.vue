@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   LoginPage.vue
   ─────────────────────────────────────────────────
   뉴모피즘(Neumorphism) 이중 양각 로그인 페이지
@@ -118,7 +118,7 @@ const handleLogin = () => {
           <input
             v-model="username"
             type="text"
-            placeholder="아이디"
+            placeholder="아이디(이메일)"
             class="login-input"
           />
 
@@ -363,3 +363,4 @@ const handleLogin = () => {
   box-shadow: 0 6px 12px rgba(76, 183, 183, 0.25);
 }
 </style>
+

@@ -18,4 +18,4 @@ class GoogleUser(BaseModel):
     email: EmailStr
     name: str
     picture: Optional[str] = None
-    google_id: str
+    oauth_provider_id: str
