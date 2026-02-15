@@ -2,11 +2,23 @@ import os
 import glob
 import numpy as np
 import logging
+import urllib.request
+from pathlib import Path
 
 try:
     import SimpleITK as sitk
 except ImportError:
     sitk = None
+
+try:
+    import ants
+except ImportError:
+    ants = None
+
+try:
+    from antspynet.utilities import brain_extraction
+except ImportError:
+    brain_extraction = None
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +53,142 @@ def convert_dicom_to_nifti(dicom_folder, save_path):
     except Exception as e:
         logger.error(f"DICOM conversion error: {e}")
         raise
+
+
+def _require_ants():
+    if ants is None:
+        raise ImportError("ANTsPy (antspyx) is required but not installed.")
+    if brain_extraction is None:
+        raise ImportError("ANTsPyNet is required but not installed.")
+
+
+def _patch_antspy_compat():
+    """Backfill APIs missing in older antspyx versions expected by antspynet."""
+    _require_ants()
+    if hasattr(ants, "one_hot_to_segmentation"):
+        return
+
+    def one_hot_to_segmentation(one_hot_array, domain_image, channel_first_ordering=False):
+        arr = np.asarray(one_hot_array)
+        if arr.ndim not in (3, 4):
+            raise ValueError(f"Unexpected one_hot_array shape: {arr.shape}")
+
+        number_of_labels = arr.shape[0] if channel_first_ordering else arr.shape[-1]
+        probability_images = []
+
+        for label in range(number_of_labels):
+            if domain_image.dimension == 2:
+                image_array = arr[label, :, :] if channel_first_ordering else arr[:, :, label]
+            else:
+                image_array = arr[label, :, :, :] if channel_first_ordering else arr[:, :, :, label]
+
+            probability_images.append(
+                ants.from_numpy(
+                    np.asarray(image_array, dtype=np.float32),
+                    origin=domain_image.origin,
+                    spacing=domain_image.spacing,
+                    direction=domain_image.direction,
+                )
+            )
+
+        return probability_images
+
+    ants.one_hot_to_segmentation = one_hot_to_segmentation
+
+
+def ensure_antsxnet_assets():
+    """
+    Pre-download assets needed by ANTsPyNet brain_extraction.
+    Uses figshare direct downloader URL to avoid WAF challenge pages.
+    """
+    _require_ants()
+    cache_dir = Path.home() / ".keras" / "ANTsXNet"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    assets = {
+        "brainExtractionRobustT1.h5": "https://ndownloader.figshare.com/files/34821874",
+        "S_template3.nii.gz": "https://ndownloader.figshare.com/files/22597175",
+    }
+
+    for filename, url in assets.items():
+        target = cache_dir / filename
+        if target.exists() and target.stat().st_size > 0:
+            continue
+        logger.info(f"Downloading ANTsXNet asset: {filename}")
+        urllib.request.urlretrieve(url, str(target))
+        if target.stat().st_size == 0:
+            raise RuntimeError(f"Downloaded empty ANTsXNet asset: {target}")
+
+
+def _robust_normalize_with_clip(image, clip_range=(-5.0, 5.0)):
+    """Robust z-normalization using brain voxels, then clipping."""
+    image_np = image.numpy()
+    mask = image_np != 0
+    brain_pixels = image_np[mask]
+
+    if brain_pixels.size > 0:
+        median = np.median(brain_pixels)
+        q75, q25 = np.percentile(brain_pixels, [75, 25])
+        iqr = q75 - q25
+        image_np[mask] = (brain_pixels - median) / (iqr + 1e-7)
+        image_np = np.clip(image_np, clip_range[0], clip_range[1])
+
+    return ants.from_numpy(
+        image_np,
+        origin=image.origin,
+        spacing=image.spacing,
+        direction=image.direction,
+    )
+
+
+def preprocess_single_subject_antspy(
+    input_path: str,
+    output_path: str,
+    template_path: str,
+    registration_type: str = "SyNRA",
+    clip_range: tuple[float, float] = (-5.0, 5.0),
+):
+    """
+    ANTs-based MRI preprocessing:
+    1) Read NIfTI
+    2) N4 bias correction
+    3) Registration to MNI template
+    4) ANTsPyNet brain extraction
+    5) Robust normalization + clip
+    """
+    _require_ants()
+    _patch_antspy_compat()
+    ensure_antsxnet_assets()
+
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Input MRI not found: {input_path}")
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"MNI template not found: {template_path}")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    logger.info(f"[ANTs] Loading fixed template: {template_path}")
+    fixed_img = ants.image_read(template_path, reorient="RPI")
+    logger.info(f"[ANTs] Loading moving image: {input_path}")
+    moving_img = ants.image_read(input_path, reorient="RPI")
+
+    logger.info("[ANTs] N4 bias field correction")
+    img_n4 = ants.n4_bias_field_correction(moving_img)
+
+    logger.info(f"[ANTs] Registration type={registration_type}")
+    tx = ants.registration(fixed=fixed_img, moving=img_n4, type_of_transform=registration_type)
+    img_reg = tx["warpedmovout"]
+
+    logger.info("[ANTs] Brain extraction")
+    prob_mask = brain_extraction(img_reg, modality="t1", verbose=False)
+    brain_mask = ants.threshold_image(prob_mask, low_thresh=0.5, high_thresh=1.0, inval=1, outval=0)
+    brain = img_reg * brain_mask
+
+    logger.info("[ANTs] Robust normalization + clip")
+    normalized = _robust_normalize_with_clip(brain, clip_range=clip_range)
+    ants.image_write(normalized, output_path)
+    logger.info(f"[ANTs] Preprocessed MRI saved: {output_path}")
+    return output_path
 
 
 def preprocess_single_subject(input_path, output_path, template_path):

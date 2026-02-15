@@ -7,6 +7,7 @@ from uuid import UUID
 class PatientBase(BaseModel):
     date_of_birth: Optional[date] = None
     gender: Optional[int] = None
+    pteducat: Optional[int] = None
     education_years: Optional[int] = None
     risk_level: Optional[str] = None
     rid: Optional[int] = None

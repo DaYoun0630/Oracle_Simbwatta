@@ -33,7 +33,17 @@ interface BiomarkerResults {
   ratioAb42Ab40?: number;
   ratioPtauAb42?: number;
   ratioPtauTau?: number;
+  ratioTtauAb42?: number;
 }
+
+type BiomarkerItem = {
+  id: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  range: string;
+  isRatio: boolean;
+};
 
 type DataAvailability = {
   hasCognitiveTests: boolean;
@@ -75,6 +85,7 @@ interface ScoreCardConfig {
   goodThreshold: number;
   warnThreshold: number;
   referenceRange: string;
+  rangeLabel?: string;
   digits?: number;
 }
 
@@ -154,6 +165,83 @@ const calculateDaysSince = (dateString: string | null) => {
   return diff > 0 ? Math.floor(diff / (1000 * 60 * 60 * 24)) : 0;
 };
 
+const asFiniteNumber = (value: unknown) => {
+  if (value === null || value === undefined) return null;
+  const normalized =
+    typeof value === 'string' && value.trim() === '' ? Number.NaN : Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+};
+
+const formatReferenceRange = (min: number, max: number, digits = 0) => {
+  const format = (value: number) => (digits > 0 ? value.toFixed(digits) : String(Math.round(value)));
+  return `${format(min)}-${format(max)}`;
+};
+
+type ScoreCriteria = {
+  goodThreshold: number;
+  warnThreshold: number;
+  referenceRange: string;
+};
+
+const resolveScoreCriteria = (
+  scoreId: 'mmse' | 'moca' | 'adas' | 'faq',
+  age: number | null,
+  educationYears: number | null
+): ScoreCriteria => {
+  const resolvedAge = age ?? 70;
+  const resolvedEducation = educationYears ?? 12;
+
+  const ageAdjustment = resolvedAge >= 80 ? 2 : resolvedAge >= 75 ? 1 : resolvedAge <= 64 ? -1 : 0;
+  const educationAdjustment = resolvedEducation >= 16 ? -1 : resolvedEducation <= 9 ? 1 : 0;
+  const demographicAdjustment = ageAdjustment + educationAdjustment;
+
+  if (scoreId === 'mmse') {
+    const min = clamp(Math.round(27 - demographicAdjustment), 20, 30);
+    const max = 30;
+    const goodThreshold = min;
+    const warnThreshold = clamp(min - 6, 10, goodThreshold);
+    return {
+      goodThreshold,
+      warnThreshold,
+      referenceRange: formatReferenceRange(min, max)
+    };
+  }
+
+  if (scoreId === 'moca') {
+    const min = clamp(Math.round(26 - demographicAdjustment), 16, 30);
+    const max = 30;
+    const goodThreshold = min;
+    const warnThreshold = clamp(min - 7, 8, goodThreshold);
+    return {
+      goodThreshold,
+      warnThreshold,
+      referenceRange: formatReferenceRange(min, max)
+    };
+  }
+
+  if (scoreId === 'adas') {
+    const min = 0;
+    const max = clamp(Math.round(10 + demographicAdjustment), 4, 24);
+    const goodThreshold = max;
+    const warnThreshold = clamp(max + 10, goodThreshold, 85);
+    return {
+      goodThreshold,
+      warnThreshold,
+      referenceRange: formatReferenceRange(min, max)
+    };
+  }
+
+  const min = 0;
+  const max = clamp(Math.round(9 + demographicAdjustment), 3, 20);
+  const goodThreshold = max;
+  const warnThreshold = clamp(max + 10, goodThreshold, 30);
+  return {
+    goodThreshold,
+    warnThreshold,
+    referenceRange: formatReferenceRange(min, max)
+  };
+};
+
 const makeScoreCard = (config: ScoreCardConfig) => {
   const {
     id,
@@ -165,11 +253,13 @@ const makeScoreCard = (config: ScoreCardConfig) => {
     goodThreshold,
     warnThreshold,
     referenceRange,
+    rangeLabel = '유사군(연령·교육) 참고 범위',
     digits = 0
   } = config;
 
+  const hasValue = value !== null && value !== undefined;
   let status: 'good' | 'warn' | 'bad' | 'empty' = 'empty';
-  if (value !== null && value !== undefined) {
+  if (hasValue) {
     if (direction === 'higher-better') {
       if (value >= goodThreshold) status = 'good';
       else if (value >= warnThreshold) status = 'warn';
@@ -182,13 +272,17 @@ const makeScoreCard = (config: ScoreCardConfig) => {
   }
 
   const interpretationMap = {
-    good: '정상 범위',
+    good: '양호',
     warn: '주의 필요',
-    bad: '저하 가능성',
+    bad: '추가 평가 권장',
     empty: '측정 없음'
   };
 
-  const percent = value !== null && value !== undefined ? Math.round((clamp(value, 0, max) / max) * 100) : 0;
+  const percent = hasValue ? Math.round((clamp(value, 0, max) / max) * 100) : 0;
+  const levelKey = !hasValue ? '측정 없음' : percent >= 80 ? '높음' : percent >= 40 ? '중간' : '낮음';
+  const levelText = !hasValue
+    ? '측정 없음'
+    : `${levelKey} (${formatScoreValue(value, digits)}/${max}점, ${percent}%)`;
 
   return {
     id,
@@ -200,7 +294,9 @@ const makeScoreCard = (config: ScoreCardConfig) => {
     percent,
     status,
     interpretation: interpretationMap[status],
-    referenceRange
+    referenceRange,
+    rangeLabel,
+    levelText
   };
 };
 
@@ -241,6 +337,30 @@ const patientSummary = computed(() => {
   if (!patientId) return null;
   return props.data?.patients?.find((patient: any) => patient.id === patientId) || null;
 });
+
+const resolveEducationYearsFrom = (source: any) =>
+  asFiniteNumber(source?.pteducat) ??
+  asFiniteNumber(source?.PTEDUCAT) ??
+  asFiniteNumber(source?.education_years) ??
+  asFiniteNumber(source?.educationYears) ??
+  asFiniteNumber(source?.education) ??
+  asFiniteNumber(source?.demographics?.pteducat) ??
+  asFiniteNumber(source?.demographics?.PTEDUCAT) ??
+  asFiniteNumber(source?.demographics?.education_years) ??
+  asFiniteNumber(source?.demographics?.educationYears) ??
+  asFiniteNumber(source?.demographics?.education);
+
+const patientAge = computed(() =>
+  asFiniteNumber(patientSummary.value?.age) ??
+  asFiniteNumber(currentPatient.value?.age) ??
+  asFiniteNumber(props.data?.age)
+);
+
+const patientEducationYears = computed(() =>
+  resolveEducationYearsFrom(patientSummary.value) ??
+  resolveEducationYearsFrom(currentPatient.value) ??
+  resolveEducationYearsFrom(props.data)
+);
 
 const dataAvailability = computed<DataAvailability>(() => {
   const base = (props.data?.dataAvailability ?? {}) as Partial<DataAvailability>;
@@ -476,59 +596,73 @@ const mocaValue = computed(() => {
 const adasValue = computed(() => adasSeries.value.at(-1) ?? null);
 const faqValue = computed(() => faqSeries.value.at(-1) ?? null);
 
-const cognitiveScoreCards = computed(() => [
-  makeScoreCard({
-    id: 'mmse',
-    label: 'MMSE',
-    value: mmseValue.value,
-    unit: '점',
-    max: 30,
-    direction: 'higher-better',
-    goodThreshold: 27,
-    warnThreshold: 21,
-    referenceRange: '27-30'
-  }),
-  makeScoreCard({
-    id: 'moca',
-    label: 'MoCA',
-    value: mocaValue.value,
-    unit: '점',
-    max: 30,
-    direction: 'higher-better',
-    goodThreshold: 26,
-    warnThreshold: 18,
-    referenceRange: '26-30'
-  }),
-  makeScoreCard({
-    id: 'adas',
-    label: 'ADAS-cog13',
-    value: adasValue.value,
-    unit: '점',
-    max: 85,
-    direction: 'higher-worse',
-    goodThreshold: 10,
-    warnThreshold: 20,
-    referenceRange: '0-10',
-    digits: 1
-  }),
-  makeScoreCard({
-    id: 'faq',
-    label: 'FAQ',
-    value: faqValue.value,
-    unit: '점',
-    max: 30,
-    direction: 'higher-worse',
-    goodThreshold: 9,
-    warnThreshold: 20,
-    referenceRange: '0-9'
-  })
-]);
+const cognitiveScoreCards = computed(() => {
+  const rangeLabel = '유사군(연령·교육) 참고 범위';
+  const mmseCriteria = resolveScoreCriteria('mmse', patientAge.value, patientEducationYears.value);
+  const mocaCriteria = resolveScoreCriteria('moca', patientAge.value, patientEducationYears.value);
+  const adasCriteria = resolveScoreCriteria('adas', patientAge.value, patientEducationYears.value);
+  const faqCriteria = resolveScoreCriteria('faq', patientAge.value, patientEducationYears.value);
+
+  return [
+    makeScoreCard({
+      id: 'mmse',
+      label: 'MMSE',
+      value: mmseValue.value,
+      unit: '점',
+      max: 30,
+      direction: 'higher-better',
+      goodThreshold: mmseCriteria.goodThreshold,
+      warnThreshold: mmseCriteria.warnThreshold,
+      referenceRange: mmseCriteria.referenceRange,
+      rangeLabel
+    }),
+    makeScoreCard({
+      id: 'moca',
+      label: 'MoCA',
+      value: mocaValue.value,
+      unit: '점',
+      max: 30,
+      direction: 'higher-better',
+      goodThreshold: mocaCriteria.goodThreshold,
+      warnThreshold: mocaCriteria.warnThreshold,
+      referenceRange: mocaCriteria.referenceRange,
+      rangeLabel
+    }),
+    makeScoreCard({
+      id: 'adas',
+      label: 'ADAS-cog13',
+      value: adasValue.value,
+      unit: '점',
+      max: 85,
+      direction: 'higher-worse',
+      goodThreshold: adasCriteria.goodThreshold,
+      warnThreshold: adasCriteria.warnThreshold,
+      referenceRange: adasCriteria.referenceRange,
+      rangeLabel,
+      digits: 1
+    }),
+    makeScoreCard({
+      id: 'faq',
+      label: 'FAQ',
+      value: faqValue.value,
+      unit: '점',
+      max: 30,
+      direction: 'higher-worse',
+      goodThreshold: faqCriteria.goodThreshold,
+      warnThreshold: faqCriteria.warnThreshold,
+      referenceRange: faqCriteria.referenceRange,
+      rangeLabel
+    })
+  ];
+});
 
 const biomarkerResults = computed<BiomarkerResults | null>(() =>
   props.data?.biomarkerResults ?? props.data?.biomarkers ?? null
 );
 
-const biomarkerItems = computed(() => {
+const biomarkerPlatformText = computed(() => '검사 플랫폼: Roche Elecsys (CSF)');
+
+const biomarkerItems = computed<BiomarkerItem[]>(() => {
   const base = biomarkerResults.value || {};
   const abeta42 = base.abeta42 ?? null;
   const abeta40 = base.abeta40 ?? null;
@@ -536,7 +670,19 @@ const biomarkerItems = computed(() => {
   const tau = base.tau ?? null;
   const ratioAb42Ab40 = base.ratioAb42Ab40 ?? (abeta42 && abeta40 ? abeta42 / abeta40 : null);
   const ratioPtauAb42 = base.ratioPtauAb42 ?? (ptau && abeta42 ? ptau / abeta42 : null);
-  const ratioPtauTau = base.ratioPtauTau ?? (ptau && tau ? ptau / tau : null);
+  const ratioTtauAb42 = base.ratioTtauAb42 ?? base.ratioPtauTau ?? (tau && abeta42 ? tau / abeta42 : null);
+
+  const platformKey = String(props.data?.biomarkerMeta?.platform || '').toUpperCase();
+  const isElecsys = platformKey.includes('ELECSYS');
+  const ab42Ab40Range = isElecsys
+    ? '참고 범위(ADNI Elecsys): ≥ 0.057'
+    : '참고 범위: 플랫폼 기준 확인 필요';
+  const ptauAb42Range = isElecsys
+    ? '참고 범위(Elecsys FDA): ≤ 0.023'
+    : '참고 범위: 플랫폼 기준 확인 필요';
+  const ttauAb42Range = isElecsys
+    ? '참고 범위(Elecsys FDA): ≤ 0.28'
+    : '참고 범위: 플랫폼 기준 확인 필요';
 
   return [
     {
@@ -544,52 +690,62 @@ const biomarkerItems = computed(() => {
       label: 'ABETA42',
       value: abeta42,
       unit: 'pg/mL',
-      range: '정상 범위: > 500'
+      range: '원값 참고 (키트별 상이)',
+      isRatio: false
     },
     {
       id: 'abeta40',
       label: 'ABETA40',
       value: abeta40,
       unit: 'pg/mL',
-      range: '정상 범위: 800-1200'
+      range: '원값 참고 (키트별 상이)',
+      isRatio: false
     },
     {
       id: 'ptau',
       label: 'PTAU',
       value: ptau,
       unit: 'pg/mL',
-      range: '정상 범위: < 20'
+      range: '원값 참고 (키트별 상이)',
+      isRatio: false
     },
     {
       id: 'tau',
       label: 'TAU',
       value: tau,
       unit: 'pg/mL',
-      range: '정상 범위: < 300'
+      range: '원값 참고 (키트별 상이)',
+      isRatio: false
     },
     {
       id: 'ratio-ab42-ab40',
       label: 'AB42/40',
       value: ratioAb42Ab40,
       unit: '',
-      range: '기준 비율: > 0.6'
+      range: ab42Ab40Range,
+      isRatio: true
     },
     {
       id: 'ratio-ptau-ab42',
       label: 'PTAU/AB42',
       value: ratioPtauAb42,
       unit: '',
-      range: '기준 비율: < 0.05'
+      range: ptauAb42Range,
+      isRatio: true
     },
     {
-      id: 'ratio-ptau-tau',
-      label: 'PTAU/TAU',
-      value: ratioPtauTau,
+      id: 'ratio-ttau-ab42',
+      label: 'TTAU/AB42',
+      value: ratioTtauAb42,
       unit: '',
-      range: '기준 비율: < 0.2'
+      range: ttauAb42Range,
+      isRatio: true
     }
   ];
 });
+
+const biomarkerRatioItems = computed(() => biomarkerItems.value.filter((item) => item.isRatio));
+const biomarkerRawItems = computed(() => biomarkerItems.value.filter((item) => !item.isRatio));
 
 const hasBiomarkerData = computed(() =>
   biomarkerItems.value.some((item) => item.value !== null && item.value !== undefined)
@@ -795,7 +951,7 @@ watch(
             <div class="section-header">
               <div>
                 <h4>최근 측정 결과</h4>
-                <p>연령 대비 기준 범위를 참고해 현재 인지 상태를 확인합니다.</p>
+                <p>연령과 교육연수를 반영한 참고 기준으로 현재 인지 상태를 확인합니다.</p>
               </div>
               <span class="section-chip">현재 인지 상태</span>
             </div>
@@ -820,9 +976,13 @@ watch(
                   <div class="score-bar__fill" :style="{ width: `${card.percent}%` }"></div>
                   <div class="score-bar__marker" :style="{ left: `${card.percent}%` }"></div>
                 </div>
+                <div class="score-scale">
+                  <span>0</span>
+                  <span>{{ card.max }}</span>
+                </div>
                 <div class="score-meta">
-                  <span class="score-range">연령 대비 기준 범위: {{ card.referenceRange }}</span>
-                  <span class="score-interpretation">현재 임상적 해석: {{ card.interpretation }}</span>
+                  <span class="score-range">{{ card.rangeLabel }}: {{ card.referenceRange }}</span>
+                  <span class="score-interpretation">점수 기반 참고 해석: {{ card.interpretation }}</span>
                 </div>
               </article>
             </div>
@@ -836,15 +996,33 @@ watch(
                 <span class="biomarker-chip">정적 정보</span>
               </div>
 
-              <div v-if="hasBiomarkerData" class="biomarker-grid">
-                <div v-for="item in biomarkerItems" :key="item.id" class="biomarker-item">
-                  <span class="biomarker-label">{{ item.label }}</span>
-                  <strong class="biomarker-value">
-                    {{ formatBiomarkerValue(item.value, item.unit ? 1 : 2) }}
-                    <span v-if="item.unit" class="biomarker-unit">{{ item.unit }}</span>
-                  </strong>
-                  <span class="biomarker-range">{{ item.range }}</span>
+              <div v-if="hasBiomarkerData" class="biomarker-content">
+                <div class="biomarker-grid biomarker-grid--ratio">
+                  <div v-for="item in biomarkerRatioItems" :key="item.id" class="biomarker-item">
+                    <span class="biomarker-label">{{ item.label }}</span>
+                    <strong class="biomarker-value">
+                      {{ formatBiomarkerValue(item.value, item.unit ? 1 : 2) }}
+                      <span v-if="item.unit" class="biomarker-unit">{{ item.unit }}</span>
+                    </strong>
+                    <span class="biomarker-range">{{ item.range }}</span>
+                  </div>
                 </div>
+
+                <details class="biomarker-raw-details">
+                  <summary>원값 지표 보기 (ABETA42, ABETA40, PTAU, TAU)</summary>
+                  <div class="biomarker-grid biomarker-grid--raw">
+                    <div v-for="item in biomarkerRawItems" :key="item.id" class="biomarker-item">
+                      <span class="biomarker-label">{{ item.label }}</span>
+                      <strong class="biomarker-value">
+                        {{ formatBiomarkerValue(item.value, item.unit ? 1 : 2) }}
+                        <span v-if="item.unit" class="biomarker-unit">{{ item.unit }}</span>
+                      </strong>
+                      <span class="biomarker-range">{{ item.range }}</span>
+                    </div>
+                  </div>
+                </details>
+
+                <p class="biomarker-meta-line">{{ biomarkerPlatformText }}</p>
               </div>
 
               <p v-else class="biomarker-empty">바이오마커 데이터가 없습니다.</p>
@@ -1261,6 +1439,16 @@ watch(
   border-color: #ff8a80;
 }
 
+.score-scale {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  color: #a8adb3;
+  margin-top: -2px;
+}
+
 .score-meta {
   display: flex;
   flex-direction: column;
@@ -1295,12 +1483,62 @@ watch(
   color: #2e7d7d;
   font-size: 12px;
   font-weight: 800;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.biomarker-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .biomarker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
+}
+
+.biomarker-raw-details {
+  border-radius: 14px;
+  background: #f7f9fc;
+  padding: 8px 10px 10px;
+}
+
+.biomarker-raw-details summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 800;
+  color: #59626b;
+}
+
+.biomarker-raw-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.biomarker-raw-details summary::after {
+  content: '▾';
+  float: right;
+  color: #7c8792;
+}
+
+.biomarker-raw-details[open] summary::after {
+  content: '▴';
+}
+
+.biomarker-grid--raw {
+  margin-top: 10px;
+}
+
+.biomarker-meta-line {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8b9199;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .biomarker-item {

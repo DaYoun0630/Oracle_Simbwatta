@@ -507,6 +507,7 @@ def _build_patient_summary(row: dict) -> dict:
         "name": row.get("name"),
         "age": _to_age(row.get("date_of_birth")),
         "gender": _to_gender_label(row.get("gender")),
+        "pteducat": row.get("pteducat"),
         "lastVisit": row.get("lastVisit"),
         "examDate": row.get("examDate"),
         "latestViscode2": row.get("latestViscode2"),
@@ -641,6 +642,7 @@ async def get_patient(patient_id: str):
     biomarker = await db.fetchrow(
         """
         SELECT
+            sample_type,
             abeta42,
             abeta40,
             ptau,
@@ -655,6 +657,13 @@ async def get_patient(patient_id: str):
         """,
         user_id
     )
+
+    biomarker_meta = {
+        "platform": "UPENNBIOMK_ROCHE_ELECSYS",
+        "kitName": "Roche Elecsys",
+        "kitLot": None,
+        "datasetName": "All_Subjects_UPENNBIOMK_ROCHE_ELECSYS_23Jan2026.csv",
+    }
 
     # 4. Visits
     visits = await db.fetch(
@@ -723,6 +732,7 @@ async def get_patient(patient_id: str):
         "currentPatient": current_patient,
         "clinicalTrends": clinical_trends,
         "biomarkerResults": dict(biomarker) if biomarker else {},
+        "biomarkerMeta": biomarker_meta,
         "visits": [dict(v) for v in visits],
         "mriAnalysis": mri_analysis,
         "dataAvailability": {

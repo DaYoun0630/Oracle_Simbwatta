@@ -188,6 +188,7 @@ def setup_database(subject_id, mri_path, csv_data):
         rid = 1234
         date_of_birth = "1950-01-01"
         gender = 1
+        pteducat = None
         apoe4 = None
         risk_level = "low"
         exam_date = date.today().isoformat()
@@ -222,6 +223,7 @@ def setup_database(subject_id, mri_path, csv_data):
             rid = _to_int(csv_data.get("rid"), rid)
             date_of_birth = _to_date_str(csv_data.get("ptdobyy"), date_of_birth)
             gender = _to_int(csv_data.get("gender"), gender)
+            pteducat = _to_int(csv_data.get("pteducat"), pteducat)
             apoe4 = _to_int(csv_data.get("apoe4"))
             risk_level = _map_risk_level(csv_data)
             exam_date = _to_date_str(csv_data.get("examdate"), exam_date)
@@ -272,10 +274,10 @@ def setup_database(subject_id, mri_path, csv_data):
         cur.execute(
             """
             INSERT INTO patients (
-                user_id, doctor_id, date_of_birth, gender, apoe4, risk_level, rid, subject_id, created_at, updated_at
-            ) VALUES (100, 1, %s, %s, %s, %s, %s, %s, NOW(), NOW());
+                user_id, doctor_id, date_of_birth, gender, pteducat, apoe4, risk_level, rid, subject_id, created_at, updated_at
+            ) VALUES (100, 1, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW());
             """,
-            (date_of_birth, gender, apoe4, risk_level, rid, subject_id),
+            (date_of_birth, gender, pteducat, apoe4, risk_level, rid, subject_id),
         )
 
         visit_id = "55555555-5555-5555-5555-555555555555"

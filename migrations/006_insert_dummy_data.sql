@@ -14,8 +14,8 @@ INSERT INTO doctor (user_id, hospital, license_number) VALUES
 (1, '서울대학교병원', 'MD-12345');
 
 -- 3. Patient
-INSERT INTO patients (user_id, doctor_id, date_of_birth, gender, risk_level, rid, subject_id, created_at, updated_at) VALUES
-(100, 1, '1948-01-01', 1, 'mid', 6726, '029_S_6726', NOW(), NOW());
+INSERT INTO patients (user_id, doctor_id, date_of_birth, gender, pteducat, risk_level, rid, subject_id, created_at, updated_at) VALUES
+(100, 1, '1948-01-01', 1, 18, 'mid', 6726, '029_S_6726', NOW(), NOW());
 
 -- 6. Visits (Must be inserted before assessments)
 INSERT INTO visits (visit_id, patient_id, exam_date, viscode2, image_id, origprot, colprot, created_at) VALUES

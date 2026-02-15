@@ -58,6 +58,7 @@ CREATE TABLE patients (
     subject_id VARCHAR(50) NULL,         -- ADNI Subject ID (string, not UUID)
     gender SMALLINT NULL,                -- 0=Female, 1=Male
     date_of_birth DATE NULL,             -- ptdobyy renamed
+    pteducat SMALLINT NULL,              -- ADNI PTEDUCAT (years of education)
     apoe4 SMALLINT NULL,                 -- 0, 1, 2 (number of APOE4 alleles)
     risk_level VARCHAR(20) NULL,         -- low, medium, high
     last_session_at TIMESTAMP NULL,

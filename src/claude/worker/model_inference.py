@@ -151,7 +151,7 @@ def _predict_mci_subtype(patient_id: str) -> dict:
         cur = conn.cursor()
         # Get patient demographics (date_of_birth is on patients table)
         cur.execute("""
-            SELECT p.gender, p.apoe4, p.date_of_birth
+            SELECT p.gender, p.apoe4, p.date_of_birth, p.pteducat
             FROM patients p
             WHERE p.user_id = %s
         """, (patient_id,))
@@ -160,7 +160,7 @@ def _predict_mci_subtype(patient_id: str) -> dict:
             logger.warning(f"Patient {patient_id} not found for subtype prediction")
             return None
 
-        gender_val, apoe4, date_of_birth = patient_row
+        gender_val, apoe4, date_of_birth, pteducat = patient_row
 
         # Calculate age
         from datetime import date
@@ -215,9 +215,6 @@ def _predict_mci_subtype(patient_id: str) -> dict:
     tau = bio_row[2] if bio_row else None
     ab42_ab40 = bio_row[3] if bio_row else None
     ptau_ab42 = bio_row[4] if bio_row else None
-
-    # pteducat — not in current schema, set to None (CatBoost handles NaN)
-    pteducat = None
 
     features = [
         age, gender_val, pteducat, apoe4, ldeltotal,

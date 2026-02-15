@@ -178,6 +178,7 @@ def upsert_patient(
         "subject_id": (subject_id or "").strip() or None,
         "gender": parse_int(row.get("gender")),
         "date_of_birth": parse_date(row.get("ptdobyy")),
+        "pteducat": parse_int(row.get("pteducat")),
         "apoe4": parse_int(row.get("apoe4")),
         "enrollment_date": exam_date or date.today(),
     }
@@ -192,6 +193,7 @@ def upsert_patient(
                 subject_id = %s,
                 gender = %s,
                 date_of_birth = %s,
+                pteducat = COALESCE(%s, pteducat),
                 apoe4 = %s,
                 enrollment_date = COALESCE(enrollment_date, %s),
                 updated_at = NOW()
@@ -203,6 +205,7 @@ def upsert_patient(
                 payload["subject_id"],
                 payload["gender"],
                 payload["date_of_birth"],
+                payload["pteducat"],
                 payload["apoe4"],
                 payload["enrollment_date"],
                 patient_id,
@@ -214,10 +217,10 @@ def upsert_patient(
     cur.execute(
         """
         INSERT INTO patients (
-            user_id, rid, subject_id, gender, date_of_birth, apoe4,
+            user_id, rid, subject_id, gender, date_of_birth, pteducat, apoe4,
             enrollment_date, created_at, updated_at
         ) VALUES (
-            %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s,
             %s, NOW(), NOW()
         )
         """,
@@ -227,6 +230,7 @@ def upsert_patient(
             payload["subject_id"],
             payload["gender"],
             payload["date_of_birth"],
+            payload["pteducat"],
             payload["apoe4"],
             payload["enrollment_date"],
         ),
