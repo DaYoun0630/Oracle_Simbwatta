@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import List, Dict, Any
 from uuid import uuid4
@@ -19,6 +19,12 @@ from ..schemas.training import TrainingSessionOut, Message
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 logger = logging.getLogger(__name__)
+KST = timezone(timedelta(hours=9))
+
+
+def _kst_now_naive() -> datetime:
+    """Return current Korea time as naive datetime for TIMESTAMP columns."""
+    return datetime.now(KST).replace(tzinfo=None)
 
 # Celery client for dispatching ML tasks
 celery_app = Celery(
@@ -115,7 +121,7 @@ async def chat_ws(websocket: WebSocket, patient_id: int = Query(...)):
                     await db.execute("""
                         INSERT INTO training_sessions (training_id, patient_id, started_at, exercise_type)
                         VALUES ($1, $2, $3, $4)
-                    """, session_id, patient_id, datetime.utcnow(), "chat")
+                    """, session_id, patient_id, _kst_now_naive(), "chat")
 
                 # TODO: Call LLM service (OpenAI GPT-4o-mini with Korean optimization)
                 llm_response = f"Echo: {user_message}"
@@ -124,12 +130,12 @@ async def chat_ws(websocket: WebSocket, patient_id: int = Query(...)):
                 await websocket.send_json({
                     "response": llm_response,
                     "session_id": session_id,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(KST).isoformat()
                 })
 
     except WebSocketDisconnect:
         manager.disconnect(patient_id)
-        now = datetime.utcnow()
+        now = _kst_now_naive()
 
         # Close training session
         if session_id:
@@ -295,7 +301,7 @@ async def upload_recording(
             os.remove(temp_path)
 
     # Insert into database
-    now = datetime.utcnow()
+    now = _kst_now_naive()
     transcript = transcript.strip()
     if not transcript:
         raise HTTPException(status_code=400, detail="transcript is required")
@@ -589,7 +595,7 @@ async def update_profile(patient_id: int = Query(...), payload: PatientUpdate = 
 
     # Add updated_at
     updates.append(f"updated_at = ${param_count}")
-    values.append(datetime.utcnow())
+    values.append(_kst_now_naive())
     param_count += 1
 
     # Add patient_id for WHERE clause

@@ -15,7 +15,12 @@ def get_pool() -> asyncpg.Pool:
 async def init_db() -> None:
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(dsn=settings.database_url, min_size=1, max_size=5)
+        _pool = await asyncpg.create_pool(
+            dsn=settings.database_url,
+            min_size=1,
+            max_size=5,
+            server_settings={"timezone": "Asia/Seoul"},
+        )
 
 
 async def close_db() -> None:

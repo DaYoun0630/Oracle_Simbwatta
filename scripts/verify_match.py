@@ -5,7 +5,7 @@ import sys
 def get_db_connection():
     # README.md 설정에 맞춘 DB 연결 정보
     dsn = os.getenv("DATABASE_URL", "postgresql://mci_user:change_me@postgres:5432/cognitive")
-    return psycopg2.connect(dsn)
+    return psycopg2.connect(dsn, options="-c timezone=Asia/Seoul")
 
 def main():
     print("🔍 DB와 MinIO(파일시스템) 매칭 확인 중...")

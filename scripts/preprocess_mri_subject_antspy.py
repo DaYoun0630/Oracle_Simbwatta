@@ -4,13 +4,15 @@ import json
 import os
 import tempfile
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import ants
 import numpy as np
 import SimpleITK as sitk
 from antspynet.utilities import brain_extraction
+
+KST = timezone(timedelta(hours=9))
 
 
 def patch_antspy_compat() -> None:
@@ -195,7 +197,7 @@ def run_subject(
         "skipped": sum(1 for r in results if r["status"] == "skipped"),
     }
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
     report = {
         "timestamp": timestamp,
         "subject_root": subject_root,

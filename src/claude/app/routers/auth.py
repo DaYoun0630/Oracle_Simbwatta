@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -17,6 +17,12 @@ from ..schemas.user import UserOut
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
 logger = logging.getLogger(__name__)
+KST = timezone(timedelta(hours=9))
+
+
+def _kst_now_naive() -> datetime:
+    """Return current Korea time as naive datetime for TIMESTAMP columns."""
+    return datetime.now(KST).replace(tzinfo=None)
 
 
 # ============================================================================
@@ -74,7 +80,7 @@ async def dev_login(role: str = Query("doctor", regex="^(doctor|patient|caregive
     user = await db.fetchrow("SELECT * FROM users WHERE email = $1", email)
 
     if not user:
-        now = datetime.utcnow()
+        now = _kst_now_naive()
         # Create base user
         row = await db.fetchrow("""
             INSERT INTO users (email, name, oauth_provider_id, created_at, updated_at)
@@ -188,7 +194,7 @@ async def google_oauth_callback(code: str = Query(...), state: str = Query(None)
     # Check if user exists
     user = await db.fetchrow("SELECT * FROM users WHERE oauth_provider_id = $1", google_id)
 
-    now = datetime.utcnow()
+    now = _kst_now_naive()
     if user:
         # Update existing user
         user_id = str(user["user_id"])

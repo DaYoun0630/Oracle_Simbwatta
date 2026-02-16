@@ -3,6 +3,9 @@ import glob
 import numpy as np
 import logging
 import urllib.request
+import tempfile
+import subprocess
+import shutil
 from pathlib import Path
 
 try:
@@ -25,34 +28,46 @@ logger = logging.getLogger(__name__)
 
 def convert_dicom_to_nifti(dicom_folder, save_path):
     """
-    DICOM 폴더를 읽어 NIfTI로 변환 후 저장
+    DICOM -> NIfTI conversion using the same dcm2niix pattern
+    as training preprocessing notebook:
+      dcm2niix -z y -f %p_%t_%s -o <temp_dir> <dicom_folder>
     """
-    if sitk is None:
-        raise ImportError("SimpleITK module is not installed.")
-
     if not os.path.isdir(dicom_folder):
         raise ValueError(f"Not a directory: {dicom_folder}")
 
+    if shutil.which("dcm2niix") is None:
+        raise RuntimeError("dcm2niix is required but not found in PATH")
+
+    if not save_path:
+        raise ValueError("save_path is required")
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    temp_output_dir = tempfile.mkdtemp(prefix="dcm2niix_", dir=os.path.dirname(save_path))
+
     try:
-        reader = sitk.ImageSeriesReader()
-        dicom_names = reader.GetGDCMSeriesFileNames(dicom_folder)
+        cmd = [
+            "dcm2niix",
+            "-z", "y",
+            "-f", "%p_%t_%s",
+            "-o", temp_output_dir,
+            dicom_folder,
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        if not dicom_names:
-            raise ValueError(f"No DICOM files found in {dicom_folder}")
+        converted_nii_files = sorted(glob.glob(os.path.join(temp_output_dir, "*.nii.gz")))
+        if not converted_nii_files:
+            raise RuntimeError(f"dcm2niix produced no .nii.gz files for: {dicom_folder}")
 
-        reader.SetFileNames(dicom_names)
-        reader.MetaDataDictionaryArrayUpdateOn()
-        reader.LoadPrivateTagsOn()
-        img = reader.Execute()
-
-        if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            sitk.WriteImage(img, save_path)
-
-        return img
+        # If multiple outputs exist, use the largest volume as primary input.
+        selected = max(converted_nii_files, key=lambda p: os.path.getsize(p))
+        shutil.copy2(selected, save_path)
+        logger.info(f"dcm2niix converted {dicom_folder} -> {save_path} (selected: {os.path.basename(selected)})")
+        return save_path
     except Exception as e:
         logger.error(f"DICOM conversion error: {e}")
         raise
+    finally:
+        shutil.rmtree(temp_output_dir, ignore_errors=True)
 
 
 def _require_ants():

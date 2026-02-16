@@ -2,6 +2,8 @@ import os
 import sys
 import psycopg2
 import re
+import socket
+import subprocess
 from uuid import uuid4
 from celery import Celery
 
@@ -13,7 +15,75 @@ celery_app = Celery(
 )
 
 def get_db_connection():
-    return psycopg2.connect(os.getenv("DATABASE_URL"))
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        # Host-side default (compose publishes postgres on localhost:5432)
+        dsn = "postgresql://mci_user:change_me1@localhost:5432/cognitive"
+    return psycopg2.connect(dsn, options="-c timezone=Asia/Seoul")
+
+
+def _host_resolves(hostname: str) -> bool:
+    try:
+        socket.gethostbyname(hostname)
+        return True
+    except Exception:
+        return False
+
+
+def _is_container_running(name: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and result.stdout.strip().lower() == "true"
+    except Exception:
+        return False
+
+
+def _send_task_via_worker_container(task_name: str, args: list[str]) -> str:
+    """
+    Fallback dispatch path when host shell cannot resolve internal compose services
+    (e.g., redis://redis:6379). Sends Celery task from inside mci-worker container.
+    """
+    if not _is_container_running("mci-worker"):
+        raise RuntimeError("Fallback failed: container 'mci-worker' is not running.")
+
+    pycode = (
+        "from celery import Celery;"
+        "import os;"
+        "app=Celery('mci-worker',"
+        "broker=os.getenv('REDIS_URL','redis://redis:6379/0'),"
+        "backend=os.getenv('REDIS_URL','redis://redis:6379/0'));"
+        f"t=app.send_task({task_name!r}, args={args!r});"
+        "print(t.id)"
+    )
+
+    result = subprocess.run(
+        ["docker", "exec", "mci-worker", "/app/.venv/bin/python", "-c", pycode],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Fallback dispatch via mci-worker failed.\n"
+            f"stdout: {result.stdout.strip()}\n"
+            f"stderr: {result.stderr.strip()}"
+        )
+
+    task_id = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    if not task_id:
+        raise RuntimeError("Fallback dispatch succeeded but task id was not returned.")
+    return task_id
+
+
+DEFAULT_MRI_FOLDER_PATH = os.getenv(
+    "MRI_INGEST_DEFAULT_PATH",
+    "/srv/dev-disk-by-uuid-d4c97f38-c9a8-4bd8-9f4f-1f293e186e10/final/data/raw/mri/029_S_6726",
+)
 
 
 def extract_subject_id(path: str) -> str:
@@ -82,7 +152,15 @@ def ingest_mri(folder_path):
         cur.execute("""
             INSERT INTO mri_assessments 
             (assessment_id, patient_id, file_path, scan_date, classification, confidence, created_at)
-            VALUES (%s, %s, %s, NOW(), 'pending', 0.0, NOW())
+            VALUES (
+                %s,
+                %s,
+                %s,
+                TIMEZONE('Asia/Seoul', NOW()),
+                'pending',
+                0.0,
+                TIMEZONE('Asia/Seoul', NOW())
+            )
         """, (assessment_id, patient_id, source_path))
         
         conn.commit()
@@ -90,11 +168,24 @@ def ingest_mri(folder_path):
         
         # 5. Celery Task 트리거
         # process_mri_scan(mri_id, patient_id, file_path)
-        celery_app.send_task(
-            'process_mri_scan',
-            args=[assessment_id, str(patient_id), source_path]
-        )
-        print("🚀 Celery Task Triggered!")
+        dispatch_args = [assessment_id, str(patient_id), source_path]
+        # Host shell usually cannot resolve compose-internal host "redis".
+        # In that case, skip slow retry path and use container fallback immediately.
+        if not _host_resolves("redis"):
+            print("ℹ️  Host cannot resolve internal 'redis' service. Using docker fallback...")
+            task_id = _send_task_via_worker_container("process_mri_scan", dispatch_args)
+            print("🚀 Celery Task Triggered via mci-worker container!")
+            print(f"   - Task ID: {task_id}")
+        else:
+            try:
+                task = celery_app.send_task('process_mri_scan', args=dispatch_args)
+                print("🚀 Celery Task Triggered!")
+                print(f"   - Task ID: {task.id}")
+            except Exception as dispatch_err:
+                print(f"⚠️  Host dispatch failed: {dispatch_err}")
+                task_id = _send_task_via_worker_container("process_mri_scan", dispatch_args)
+                print("🚀 Celery Task Triggered via mci-worker container!")
+                print(f"   - Task ID: {task_id}")
         
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -103,8 +194,15 @@ def ingest_mri(folder_path):
         conn.close()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python ingest_mri_folder.py <path_to_mri_folder>")
+    if len(sys.argv) >= 2:
+        target_path = sys.argv[1]
+    else:
+        target_path = DEFAULT_MRI_FOLDER_PATH
+        print(f"ℹ️  No path argument provided. Using default path: {target_path}")
+        print("   (Override with CLI arg or MRI_INGEST_DEFAULT_PATH env var)")
+
+    if not target_path:
+        print("❌ Error: MRI path is empty.")
         sys.exit(1)
-        
-    ingest_mri(sys.argv[1])
+
+    ingest_mri(target_path)

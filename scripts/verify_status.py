@@ -9,7 +9,7 @@ def main():
     try:
         # tasks.py와 동일한 DB 연결 설정 사용
         dsn = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/mci")
-        conn = psycopg2.connect(dsn)
+        conn = psycopg2.connect(dsn, options="-c timezone=Asia/Seoul")
         cur = conn.cursor()
         
         # MRI 테이블 레코드 수 확인

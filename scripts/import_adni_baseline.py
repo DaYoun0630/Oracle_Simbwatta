@@ -249,7 +249,7 @@ def main() -> int:
     counters = Counters()
     errors = []
 
-    conn = psycopg2.connect(args.db_url)
+    conn = psycopg2.connect(args.db_url, options="-c timezone=Asia/Seoul")
     conn.autocommit = False
 
     try:
@@ -605,4 +605,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

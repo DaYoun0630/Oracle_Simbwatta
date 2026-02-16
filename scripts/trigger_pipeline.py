@@ -15,7 +15,7 @@ app = Celery(
 def get_db_connection():
     # Default to README settings if env var is missing
     dsn = os.getenv("DATABASE_URL", "postgresql://mci_user:change_me@postgres:5432/cognitive")
-    return psycopg2.connect(dsn)
+    return psycopg2.connect(dsn, options="-c timezone=Asia/Seoul")
 
 def main():
     print("🚀 Pipeline Trigger Starting...")

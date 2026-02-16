@@ -146,7 +146,7 @@ def _predict_mci_subtype(patient_id: str) -> dict:
     from catboost import CatBoostClassifier
 
     db_url = os.getenv("DATABASE_URL", "postgresql://mci_user:change_me@postgres:5432/cognitive")
-    conn = psycopg2.connect(db_url)
+    conn = psycopg2.connect(db_url, options="-c timezone=Asia/Seoul")
     try:
         cur = conn.cursor()
         # Get patient demographics (date_of_birth is on patients table)

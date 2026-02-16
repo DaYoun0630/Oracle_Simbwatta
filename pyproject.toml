@@ -28,11 +28,14 @@ dependencies = [
     "librosa>=0.10.1",
     "soundfile>=0.12.1",
     "scikit-learn>=1.4.0",
+    "catboost>=1.2.8",
     "scipy>=1.12.0",
     "numpy>=1.26.0",
     "psycopg2-binary>=2.9.9",
     "faster-whisper>=0.10.0",
     "SimpleITK>=2.3.0",
+    "antspyx==0.4.2",
+    "antspynet>=0.2.9",
 ]
 
 [dependency-groups]

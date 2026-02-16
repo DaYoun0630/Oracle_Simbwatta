@@ -29,7 +29,7 @@ CSV_PATH = os.path.join(BASE_PATH, "adni3_baseline_cohort_mciSP.csv")
 
 def get_db_connection():
     dsn = os.getenv("DATABASE_URL", "postgresql://mci_user:change_me1@postgres:5432/cognitive")
-    return psycopg2.connect(dsn)
+    return psycopg2.connect(dsn, options="-c timezone=Asia/Seoul")
 
 
 def _normalize_key(key):

@@ -9,7 +9,7 @@ This module contains async tasks for:
 import os
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from pathlib import Path
 from typing import Optional, Tuple
@@ -20,6 +20,12 @@ from celery.utils.log import get_task_logger
 # from .mri_utils import preprocess_single_subject, convert_dicom_to_nifti
 
 logger = get_task_logger(__name__)
+KST = timezone(timedelta(hours=9))
+
+
+def _kst_now_naive() -> datetime:
+    """Return current Korea time as naive datetime for TIMESTAMP columns."""
+    return datetime.now(KST).replace(tzinfo=None)
 
 # Initialize Celery app
 app = Celery(
@@ -33,8 +39,8 @@ app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
+    timezone='Asia/Seoul',
+    enable_utc=False,
     task_track_started=True,
     task_time_limit=3600,  # 1 hour max per task
     worker_prefetch_multiplier=1,  # Process one task at a time
@@ -60,7 +66,7 @@ def _get_db_connection():
     """Create sync database connection for worker tasks."""
     import psycopg2
     db_url = os.getenv("DATABASE_URL", "postgresql://mci_user:change_me@postgres:5432/cognitive")
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(db_url, options="-c timezone=Asia/Seoul")
 
 
 def _resolve_bucket_and_key(file_path: str, default_bucket: str = "voice-recordings") -> Tuple[str, str]:
@@ -272,7 +278,7 @@ def process_voice_recording(
                     uploaded_at = COALESCE(uploaded_at, %s)
                 WHERE recording_id = %s
                 """,
-                (datetime.utcnow(), recording_id),
+                (_kst_now_naive(), recording_id),
             )
             conn.commit()
         finally:
@@ -309,7 +315,7 @@ def process_voice_recording(
         try:
             cur = conn.cursor()
             assessment_id = str(uuid4())
-            now = datetime.utcnow()
+            now = _kst_now_naive()
             confidence_score = max(result["mci_probability"], 1.0 - result["mci_probability"])
 
             # Build features JSONB
@@ -429,7 +435,7 @@ def process_voice_recording(
                     uploaded_at = COALESCE(uploaded_at, %s)
                 WHERE recording_id = %s
                 """,
-                (str(e)[:500], datetime.utcnow(), recording_id),
+                (str(e)[:500], _kst_now_naive(), recording_id),
             )
             conn.commit()
             conn.close()
@@ -478,7 +484,7 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
                 """
                 UPDATE mri_assessments
                 SET preprocessing_status = 'processing',
-                    processed_at = NOW()
+                    processed_at = TIMEZONE('Asia/Seoul', NOW())
                 WHERE assessment_id = %s
                 """,
                 (mri_id,),
@@ -592,7 +598,7 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
                     probabilities = %s,
                     file_path = %s,
                     preprocessing_status = 'completed',
-                    processed_at = NOW()
+                    processed_at = TIMEZONE('Asia/Seoul', NOW())
                 WHERE assessment_id = %s
             """, (
                 predicted_stage,
@@ -622,7 +628,7 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
                 """
                 UPDATE mri_assessments
                 SET preprocessing_status = 'failed',
-                    processed_at = NOW()
+                    processed_at = TIMEZONE('Asia/Seoul', NOW())
                 WHERE assessment_id = %s
                 """,
                 (mri_id,),

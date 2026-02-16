@@ -2,10 +2,12 @@ import os
 import sys
 import json
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 def get_db_connection():
-    return psycopg2.connect(os.getenv("DATABASE_URL"))
+    return psycopg2.connect(os.getenv("DATABASE_URL"), options="-c timezone=Asia/Seoul")
 
 def export_latest_result(output_file="mri_analysis_result.json"):
     conn = get_db_connection()
@@ -43,7 +45,7 @@ def export_latest_result(output_file="mri_analysis_result.json"):
             "probabilities": row[4],
             "file_path": row[5],
             "processed_at": row[6].isoformat() if row[6] else None,
-            "exported_at": datetime.now().isoformat()
+            "exported_at": datetime.now(KST).isoformat()
         }
 
         # JSON 파일로 저장

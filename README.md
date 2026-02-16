@@ -1,141 +1,233 @@
 ## MCI 인지 평가 플랫폼
 
-RPI 5 + OMV(SATA HAT) 환경에서 동작하는 이중(음성/MRI) 알츠하이머·MCI 진단 플랫폼입니다.
+Raspberry Pi 5 + Docker Compose 환경에서 동작하는 이중(음성/MRI) 인지 평가 플랫폼입니다.
+이 문서는 현재 저장소 기준으로, 지금까지 구현된 범위와 운영 방법을 한국어로 정리합니다.
 
-- **음성 ML**: LLM 음성 대화 중 자동 녹음, 1561개 피처 추출(wav2vec2 + BERT + Kiwi), RandomForest 분류
-- **MRI ML**: CN/EMCI/LMCI/AD 분류용 계단식 CNN 파이프라인(플레이스홀더)
-- **프론트엔드**: Vue 3 + Vite + Pinia, 뉴모피즘 UI, 3개 사용자 역할(환자/보호자/의사)
-- **음성 대화**: OpenAI Realtime API 기반 실시간 대화(진행 중)
+### ADNI 데이터 라이선스 준수
+
+본 프로젝트는 ADNI 기반 데이터를 사용하지만, 라이선스 준수를 위해 다음 원칙을 지킵니다.
+
+- 원본 ADNI 데이터 파일, 원본 DICOM/NIfTI, 피험자 식별 정보는 README에 기록하지 않습니다.
+- 데이터 스크린샷/샘플 파일/외부 업로드 링크를 문서에 포함하지 않습니다.
+- 실행 예시는 모두 일반화된 경로와 플레이스홀더만 사용합니다.
 
 ### 기술 스택
 
 | 레이어 | 기술 |
 |-------|-----------|
-| Frontend | Vue 3.5, Vite 7, Pinia 3, Vue Router 4 |
-| Backend | FastAPI, Python 3.12, UV |
-| ML Worker | Celery, faster-whisper (INT8), wav2vec2, BERT, Kiwi, scikit-learn |
+| Frontend | Vue 3, Vite, Pinia, Vue Router |
+| Backend API | FastAPI, Python 3.12 |
+| Worker | Celery, ANTsPy/ANTsPyNet, PyTorch, CatBoost |
+| Queue | Redis |
 | Database | PostgreSQL 16 |
-| Storage | MinIO (오디오, MRI 파일) |
-| Queue | Redis 7 |
-| Proxy | Nginx Alpine |
-| Infra | Docker Compose, RPI 5 (8GB), SATA HAT SSDs |
+| Object Storage | MinIO |
+| Infra | Docker Compose, Nginx |
 
 ### 프로젝트 구조
 
-```
+```text
 ├── src/claude/
-│   ├── app/                    # FastAPI (routers, auth, db, storage)
-│   └── worker/                 # Celery ML (feature_extractor, model_inference, tasks)
-├── frontend/                   # Vue 3 + Vite
-│   └── src/
-│       ├── pages/              # 18개 페이지 (Landing, Login, Chat, Doctor 등)
-│       ├── components/         # VoiceOrb, WeeklyChart, MRI, shells 등
-│       ├── composables/        # useVoiceSession, useAuth, data hooks
-│       ├── stores/             # Pinia (auth, doctorPatient)
-│       └── data/               # Adapter 패턴 (mock/real API)
-├── migrations/001_init.sql     # 데이터베이스 스키마
-├── models/audio_processed/     # ML 모델(.pkl)
-├── docker/
-│   ├── docker-compose.yml
-│   └── .env
-├── Dockerfile.api              # Python 3.12 + FastAPI
-├── Dockerfile.worker           # Python 3.12 + Celery + ML deps
-├── nginx.conf
-└── pyproject.toml              # UV 설정(Python >=3.11,<3.14)
+│   ├── app/                         # FastAPI 라우터/인증/스토리지
+│   └── worker/                      # Celery 태스크, MRI/음성 추론 로직
+├── scripts/
+│   ├── ingest_mri_folder.py         # MRI 풀 파이프라인 진입점(비동기 트리거)
+│   └── preprocess_mri_subject_antspy.py
+├── models/                          # 학습된 추론 모델
+├── migrations/                      # DB 스키마
+├── Dockerfile.api
+├── Dockerfile.worker
+└── pyproject.toml
 ```
 
-### 서비스
+### 지금까지 완료된 핵심 작업 (2026-02-16 기준)
 
-| 컨테이너 | 포트 | 설명 |
-|-----------|------|-------------|
-| `mci-api` | 8000 | FastAPI 백엔드 (42개 엔드포인트) |
-| `mci-worker` | - | Celery ML 워커 (음성/MRI 처리) |
-| `mci-postgres` | 5432 | PostgreSQL 16 |
-| `mci-minio` | 9000/9001 | MinIO 오브젝트 스토리지 |
-| `mci-redis` | 6379 | Redis 작업 큐 |
-| `mci-nginx` | 80 | 리버스 프록시 + 프론트 정적 파일 |
+#### 1) MRI 풀 파이프라인 연결
 
-### 빠른 시작
+아래 흐름이 백엔드에서 연결되어 있습니다.
+
+1. `scripts/ingest_mri_folder.py` 실행
+2. `patients.subject_id`로 대상 환자 조회
+3. `mri_assessments` 레코드 생성 (`pending`)
+4. Celery 태스크 `process_mri_scan` 비동기 발행
+5. 워커에서 MRI 전처리 -> 모델 추론 -> 결과 SQL 반영
+
+중요: `ingest_mri_folder.py`는 태스크를 큐에 넣고 종료되므로, 전처리/추론은 백그라운드에서 계속 실행됩니다.
+
+#### 2) 호스트-컨테이너 실행 안정화
+
+`scripts/ingest_mri_folder.py`에 아래 보완이 반영되어 있습니다.
+
+- 기본 입력 경로 환경변수 지원 (`MRI_INGEST_DEFAULT_PATH`)
+- 호스트 경로(`/host/...`) -> 컨테이너 경로(`/app/...`) 변환 처리
+- Host에서 `redis` DNS를 못 찾는 경우 자동 fallback
+  - `docker exec mci-worker ... send_task(...)` 방식으로 태스크 발행
+
+#### 3) ANTs 기반 MRI 전처리 파이프라인 구현
+
+`src/claude/worker/tasks.py` + `src/claude/worker/mri_utils.py` 기준으로, 모델 학습 전처리 흐름에 맞춰 구성되어 있습니다.
+
+- 입력이 DICOM 폴더면 `dcm2niix`로 NIfTI 변환
+- ANTs N4 bias correction
+- 템플릿 정합 (기본 `SyNRA`, env로 조정 가능)
+- ANTsPyNet brain extraction
+- robust normalization + clipping
+- 전처리 산출물 저장 후 추론 입력으로 사용
+
+주요 환경변수:
+
+- `MRI_ANTS_REGISTRATION_TYPE` (기본 `SyNRA`)
+- `MRI_ANTS_CLIP_MIN`, `MRI_ANTS_CLIP_MAX`
+
+#### 4) 전처리 산출물 캐시/저장 전략
+
+`process_mri_scan`의 동작 우선순위:
+
+1. 로컬 캐시 확인
+2. MinIO `mri-preprocessed` 버킷에서 기존 산출물 확인
+3. 없으면 새로 전처리 수행 후 `mri-preprocessed`에 업로드
+
+즉, 동일 입력에 대해 이미 산출물이 있으면 재전처리를 건너뛰어 시간과 리소스를 절약합니다.
+
+#### 5) MRI 분류 + MCI 서브타입 분기
+
+`src/claude/worker/model_inference.py` 기준:
+
+- Cascade 3D CNN
+  - Stage 1: CN vs Impaired
+  - Stage 2: MCI vs AD
+- 최종이 MCI인 경우, CatBoost(`.cbm`) 서브타입 분기
+  - 입력 피처: 인구통계 + 임상 + 신경심리 + 바이오마커
+  - 출력: `sMCI` 또는 `pMCI`
+
+결과는 `mri_assessments.classification`, `predicted_stage`, `confidence`, `probabilities`로 저장됩니다.
+
+#### 6) 한국 시간(KST) 저장 반영
+
+현재는 MRI에 한정하지 않고, 백엔드에서 생성/갱신되는 주요 타임스탬프를 KST 기준으로 저장하도록 반영되었습니다.
+
+- `scripts/ingest_mri_folder.py`
+  - `scan_date`, `created_at` -> `TIMEZONE('Asia/Seoul', NOW())`
+- `src/claude/worker/tasks.py`
+  - `processed_at`(processing/completed/failed) -> `TIMEZONE('Asia/Seoul', NOW())`
+- `src/claude/app/db.py`
+  - `asyncpg` 풀 세션 타임존을 `Asia/Seoul`로 고정
+- `psycopg2` 기반 워커/스크립트 연결
+  - DB 접속 옵션에 `-c timezone=Asia/Seoul` 적용
+- `datetime.utcnow()`를 직접 저장하던 일부 경로
+  - KST 기준 시간 헬퍼로 교체
+
+주의: 이미 저장된 과거 레코드는 자동 변환되지 않으며, 컨테이너 재시작 후 새로 기록되는 데이터부터 적용됩니다.
+
+#### 7) 모델/의존성 정리 (워커)
+
+MRI 워커 경로에서 ANTs + CatBoost 추론이 동작하도록 의존성이 정리되었습니다.
+
+- `antspyx`
+- `antspynet`
+- `catboost`
+
+의존성은 `pyproject.toml`, `uv.lock`, `Dockerfile.worker` 기준으로 관리됩니다.
+
+#### 8) 프론트엔드 영향 범위
+
+이번 작업은 MRI 백엔드 파이프라인 중심이며, 프론트 연동 로직을 건드리지 않는 방향으로 진행되었습니다.
+
+#### 9) 백엔드-프론트 연동 현황 (현재 기준)
+
+아래는 코드 기준으로 확인된 연동 상태입니다.
+
+- 연결됨 (의사 화면 핵심 조회):
+  - 프론트 `DoctorAdapter`가 `/api/doctor/patient/{patient_id}` 호출
+  - 백엔드가 임상 추세, 바이오마커, 방문 정보, MRI 요약을 반환
+  - MRI 원본/전처리 슬라이스 조회 엔드포인트 사용 가능
+    - `/api/doctor/patients/{patient_id}/mri/original-nii`
+    - `/api/doctor/patients/{patient_id}/mri/original-slice.png`
+    - `/api/doctor/patients/{patient_id}/mri/preprocessed-slice.png`
+
+- 부분 연결 (설정에 따라):
+  - 의사 데이터는 `VITE_DOCTOR_USE_MOCK=false`일 때 실 API를 사용
+  - `true`이면 mock 데이터 경로 사용
+
+- 현재 mock 고정:
+  - 대상자/보호자 대시보드 컴포저블은 어댑터가 `true`로 고정되어 mock 데이터 사용
+  - 코드상 API 호출 함수는 있으나 현재 설정으로는 실서버를 타지 않음
+
+- 라우트 네이밍 불일치(정리 필요):
+  - 프론트 호출 경로: `/api/subject/dashboard`, `/api/caregiver/dashboard`
+  - 백엔드 실제 경로: `/api/patient/dashboard`, `/api/family/dashboard`
+  - 즉, 대상자/보호자 실연동을 위해 경로 통일이 필요
+
+- 음성 세션 경로:
+  - 프론트 음성 세션은 `VITE_API_BASE_URL` 기준 REST(`/start`, `/chat`, `/session/end`) 사용
+  - 별도로 백엔드에는 `/api/patient/chat` WebSocket 엔드포인트도 존재
+  - 현재 어떤 경로를 표준으로 운영할지 결정 후 단일화 권장
+
+- MRI 업로드 -> 추론 자동 시작:
+  - 현재는 `scripts/ingest_mri_folder.py`가 풀 파이프라인 진입점
+  - 프론트 업로드 이벤트에서 자동으로 ingest를 트리거하는 API 연동은 다음 단계
+
+### 실행 방법 (MRI 풀 파이프라인)
+
+프로젝트 루트에서:
 
 ```bash
-# 1. 환경 변수 설정
-cp docker/.env.example docker/.env
-# docker/.env를 실제 값으로 수정
+<PROJECT_ROOT>/.venv/bin/python <PROJECT_ROOT>/scripts/ingest_mri_folder.py <MRI_FOLDER_PATH>
+```
 
-# 2. 빌드 및 실행
-cd docker
-docker compose build --no-cache
-docker compose up -d
+기본 경로를 쓰는 경우:
 
-# 3. 상태 확인
-docker ps
+```bash
+<PROJECT_ROOT>/.venv/bin/python <PROJECT_ROOT>/scripts/ingest_mri_folder.py
+```
+
+실행 후 출력되는 `Task ID`는 큐에 정상 등록되었다는 의미입니다.
+
+### 상태 확인 방법
+
+#### 워커 로그 확인
+
+```bash
 docker logs -f mci-worker
 ```
 
-### 환경 변수 (`docker/.env`)
+로그에서 아래 흐름을 확인하면 정상 진행입니다.
 
+1. `Running ANTs preprocessing ...`
+2. `Running 3D CNN Inference ...`
+3. `Inference Result: ...`
+
+#### SQL에서 결과 확인 (KST 기준 조회)
+
+```sql
+SET TIME ZONE 'Asia/Seoul';
+
+SELECT
+  assessment_id,
+  patient_id,
+  classification,
+  predicted_stage,
+  confidence,
+  preprocessing_status,
+  scan_date,
+  processed_at,
+  created_at
+FROM mri_assessments
+ORDER BY created_at DESC
+LIMIT 20;
 ```
-POSTGRES_USER=mci_user
-POSTGRES_PASSWORD=change_me
-POSTGRES_DB=cognitive
 
-MINIO_USER=minioadmin
-MINIO_PASSWORD=change_me
+### 참고: 전처리 단독 테스트 스크립트
 
-OPENAI_API_KEY=
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-JWT_SECRET=change_me
-```
-
-### 프론트엔드 개발
+전처리만 단독 점검할 때는 아래 스크립트를 사용합니다.
 
 ```bash
-cd frontend
-npm install
-npm run dev          # Vite 개발 서버 (Node >= 22)
-npm run build        # 프로덕션 빌드 → dist/
+<PROJECT_ROOT>/.venv/bin/python <PROJECT_ROOT>/scripts/preprocess_mri_subject_antspy.py
 ```
 
-### API 엔드포인트 (총 42개)
+이 스크립트는 전체 DB->Celery->추론 파이프라인을 모두 수행하는 진입점은 아닙니다.
 
-- **Auth**: Google OAuth, JWT 로그인/로그아웃, 프로필
-- **Doctor**: 환자 관리, 평가 결과, MRI 결과, 진단, 알림, 가족 접근 관리
-- **Patient**: WebSocket 음성 대화, 녹음, 평가, 진행도, 프로필
-- **Family/Caregiver**: 연결된 환자 데이터, 진행도, 세션
-- **Notifications**: CRUD, 미확인 개수, 읽음 처리
+### 향후 계획 (요약)
 
-### 음성 ML 파이프라인
-
-```
-Audio (WebSocket) → MinIO → Celery Worker:
-  1. faster-whisper (한국어 STT, INT8)     ~30-60초
-  2. wav2vec2 (768차원 오디오 임베딩)      ~20-40초
-  3. BERT (768차원 텍스트 임베딩)         ~5-10초
-  4. Kiwi (언어학 피처 25개)               ~1-2초
-  5. RandomForest 분류                     <1초
-  → cognitive_score, mci_probability, flag → DB 저장 + 의사 알림
-```
-
-### 사용자 역할
-
-| 역할 | 프론트엔드 role | 접근 권한 |
-|------|----------|--------|
-| 환자 | `subject` | 음성 대화, 본인 진행도/평가 결과 |
-| 가족 | `caregiver` | 연결된 환자 진행도 조회(읽기 전용) |
-| 의사 | `doctor` | 전체 환자, 진단, MRI, 알림 |
-
-### 트러블슈팅
-
-```bash
-docker ps                           # 컨테이너 상태
-docker logs -f mci-api             # API 로그
-docker logs -f mci-worker          # Worker 로그
-docker exec mci-worker uv pip list # ML 패키지 확인
-vcgencmd measure_temp              # RPI 온도 확인
-docker stats                       # 리소스 사용량
-```
-
-### 아키텍처 문서
-
-상세 30개 섹션 문서는 [MCI_PLATFORM_ARCHITECTURE_RPI5_OMV_DOCKER_UV.md](MCI_PLATFORM_ARCHITECTURE_RPI5_OMV_DOCKER_UV.md) 를 참고하세요.
+- CAM/XAI 결과 산출 및 저장 경로 분리(`mri-xai` 버킷)
+- 전처리/추론 상태를 API에서 더 상세하게 노출
+- 실패 재처리(retry) 및 운영 관측성(메트릭/알림) 강화
