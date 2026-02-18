@@ -249,7 +249,9 @@ def setup_database(subject_id, mri_path, csv_data):
             avtot6 = _to_float(csv_data.get("avtot6"))
             avtotb = _to_float(csv_data.get("avtotb"))
             avdel30min = _to_float(csv_data.get("avdel30min"))
-            avdeltot = _to_float(csv_data.get("avdeltot"))
+            avdeltot = _to_float(csv_data.get("ldeltotal"))
+            if avdeltot is None:
+                avdeltot = _to_float(csv_data.get("avdeltot"))
             averr1 = _to_float(csv_data.get("averr1"))
             averr2 = _to_float(csv_data.get("averr2"))
             ravlt_immediate = _to_float(csv_data.get("ravlt_immediate"))

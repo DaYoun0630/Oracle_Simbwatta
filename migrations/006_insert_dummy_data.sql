@@ -14,8 +14,8 @@ INSERT INTO doctor (user_id, hospital, license_number) VALUES
 (1, '서울대학교병원', 'MD-12345');
 
 -- 3. Patient
-INSERT INTO patients (user_id, doctor_id, date_of_birth, gender, pteducat, risk_level, rid, subject_id, created_at, updated_at) VALUES
-(100, 1, '1948-01-01', 1, 18, 'mid', 6726, '029_S_6726', NOW(), NOW());
+INSERT INTO patients (user_id, doctor_id, date_of_birth, gender, pteducat, apoe4, risk_level, rid, subject_id, created_at, updated_at) VALUES
+(100, 1, '1948-01-01', 1, 18, 0, 'mid', 6726, '029_S_6726', NOW(), NOW());
 
 -- 6. Visits (Must be inserted before assessments)
 INSERT INTO visits (visit_id, patient_id, exam_date, viscode2, image_id, origprot, colprot, created_at) VALUES
@@ -38,7 +38,7 @@ INSERT INTO neuropsych_tests (
 ) VALUES (
   gen_random_uuid(), '55555555-5555-5555-5555-555555555555', 100, '2019-07-29', 'sc',
   6.0, 8.0, 11.0, 11.0, 12.0, 10.0, 8.0,
-  8.0, 8.0, 2.0, 0.0,
+  8.0, 15.0, 2.0, 0.0,
   48.0, 6.0, 4.0, 33.33333333,
   36.0, 60.0, NOW()
 );

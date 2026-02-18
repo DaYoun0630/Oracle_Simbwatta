@@ -88,7 +88,7 @@ const handleSelectPatient = (patientId) => {
   } else {
     doctorPatientStore.setSelectedPatientId(patientId);
   }
-  router.push({ name: 'doctor-patient', params: { patientId } }); // 환자 상세로 이동한다
+  router.push({ name: 'doctor-report', params: { patientId } }); // 환자 리포트로 이동한다
 };
 </script>
 

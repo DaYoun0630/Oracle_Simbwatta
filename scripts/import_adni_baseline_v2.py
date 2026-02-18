@@ -49,6 +49,13 @@ def parse_float(value: str) -> Optional[float]:
         return None
 
 
+def first_non_none(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def parse_date(value: str) -> Optional[date]:
     if value is None:
         return None
@@ -416,7 +423,12 @@ def main() -> int:
                                 parse_float(row.get("AVTOT6")),
                                 parse_float(row.get("AVTOTB")),
                                 parse_float(row.get("AVDEL30MIN")),
-                                parse_float(row.get("AVDELTOT")),
+                                first_non_none(
+                                    parse_float(row.get("ldeltotal")),
+                                    parse_float(row.get("LDELTOTAL")),
+                                    parse_float(row.get("AVDELTOT")),
+                                    parse_float(row.get("avdeltot")),
+                                ),
                                 parse_float(row.get("AVERR1")),
                                 parse_float(row.get("AVERR2")),
                                 parse_float(row.get("RAVLT_immediate")),

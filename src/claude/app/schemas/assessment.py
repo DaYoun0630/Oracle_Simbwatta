@@ -23,6 +23,10 @@ class VoiceAssessmentOut(VoiceAssessmentBase):
     assessment_id: UUID
     recording_id: UUID
     assessed_at: datetime
+    shap_available: Optional[bool] = None
+    shap_top_features: Optional[List[Dict[str, Any]]] = None
+    shap_feature_contributions: Optional[List[Dict[str, Any]]] = None
+    shap_meta: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True

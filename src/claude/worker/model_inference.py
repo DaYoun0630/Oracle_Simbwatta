@@ -1,88 +1,683 @@
 """
-Model inference for voice-based MCI assessment.
+Model inference for voice and MRI assessment pipelines.
 
-Loads the trained RandomForestClassifier and SimpleImputer,
-applies feature imputation, and returns prediction results.
+Voice pipeline supports two modes:
+- Lightweight bundle mode (preferred): transcript-first features + bundled RF pipeline
+- Legacy mode (fallback): direct numeric vector + imputer + RF classifier
 """
 
+from __future__ import annotations
+
+import logging
 import os
 import pickle
-import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+import joblib
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Singleton model holders
-_model = None
-_imputer = None
+
+# Voice model holders (singleton)
+_voice_model = None
+_voice_imputer = None
+_voice_bundle = None
+_bundle_threshold = None
+_wav2vec2_model = None
+_wav2vec2_processor = None
+_wav2vec2_device = None
 
 MODEL_DIR = os.getenv("MODEL_DIR", "/models/audio_processed")
 MRI_MODEL_DIR = os.getenv("MRI_MODEL_DIR", "/models/dig_help")
-THRESHOLD = 0.48
-MODEL_VERSION = "RandomForest_v1_audio"
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value.strip())
+    except Exception:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except Exception:
+        return default
+
+
+DEFAULT_THRESHOLD = _env_float("VOICE_MCI_THRESHOLD", 0.48)
+MODEL_VERSION = os.getenv("VOICE_MODEL_VERSION", "RandomForest_v2_lightweight_bundle")
+
+VOICE_MODEL_BUNDLE_PATH = os.getenv(
+    "VOICE_MODEL_BUNDLE_PATH",
+    os.path.join(MODEL_DIR, "redesigned_rf_model_bundle_20260212_194046.joblib"),
+)
+VOICE_LEGACY_MODEL_PATH = os.getenv("VOICE_LEGACY_MODEL_PATH", os.path.join(MODEL_DIR, "trained_model.pkl"))
+VOICE_LEGACY_IMPUTER_PATH = os.getenv(
+    "VOICE_LEGACY_IMPUTER_PATH", os.path.join(MODEL_DIR, "trained_model_imputer.pkl")
+)
+
+SHAP_ENABLE = _env_bool("SHAP_ENABLE", True)
+SHAP_TOP_K = max(1, _env_int("SHAP_TOP_K", 8))
+VOICE_ENABLE_AUDIO_EMBEDDING = _env_bool("VOICE_ENABLE_AUDIO_EMBEDDING", True)
+VOICE_AUDIO_MODEL = os.getenv("VOICE_AUDIO_MODEL", "facebook/wav2vec2-base-960h")
+VOICE_AUDIO_DEVICE = os.getenv("VOICE_AUDIO_DEVICE", "cpu")
+VOICE_AUDIO_MAX_SEC = _env_float("VOICE_AUDIO_MAX_SEC", 0.0)
+VOICE_AUDIO_CHUNK_SEC = max(_env_float("VOICE_AUDIO_CHUNK_SEC", 20.0), 5.0)
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return default
+        out = float(value)
+        if np.isnan(out) or np.isinf(out):
+            return default
+        return out
+    except Exception:
+        return default
 
 
 def load_models():
-    """Load trained model and imputer from disk (singleton)."""
-    global _model, _imputer
+    """Load voice models from disk (singleton)."""
+    global _voice_model, _voice_imputer, _voice_bundle, _bundle_threshold
 
-    if _model is None:
-        model_path = os.path.join(MODEL_DIR, "trained_model.pkl")
-        imputer_path = os.path.join(MODEL_DIR, "trained_model_imputer.pkl")
+    if _voice_model is not None:
+        return _voice_model, _voice_imputer, _voice_bundle
 
-        logger.info(f"Loading model from: {model_path}")
-        with open(model_path, "rb") as f:
-            _model = pickle.load(f)
+    # Preferred: lightweight bundle
+    if os.path.exists(VOICE_MODEL_BUNDLE_PATH):
+        logger.info("Loading voice model bundle from: %s", VOICE_MODEL_BUNDLE_PATH)
+        loaded = joblib.load(VOICE_MODEL_BUNDLE_PATH)
+        if not isinstance(loaded, dict) or "model_pipeline" not in loaded:
+            raise RuntimeError(f"Invalid voice bundle format: {VOICE_MODEL_BUNDLE_PATH}")
 
-        logger.info(f"Loading imputer from: {imputer_path}")
-        with open(imputer_path, "rb") as f:
-            _imputer = pickle.load(f)
+        _voice_bundle = loaded
+        _voice_model = loaded["model_pipeline"]
+        _voice_imputer = None
+        _bundle_threshold = _as_float(loaded.get("threshold"), DEFAULT_THRESHOLD)
 
         logger.info(
-            f"Models loaded: {type(_model).__name__}, "
-            f"n_features={_model.n_features_in_}, threshold={THRESHOLD}"
+            "Voice bundle loaded: model=%s, n_features=%s, threshold=%.3f",
+            type(_voice_model).__name__,
+            getattr(_voice_model, "n_features_in_", "unknown"),
+            _bundle_threshold,
         )
+        return _voice_model, _voice_imputer, _voice_bundle
 
-    return _model, _imputer
+    # Fallback: legacy model + imputer
+    if not os.path.exists(VOICE_LEGACY_MODEL_PATH):
+        raise FileNotFoundError(
+            f"No voice model found. Checked bundle={VOICE_MODEL_BUNDLE_PATH}, legacy={VOICE_LEGACY_MODEL_PATH}"
+        )
+    if not os.path.exists(VOICE_LEGACY_IMPUTER_PATH):
+        raise FileNotFoundError(f"Legacy imputer not found: {VOICE_LEGACY_IMPUTER_PATH}")
+
+    logger.info("Loading legacy voice model from: %s", VOICE_LEGACY_MODEL_PATH)
+    with open(VOICE_LEGACY_MODEL_PATH, "rb") as f:
+        _voice_model = pickle.load(f)
+
+    logger.info("Loading legacy voice imputer from: %s", VOICE_LEGACY_IMPUTER_PATH)
+    with open(VOICE_LEGACY_IMPUTER_PATH, "rb") as f:
+        _voice_imputer = pickle.load(f)
+
+    _voice_bundle = None
+    _bundle_threshold = DEFAULT_THRESHOLD
+
+    logger.info(
+        "Legacy voice model loaded: model=%s, n_features=%s, threshold=%.3f",
+        type(_voice_model).__name__,
+        getattr(_voice_model, "n_features_in_", "unknown"),
+        _bundle_threshold,
+    )
+
+    return _voice_model, _voice_imputer, _voice_bundle
 
 
-def predict(features: np.ndarray) -> dict:
+def _extract_bundle_numeric(feature_row: Dict[str, Any], bundle: Dict[str, Any]) -> Tuple[np.ndarray, List[str]]:
+    numeric_columns = [str(col) for col in (bundle.get("numeric_feature_columns") or [])]
+
+    service_stats = bundle.get("service_safe_stats")
+    duration_fallback = 0.0
+    if isinstance(service_stats, dict):
+        duration_fallback = _as_float(service_stats.get("duration_fallback_ms"), 0.0)
+
+    alias_map = {
+        "eojeol_sum": "eojeol",
+        "token_total_mor_sum": "token_total_mor",
+        "pos_noun_sum": "pos_noun",
+        "pos_verb_sum": "pos_verb",
+        "pos_adj_sum": "pos_adj",
+        "pos_adv_sum": "pos_adv",
+        "pos_pron_sum": "pos_pron",
+        "deictic_cnt_sum": "deictic_cnt",
+        "filler_cnt_sum": "filler_cnt",
+        "particle_cnt_text_proxy_sum": "particle_cnt_text_proxy",
+        "deictic_rate_sum_based": "deictic_rate",
+        "filler_rate_sum_based": "filler_rate",
+        "particle_rate_sum_based": "particle_rate_text_proxy",
+    }
+
+    values: List[float] = []
+    for col in numeric_columns:
+        candidates = [col]
+        alias = alias_map.get(col)
+        if alias:
+            candidates.append(alias)
+        if col.endswith("_sum"):
+            candidates.append(col[:-4])
+        if col.endswith("_sum_based"):
+            candidates.append(col.replace("_sum_based", ""))
+        if col.endswith("_text_proxy_sum"):
+            candidates.append(col.replace("_sum", ""))
+
+        value = None
+        for key in candidates:
+            if key and key in feature_row:
+                value = feature_row.get(key)
+                break
+
+        if value is None and col in {"latency_ms_mean", "latency_ms_median"}:
+            value = feature_row.get("dur_ms", duration_fallback)
+        if value is None and col == "n_par_utts":
+            value = 1.0
+
+        values.append(_as_float(value, 0.0))
+
+    return np.asarray(values, dtype=float), numeric_columns
+
+
+def _extract_bundle_text(feature_row: Dict[str, Any], bundle: Dict[str, Any]) -> Tuple[np.ndarray, List[str]]:
+    if not bundle.get("use_text"):
+        return np.array([], dtype=float), []
+
+    vectorizer = bundle.get("text_vectorizer")
+    text_svd = bundle.get("text_svd")
+    n_text = int(getattr(text_svd, "n_components", 0)) if text_svd is not None else 0
+    if n_text <= 0:
+        return np.array([], dtype=float), []
+
+    names = [f"text_svd_{idx}" for idx in range(n_text)]
+    text = str(feature_row.get("text", "")).strip()
+
+    if not text or vectorizer is None or text_svd is None:
+        return np.zeros(n_text, dtype=float), names
+
+    try:
+        sparse_vec = vectorizer.transform([text])
+        reduced = text_svd.transform(sparse_vec)
+        arr = np.asarray(reduced, dtype=float).reshape(-1)
+        if arr.size == n_text:
+            return arr, names
+
+        fixed = np.zeros(n_text, dtype=float)
+        upto = min(n_text, arr.size)
+        fixed[:upto] = arr[:upto]
+        return fixed, names
+    except Exception as e:
+        logger.warning("Text transform failed in bundle mode, using zeros: %s", e)
+        return np.zeros(n_text, dtype=float), names
+
+
+def _resolve_audio_device(device_preference: str):
+    import torch
+
+    pref = (device_preference or "cpu").strip().lower()
+    if pref == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    if pref == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("VOICE_AUDIO_DEVICE=cuda but CUDA is not available")
+        return torch.device("cuda")
+    if pref == "mps":
+        if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+            raise RuntimeError("VOICE_AUDIO_DEVICE=mps but MPS is not available")
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _load_wav2vec2_runtime():
+    global _wav2vec2_model, _wav2vec2_processor, _wav2vec2_device
+    if _wav2vec2_model is not None and _wav2vec2_processor is not None and _wav2vec2_device is not None:
+        return _wav2vec2_model, _wav2vec2_processor, _wav2vec2_device
+
+    import torch
+    from transformers import Wav2Vec2Model, Wav2Vec2Processor
+
+    device = _resolve_audio_device(VOICE_AUDIO_DEVICE)
+    logger.info("Loading wav2vec2 runtime model: %s (device=%s)", VOICE_AUDIO_MODEL, device)
+    processor = Wav2Vec2Processor.from_pretrained(VOICE_AUDIO_MODEL)
+    model = Wav2Vec2Model.from_pretrained(VOICE_AUDIO_MODEL).to(device)
+    model.eval()
+
+    _wav2vec2_model = model
+    _wav2vec2_processor = processor
+    _wav2vec2_device = device
+    return _wav2vec2_model, _wav2vec2_processor, _wav2vec2_device
+
+
+def _read_audio_waveform(audio_path: str, sr: int = 16000) -> np.ndarray:
+    import librosa
+
+    waveform, _ = librosa.load(audio_path, sr=sr, mono=True)
+    if VOICE_AUDIO_MAX_SEC > 0:
+        max_samples = int(VOICE_AUDIO_MAX_SEC * sr)
+        if len(waveform) > max_samples:
+            waveform = waveform[:max_samples]
+    return np.asarray(waveform, dtype=np.float32)
+
+
+def _embed_wav2vec2_mean_pool(audio_path: str, expected_dim: int) -> np.ndarray:
+    import torch
+
+    model, processor, device = _load_wav2vec2_runtime()
+    sr = 16000
+    waveform = _read_audio_waveform(audio_path, sr=sr)
+    if waveform.size == 0:
+        return np.zeros(expected_dim, dtype=float)
+
+    chunk_samples = int(max(VOICE_AUDIO_CHUNK_SEC, 5.0) * sr)
+    if chunk_samples <= 0:
+        chunk_samples = 20 * sr
+
+    weighted_sum = None
+    total_tokens = 0
+    for start in range(0, len(waveform), chunk_samples):
+        chunk = waveform[start : start + chunk_samples]
+        if chunk.size == 0:
+            continue
+        inputs = processor(chunk, sampling_rate=sr, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = model(**inputs).last_hidden_state
+
+        # Weighted mean approximates full-utterance pooling without OOM risk.
+        seq_len = int(outputs.shape[1])
+        pooled = outputs.mean(dim=1).squeeze().detach().cpu().numpy().astype(np.float64)
+        if weighted_sum is None:
+            weighted_sum = pooled * seq_len
+        else:
+            weighted_sum += pooled * seq_len
+        total_tokens += seq_len
+
+    if weighted_sum is None or total_tokens <= 0:
+        return np.zeros(expected_dim, dtype=float)
+
+    emb = (weighted_sum / float(total_tokens)).astype(np.float32)
+    if emb.size == expected_dim:
+        return emb.astype(float)
+    if emb.size > expected_dim:
+        return emb[:expected_dim].astype(float)
+    fixed = np.zeros(expected_dim, dtype=float)
+    fixed[: emb.size] = emb.astype(float)
+    return fixed
+
+
+def _embed_mel_fallback(audio_path: str, expected_dim: int) -> np.ndarray:
+    """Mel fallback kept for compatibility if a bundle was trained with mel-like vectors."""
+    import librosa
+
+    sr = 16000
+    waveform = _read_audio_waveform(audio_path, sr=sr)
+    if waveform.size == 0:
+        return np.zeros(expected_dim, dtype=float)
+
+    n_mels = max(1, expected_dim // 2)
+    mel = librosa.feature.melspectrogram(y=waveform, sr=sr, n_mels=n_mels)
+    mel_db = librosa.power_to_db(mel, ref=np.max)
+    emb = np.concatenate([mel_db.mean(axis=1), mel_db.std(axis=1)]).astype(float)
+    if emb.size == expected_dim:
+        return emb
+    if emb.size > expected_dim:
+        return emb[:expected_dim]
+    fixed = np.zeros(expected_dim, dtype=float)
+    fixed[: emb.size] = emb
+    return fixed
+
+
+def _extract_bundle_audio(bundle: Dict[str, Any], audio_path: Optional[str] = None) -> Tuple[np.ndarray, List[str]]:
+    if not bundle.get("use_audio"):
+        return np.array([], dtype=float), []
+
+    audio_pca = bundle.get("audio_pca")
+    n_audio = int(getattr(audio_pca, "n_components", 0)) if audio_pca is not None else 0
+    if n_audio <= 0:
+        return np.array([], dtype=float), []
+
+    names = [f"audio_pca_{idx}" for idx in range(n_audio)]
+    if audio_pca is None:
+        return np.zeros(n_audio, dtype=float), names
+
+    if not VOICE_ENABLE_AUDIO_EMBEDDING:
+        logger.info("VOICE_ENABLE_AUDIO_EMBEDDING=false, using zero audio features")
+        return np.zeros(n_audio, dtype=float), names
+
+    expected_in = int(getattr(audio_pca, "n_features_in_", 768) or 768)
+    if not audio_path:
+        logger.warning("Audio path missing in bundle mode, using zero audio features")
+        return np.zeros(n_audio, dtype=float), names
+
+    try:
+        if expected_in == 768:
+            emb = _embed_wav2vec2_mean_pool(audio_path, expected_in)
+        else:
+            # Only use mel fallback if PCA expects non-wav2vec dimension.
+            emb = _embed_mel_fallback(audio_path, expected_in)
+
+        reduced = audio_pca.transform(emb.reshape(1, -1))
+        arr = np.asarray(reduced, dtype=float).reshape(-1)
+        if arr.size == n_audio:
+            return arr, names
+
+        fixed = np.zeros(n_audio, dtype=float)
+        upto = min(n_audio, arr.size)
+        fixed[:upto] = arr[:upto]
+        return fixed, names
+    except Exception as e:
+        logger.warning("Audio embedding/PCA failed, using zeros: %s", e)
+        return np.zeros(n_audio, dtype=float), names
+
+
+def _align_feature_vector_and_names(
+    values: np.ndarray,
+    names: List[str],
+    keep_mask: Any,
+    expected_size: int,
+) -> Tuple[np.ndarray, List[str]]:
+    vector = np.asarray(values, dtype=float).reshape(-1)
+    feature_names = list(names)
+
+    if keep_mask is not None:
+        mask = np.asarray(keep_mask, dtype=bool).reshape(-1)
+        if mask.size == vector.size:
+            vector = vector[mask]
+            if len(feature_names) >= mask.size:
+                feature_names = [name for name, keep in zip(feature_names, mask) if keep]
+            else:
+                feature_names = [f"feature_{idx}" for idx in range(vector.size)]
+        else:
+            logger.warning(
+                "Keep-mask size mismatch (mask=%s, features=%s), skipping mask",
+                mask.size,
+                vector.size,
+            )
+
+    if len(feature_names) < vector.size:
+        feature_names.extend(f"feature_{idx}" for idx in range(len(feature_names), vector.size))
+    elif len(feature_names) > vector.size:
+        feature_names = feature_names[: vector.size]
+
+    if vector.size < expected_size:
+        pad_count = expected_size - vector.size
+        vector = np.concatenate([vector, np.zeros(pad_count, dtype=float)], axis=0)
+        feature_names.extend(f"pad_{idx}" for idx in range(pad_count))
+    elif vector.size > expected_size:
+        vector = vector[:expected_size]
+        feature_names = feature_names[:expected_size]
+
+    return vector, feature_names
+
+
+def _prepare_bundle_input(
+    feature_row: Dict[str, Any],
+    model: Any,
+    bundle: Dict[str, Any],
+    audio_path: Optional[str] = None,
+) -> Tuple[np.ndarray, List[str], Dict[str, int]]:
+    numeric_values, numeric_names = _extract_bundle_numeric(feature_row, bundle)
+    text_values, text_names = _extract_bundle_text(feature_row, bundle)
+    audio_values, audio_names = _extract_bundle_audio(bundle, audio_path=audio_path)
+
+    blocks = [arr for arr in (numeric_values, text_values, audio_values) if arr.size > 0]
+    names: List[str] = []
+    for block_names, block_values in (
+        (numeric_names, numeric_values),
+        (text_names, text_values),
+        (audio_names, audio_values),
+    ):
+        if block_values.size > 0:
+            names.extend(block_names)
+
+    if not blocks:
+        raise ValueError("No bundle features available")
+
+    full = np.concatenate(blocks, axis=0)
+    aligned, aligned_names = _align_feature_vector_and_names(
+        values=full,
+        names=names,
+        keep_mask=bundle.get("constant_feature_keep_mask"),
+        expected_size=int(getattr(model, "n_features_in_", full.size)),
+    )
+
+    meta = {
+        "numeric_feature_count": int(numeric_values.size),
+        "text_feature_count": int(text_values.size),
+        "audio_feature_count": int(audio_values.size),
+        "model_feature_count": int(aligned.size),
+    }
+    return aligned.reshape(1, -1), aligned_names, meta
+
+
+def _extract_shap_values_for_class(shap_values: Any, class_index: int) -> np.ndarray:
+    if isinstance(shap_values, list):
+        if not shap_values:
+            return np.array([], dtype=float)
+        idx = class_index if class_index < len(shap_values) else len(shap_values) - 1
+        arr = np.asarray(shap_values[idx], dtype=float)
+    else:
+        arr = np.asarray(shap_values, dtype=float)
+        if arr.ndim == 3:
+            idx = class_index if class_index < arr.shape[2] else arr.shape[2] - 1
+            arr = arr[:, :, idx]
+        elif arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.ndim != 2:
+        arr = arr.reshape(arr.shape[0], -1)
+    return arr
+
+
+def _extract_expected_value(expected_value: Any, class_index: int) -> float:
+    if isinstance(expected_value, (list, tuple, np.ndarray)):
+        arr = np.asarray(expected_value, dtype=float).reshape(-1)
+        if arr.size == 0:
+            return 0.0
+        idx = class_index if class_index < arr.size else arr.size - 1
+        return float(arr[idx])
+    return float(expected_value)
+
+
+def _compute_shap_explanation(
+    model: Any,
+    model_input: np.ndarray,
+    mci_probability: float,
+    feature_names: List[str],
+) -> Dict[str, Any]:
+    if not SHAP_ENABLE:
+        return {
+            "enabled": False,
+            "available": False,
+            "reason": "disabled_by_config",
+        }
+
+    try:
+        import shap
+    except Exception as e:
+        return {
+            "enabled": True,
+            "available": False,
+            "reason": f"shap_import_error: {e}",
+        }
+
+    try:
+        X = np.asarray(model_input, dtype=float)
+        names = list(feature_names)
+        model_for_shap = model
+        model_stage = "classifier_input"
+
+        if hasattr(model, "named_steps") and isinstance(getattr(model, "named_steps"), dict):
+            steps = list(model.named_steps.items())
+            if steps:
+                X_stage = X
+                names_stage = list(names)
+                for _, step in steps[:-1]:
+                    if hasattr(step, "transform"):
+                        X_stage = step.transform(X_stage)
+                    if hasattr(step, "get_support"):
+                        try:
+                            mask = np.asarray(step.get_support(), dtype=bool).reshape(-1)
+                            if len(names_stage) >= mask.size:
+                                names_stage = [n for n, keep in zip(names_stage, mask) if keep]
+                        except Exception:
+                            pass
+
+                model_for_shap = steps[-1][1]
+                model_stage = f"pipeline:{steps[-1][0]}"
+                X = np.asarray(X_stage, dtype=float)
+                names = names_stage
+
+        classes = list(getattr(model_for_shap, "classes_", [0, 1]))
+        mci_class = 1 if 1 in classes else (classes[-1] if classes else 1)
+        class_index = classes.index(mci_class) if mci_class in classes else max(len(classes) - 1, 0)
+
+        explainer = shap.TreeExplainer(model_for_shap)
+        shap_values_raw = explainer.shap_values(X)
+        expected_raw = explainer.expected_value
+
+        shap_matrix = _extract_shap_values_for_class(shap_values_raw, class_index)
+        if shap_matrix.size == 0 or shap_matrix.shape[0] == 0:
+            return {
+                "enabled": True,
+                "available": False,
+                "reason": "empty_shap_values",
+            }
+
+        shap_row = np.asarray(shap_matrix[0], dtype=float).reshape(-1)
+        feature_values = np.asarray(X[0], dtype=float).reshape(-1)
+
+        use_size = min(shap_row.size, feature_values.size)
+        shap_row = shap_row[:use_size]
+        feature_values = feature_values[:use_size]
+
+        if len(names) < use_size:
+            names.extend(f"feature_{idx}" for idx in range(len(names), use_size))
+        elif len(names) > use_size:
+            names = names[:use_size]
+
+        base_value = _extract_expected_value(expected_raw, class_index)
+        output_value = float(base_value + float(np.sum(shap_row)))
+
+        contributions = []
+        for idx, (name, f_value, s_value) in enumerate(zip(names, feature_values, shap_row)):
+            contributions.append(
+                {
+                    "index": idx,
+                    "feature": str(name),
+                    "value": float(f_value),
+                    "shap_value": float(s_value),
+                    "impact": "increase_mci" if float(s_value) >= 0 else "decrease_mci",
+                }
+            )
+
+        top_features = sorted(contributions, key=lambda x: abs(x["shap_value"]), reverse=True)[:SHAP_TOP_K]
+        positive_features = [item for item in top_features if item["shap_value"] >= 0]
+        negative_features = [item for item in top_features if item["shap_value"] < 0]
+
+        return {
+            "enabled": True,
+            "available": True,
+            "method": "TreeExplainer",
+            "model_stage": model_stage,
+            "class_label": "MCI",
+            "class_index": int(class_index),
+            "base_value": base_value,
+            "output_value": output_value,
+            "predicted_mci_probability": float(mci_probability),
+            "feature_count": int(use_size),
+            "top_k": int(SHAP_TOP_K),
+            "top_features": top_features,
+            "positive_features": positive_features,
+            "negative_features": negative_features,
+            "feature_contributions": contributions,
+        }
+    except Exception as e:
+        logger.warning("SHAP computation failed: %s", e)
+        return {
+            "enabled": True,
+            "available": False,
+            "reason": f"shap_compute_error: {e}",
+        }
+
+
+def predict(features: Any, audio_path: Optional[str] = None) -> dict:
     """
-    Run MCI prediction on extracted features.
+    Run voice MCI prediction.
 
-    Args:
-        features: 1561-dim feature vector from feature_extractor
-
-    Returns:
-        dict with prediction results:
-            - label: "MCI" or "Control"
-            - mci_probability: float 0-1
-            - cognitive_score: float 0-100 (higher = healthier)
-            - flag: "normal" / "warning" / "critical"
-            - flag_reasons: list of explanation strings
-            - model_version: version identifier
+    Bundle mode expects `features` as a dict from transcript lightweight extractor.
+    Legacy mode accepts numpy-like numeric vector.
     """
-    model, imputer = load_models()
+    model, imputer, bundle = load_models()
 
-    # Reshape for sklearn (1 sample, N features)
-    features_2d = features.reshape(1, -1)
+    model_input: np.ndarray
+    model_input_feature_names: List[str]
 
-    # Apply imputation (handle any NaN/missing values)
-    features_imputed = imputer.transform(features_2d)
+    numeric_feature_count = 0
+    text_feature_count = 0
+    audio_feature_count = 0
 
-    # Get prediction probabilities
-    probas = model.predict_proba(features_imputed)[0]
+    if bundle is not None:
+        if not isinstance(features, dict):
+            raise ValueError("Bundle mode requires dict features from lightweight extractor")
 
-    # Class 1 = MCI probability
-    mci_probability = float(probas[1])
+        model_input, model_input_feature_names, meta = _prepare_bundle_input(
+            features,
+            model,
+            bundle,
+            audio_path=audio_path,
+        )
+        numeric_feature_count = int(meta["numeric_feature_count"])
+        text_feature_count = int(meta["text_feature_count"])
+        audio_feature_count = int(meta["audio_feature_count"])
+    else:
+        vector = np.asarray(features, dtype=float).reshape(1, -1)
+        model_input = imputer.transform(vector)
+        model_input_feature_names = [f"feature_{idx}" for idx in range(model_input.shape[1])]
+        numeric_feature_count = int(model_input.shape[1])
 
-    # Binary prediction with custom threshold
-    label = "MCI" if mci_probability >= THRESHOLD else "Control"
+    probas = model.predict_proba(model_input)[0]
+    classes = list(getattr(model, "classes_", range(len(probas))))
+    mci_index = classes.index(1) if 1 in classes else max(len(probas) - 1, 0)
 
-    # Cognitive score: 0-100 (higher = healthier)
+    mci_probability = float(probas[mci_index])
+    threshold = _bundle_threshold if _bundle_threshold is not None else DEFAULT_THRESHOLD
+    label = "MCI" if mci_probability >= threshold else "Control"
+
     cognitive_score = round((1.0 - mci_probability) * 100, 2)
 
-    # Flag determination
     if mci_probability < 0.35:
         flag = "normal"
     elif mci_probability < 0.65:
@@ -90,12 +685,21 @@ def predict(features: np.ndarray) -> dict:
     else:
         flag = "critical"
 
-    # Generate flag reasons
     flag_reasons = _generate_flag_reasons(mci_probability, label, flag)
+    shap_payload = _compute_shap_explanation(
+        model=model,
+        model_input=model_input,
+        mci_probability=mci_probability,
+        feature_names=model_input_feature_names,
+    )
 
     logger.info(
-        f"Prediction: {label} (prob={mci_probability:.3f}, "
-        f"score={cognitive_score}, flag={flag})"
+        "Prediction: %s (prob=%.3f, score=%.2f, flag=%s, threshold=%.3f)",
+        label,
+        mci_probability,
+        cognitive_score,
+        flag,
+        threshold,
     )
 
     return {
@@ -105,10 +709,17 @@ def predict(features: np.ndarray) -> dict:
         "flag": flag,
         "flag_reasons": flag_reasons,
         "model_version": MODEL_VERSION,
+        "threshold": float(threshold),
+        "shap": shap_payload,
+        "shap_available": bool(shap_payload.get("available")),
+        "numeric_feature_count": int(numeric_feature_count),
+        "text_feature_count": int(text_feature_count),
+        "audio_feature_count": int(audio_feature_count),
+        "model_feature_count": int(model_input.shape[1]),
     }
 
 
-def _generate_flag_reasons(mci_probability: float, label: str, flag: str) -> list[str]:
+def _generate_flag_reasons(mci_probability: float, label: str, flag: str) -> List[str]:
     """Generate human-readable reasons for the assessment flag."""
     reasons = []
 
@@ -122,7 +733,6 @@ def _generate_flag_reasons(mci_probability: float, label: str, flag: str) -> lis
         reasons.append("인지 기능이 정상 범위입니다")
 
     return reasons
-
 
 MCI_SUBTYPE_MODEL_PATH = os.path.join(
     os.getenv("MCI_SUBTYPE_MODEL_DIR", "/models/mci(s,p)"),

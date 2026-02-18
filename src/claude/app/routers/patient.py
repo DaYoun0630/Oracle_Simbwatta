@@ -1,12 +1,13 @@
 import os
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from uuid import uuid4
 
 from celery import Celery
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query, WebSocket, WebSocketDisconnect
 import logging
+from minio.commonconfig import CopySource
 from pydantic import BaseModel
 
 from .. import db
@@ -25,6 +26,112 @@ KST = timezone(timedelta(hours=9))
 def _kst_now_naive() -> datetime:
     """Return current Korea time as naive datetime for TIMESTAMP columns."""
     return datetime.now(KST).replace(tzinfo=None)
+
+
+def _transcript_bucket_name() -> str:
+    """Return transcript bucket name from env with sane default."""
+    bucket = (os.getenv("MINIO_TRANSCRIPT_BUCKET", "voice-transcript") or "").strip()
+    return bucket or "voice-transcript"
+
+
+def _resolve_bucket_and_key(path: str, default_bucket: str) -> Tuple[str, str]:
+    """
+    Resolve either `bucket/key`, `s3://bucket/key`, or plain `key`.
+    If bucket is omitted, `default_bucket` is used.
+    """
+    raw = (path or "").strip().replace("s3://", "")
+    if not raw:
+        raise ValueError("Object path is empty")
+    if "/" not in raw:
+        return default_bucket, raw
+
+    bucket, key = raw.split("/", 1)
+    known_buckets = {
+        "voice-recordings",
+        "voice-transcript",
+        "processed",
+        "mri-scans",
+        "exports",
+        "mri-preprocessed",
+        "mri-xai",
+        default_bucket,
+    }
+    if bucket in known_buckets:
+        return bucket, key
+    return default_bucket, raw
+
+
+def _load_transcript_text(bucket: str, key: str) -> str:
+    """Download transcript text object from MinIO and return UTF-8 content."""
+    response = None
+    try:
+        response = storage.client.get_object(bucket, key)
+        text = response.read().decode("utf-8", errors="replace").strip()
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+    if not text:
+        raise ValueError(f"Transcript object is empty: {bucket}/{key}")
+    return text
+
+
+def _store_transcript_text(bucket: str, key: str, transcript: str) -> str:
+    """Persist transcript text to MinIO for `.wav` / `.txt` parity."""
+    payload = transcript.encode("utf-8")
+    if not storage.client.bucket_exists(bucket):
+        storage.client.make_bucket(bucket)
+    storage.client.put_object(
+        bucket,
+        key,
+        BytesIO(payload),
+        length=len(payload),
+        content_type="text/plain; charset=utf-8",
+    )
+    return f"{bucket}/{key}"
+
+
+def _copy_minio_object(
+    source_bucket: str,
+    source_key: str,
+    dest_bucket: str,
+    dest_key: str,
+    content_type: Optional[str] = None,
+) -> str:
+    """
+    Copy an object inside MinIO.
+    Falls back to stream-copy when server-side copy is unavailable.
+    """
+    if source_bucket == dest_bucket and source_key == dest_key:
+        return f"{dest_bucket}/{dest_key}"
+
+    if not storage.client.bucket_exists(dest_bucket):
+        storage.client.make_bucket(dest_bucket)
+
+    try:
+        storage.client.copy_object(
+            dest_bucket,
+            dest_key,
+            CopySource(source_bucket, source_key),
+        )
+        return f"{dest_bucket}/{dest_key}"
+    except Exception:
+        response = None
+        try:
+            stat = storage.client.stat_object(source_bucket, source_key)
+            response = storage.client.get_object(source_bucket, source_key)
+            storage.client.put_object(
+                dest_bucket,
+                dest_key,
+                response,
+                length=int(getattr(stat, "size", 0) or 0),
+                content_type=content_type or getattr(stat, "content_type", None) or "application/octet-stream",
+            )
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+        return f"{dest_bucket}/{dest_key}"
 
 # Celery client for dispatching ML tasks
 celery_app = Celery(
@@ -263,7 +370,8 @@ async def upload_recording(
     patient_id: int = Query(...),
     file: UploadFile = File(...),
     description: str = Query(None),
-    transcript: str = Query(..., min_length=1),
+    transcript: Optional[str] = Query(None),
+    transcript_key: Optional[str] = Query(None),
 ):
     """
     Upload a voice recording for cognitive assessment.
@@ -300,11 +408,29 @@ async def upload_recording(
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-    # Insert into database
+    # Resolve transcript from direct text or existing MinIO .txt object.
     now = _kst_now_naive()
-    transcript = transcript.strip()
-    if not transcript:
-        raise HTTPException(status_code=400, detail="transcript is required")
+    transcript_text = (transcript or "").strip()
+    if not transcript_text and transcript_key:
+        transcript_bucket = _transcript_bucket_name()
+        try:
+            bucket, key = _resolve_bucket_and_key(transcript_key, transcript_bucket)
+            transcript_text = _load_transcript_text(bucket, key)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to load transcript_key: {e}")
+    if not transcript_text:
+        raise HTTPException(
+            status_code=400,
+            detail="transcript is required (or provide transcript_key for MinIO .txt)",
+        )
+
+    # Store transcript object in final MinIO for consistent wav/txt pairing.
+    transcript_bucket = _transcript_bucket_name()
+    standardized_transcript_key = f"{patient_id}/{recording_id}.txt"
+    try:
+        _store_transcript_text(transcript_bucket, standardized_transcript_key, transcript_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store transcript object: {e}")
 
     training_id = str(uuid4())
     await db.execute(
@@ -327,23 +453,134 @@ async def upload_recording(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     """, recording_id, training_id, patient_id, storage_path, len(content), file_extension, now, now, "pending",
-       transcript, "upload", description or "", now)
+       transcript_text, "upload", description or "", now)
 
     # Queue Celery task for transcript-first post-STT pipeline.
     celery_app.send_task(
         "process_voice_recording",
         args=[recording_id, patient_id, storage_path],
-        kwargs={"transcript": transcript},
+        kwargs={"transcript": transcript_text},
     )
 
+    # Keep response aligned with RecordingOut schema.
     return {
-        "id": recording_id,
+        "recording_id": recording_id,
         "patient_id": patient_id,
-        "session_id": training_id,
-        "audio_path": storage_path,
+        "training_id": training_id,
+        "file_path": storage_path,
         "duration_seconds": None,
         "file_size_bytes": len(content),
         "format": file_extension,
+        "transcription": transcript_text,
+        "description": description or "",
+        "recorded_at": now,
+        "uploaded_at": now,
+        "status": "pending",
+    }
+
+
+@router.post("/recordings/from-minio", response_model=RecordingOut)
+async def register_recording_from_minio(
+    patient_id: int = Query(...),
+    audio_key: str = Query(..., min_length=1),
+    transcript_key: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+):
+    """
+    Register an existing MinIO `.wav` + `.txt` pair and enqueue voice pipeline.
+
+    This uses final project's API/DB/Redis/Celery and does not touch m_ch services.
+    """
+    patient = await db.fetchrow("SELECT * FROM patients WHERE user_id = $1", patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    audio_bucket, audio_object_key = _resolve_bucket_and_key(audio_key, "voice-recordings")
+    if audio_bucket != "voice-recordings":
+        raise HTTPException(status_code=400, detail="audio_key must point to voice-recordings bucket")
+
+    try:
+        stat = storage.client.stat_object(audio_bucket, audio_object_key)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Audio object not found: {e}")
+
+    source_transcript_bucket = _transcript_bucket_name()
+    if transcript_key:
+        source_transcript_bucket, transcript_object_key = _resolve_bucket_and_key(
+            transcript_key,
+            source_transcript_bucket,
+        )
+    else:
+        transcript_object_key = f"{audio_object_key.rsplit('.', 1)[0]}.txt"
+
+    try:
+        storage.client.stat_object(source_transcript_bucket, transcript_object_key)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Transcript object not found: {e}")
+
+    recording_id = str(uuid4())
+    training_id = str(uuid4())
+    now = _kst_now_naive()
+    file_extension = audio_object_key.split(".")[-1].lower() if "." in audio_object_key else "wav"
+    storage_path = f"{audio_bucket}/{audio_object_key}"
+
+    # Keep original object path/key exactly as source.
+    try:
+        transcript_text = _load_transcript_text(source_transcript_bucket, transcript_object_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load transcript object: {e}")
+
+    await db.execute(
+        """
+        INSERT INTO training_sessions (training_id, patient_id, started_at, ended_at, exercise_type)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        training_id,
+        patient_id,
+        now,
+        now,
+        "upload",
+    )
+    await db.execute(
+        """
+        INSERT INTO recordings (
+            recording_id, training_id, patient_id, file_path,
+            file_size_bytes, format, recorded_at, uploaded_at, status,
+            transcription, exercise_type, description, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        """,
+        recording_id,
+        training_id,
+        patient_id,
+        storage_path,
+        int(getattr(stat, "size", 0) or 0),
+        file_extension,
+        now,
+        now,
+        "pending",
+        transcript_text,
+        "upload",
+        description or "",
+        now,
+    )
+
+    celery_app.send_task(
+        "process_voice_recording",
+        args=[recording_id, patient_id, storage_path],
+        kwargs={"transcript": transcript_text},
+    )
+
+    return {
+        "recording_id": recording_id,
+        "patient_id": patient_id,
+        "training_id": training_id,
+        "file_path": storage_path,
+        "duration_seconds": None,
+        "file_size_bytes": int(getattr(stat, "size", 0) or 0),
+        "format": file_extension,
+        "transcription": transcript_text,
+        "description": description or "",
         "recorded_at": now,
         "uploaded_at": now,
         "status": "pending",

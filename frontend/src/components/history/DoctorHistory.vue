@@ -43,6 +43,19 @@ type BiomarkerItem = {
   unit: string;
   range: string;
   isRatio: boolean;
+  referenceType?: 'gte' | 'lte' | 'between' | 'unknown';
+  referenceMin?: number | null;
+  referenceMax?: number | null;
+};
+
+type BiomarkerRatioDisplayItem = BiomarkerItem & {
+  hasReference: boolean;
+  referenceStartPercent: number;
+  referenceWidthPercent: number;
+  markerPercent: number;
+  markerColor: string;
+  scaleMinLabel: string;
+  scaleMaxLabel: string;
 };
 
 type DataAvailability = {
@@ -85,6 +98,8 @@ interface ScoreCardConfig {
   goodThreshold: number;
   warnThreshold: number;
   referenceRange: string;
+  referenceMin: number;
+  referenceMax: number;
   rangeLabel?: string;
   digits?: number;
 }
@@ -106,6 +121,13 @@ const formatScoreValue = (value: number | null, digits = 0) => {
 const formatBiomarkerValue = (value: number | null, digits = 2) => {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
   return value.toFixed(digits);
+};
+
+const formatRatioScaleValue = (value: number) => {
+  if (!Number.isFinite(value)) return '-';
+  if (value >= 10) return String(Math.round(value));
+  if (value >= 1) return value.toFixed(1).replace(/\.0$/, '');
+  return value.toFixed(3).replace(/\.?0+$/, '');
 };
 
 const normalizeSeries = (values: number[]) => {
@@ -165,6 +187,20 @@ const calculateDaysSince = (dateString: string | null) => {
   return diff > 0 ? Math.floor(diff / (1000 * 60 * 60 * 24)) : 0;
 };
 
+const formatDateOnly = (dateString: string | null | undefined) => {
+  if (!dateString) return '-';
+  const raw = String(dateString).trim();
+  if (!raw) return '-';
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const asFiniteNumber = (value: unknown) => {
   if (value === null || value === undefined) return null;
   const normalized =
@@ -181,10 +217,12 @@ type ScoreCriteria = {
   goodThreshold: number;
   warnThreshold: number;
   referenceRange: string;
+  referenceMin: number;
+  referenceMax: number;
 };
 
 const resolveScoreCriteria = (
-  scoreId: 'mmse' | 'moca' | 'adas' | 'faq',
+  scoreId: 'mmse' | 'moca' | 'adas' | 'faq' | 'ldeltotal' | 'cdrsb',
   age: number | null,
   educationYears: number | null
 ): ScoreCriteria => {
@@ -203,7 +241,9 @@ const resolveScoreCriteria = (
     return {
       goodThreshold,
       warnThreshold,
-      referenceRange: formatReferenceRange(min, max)
+      referenceRange: formatReferenceRange(min, max),
+      referenceMin: min,
+      referenceMax: max
     };
   }
 
@@ -215,7 +255,9 @@ const resolveScoreCriteria = (
     return {
       goodThreshold,
       warnThreshold,
-      referenceRange: formatReferenceRange(min, max)
+      referenceRange: formatReferenceRange(min, max),
+      referenceMin: min,
+      referenceMax: max
     };
   }
 
@@ -227,7 +269,40 @@ const resolveScoreCriteria = (
     return {
       goodThreshold,
       warnThreshold,
-      referenceRange: formatReferenceRange(min, max)
+      referenceRange: formatReferenceRange(min, max),
+      referenceMin: min,
+      referenceMax: max
+    };
+  }
+
+  if (scoreId === 'ldeltotal') {
+    // ADNI Logical Memory II(Delayed Recall) 교육연수별 기준(최대 25점)
+    const min = resolvedEducation >= 16 ? 9 : resolvedEducation >= 8 ? 5 : 3;
+    const max = 25;
+    const goodThreshold = min;
+    const warnThreshold = clamp(min - 2, 0, goodThreshold);
+    return {
+      goodThreshold,
+      warnThreshold,
+      referenceRange: formatReferenceRange(min, max),
+      referenceMin: min,
+      referenceMax: max
+    };
+  }
+
+  if (scoreId === 'cdrsb') {
+    // CDR-SB 해석 가이드(0, 0.5-4, 4.5-9, 9.5-15.5, 16-18) 기반
+    // 참고범위(0-4)와 해석 기준을 동일하게 맞춤
+    const min = 0;
+    const max = 4;
+    const goodThreshold = 4;
+    const warnThreshold = 9;
+    return {
+      goodThreshold,
+      warnThreshold,
+      referenceRange: formatReferenceRange(min, max, 1),
+      referenceMin: min,
+      referenceMax: max
     };
   }
 
@@ -238,7 +313,9 @@ const resolveScoreCriteria = (
   return {
     goodThreshold,
     warnThreshold,
-    referenceRange: formatReferenceRange(min, max)
+    referenceRange: formatReferenceRange(min, max),
+    referenceMin: min,
+    referenceMax: max
   };
 };
 
@@ -253,7 +330,9 @@ const makeScoreCard = (config: ScoreCardConfig) => {
     goodThreshold,
     warnThreshold,
     referenceRange,
-    rangeLabel = '유사군(연령·교육) 참고 범위',
+    referenceMin,
+    referenceMax,
+    rangeLabel = '참고 범위',
     digits = 0
   } = config;
 
@@ -279,6 +358,19 @@ const makeScoreCard = (config: ScoreCardConfig) => {
   };
 
   const percent = hasValue ? Math.round((clamp(value, 0, max) / max) * 100) : 0;
+  const lowerReference = Math.min(referenceMin, referenceMax);
+  const upperReference = Math.max(referenceMin, referenceMax);
+  const inReferenceRange = hasValue ? value >= lowerReference && value <= upperReference : false;
+  const referenceStartPercent = max > 0 ? (clamp(Math.min(referenceMin, referenceMax), 0, max) / max) * 100 : 0;
+  const referenceEndPercent = max > 0 ? (clamp(Math.max(referenceMin, referenceMax), 0, max) / max) * 100 : 0;
+  const referenceWidthPercent = Math.max(referenceEndPercent - referenceStartPercent, 0);
+  const activeColor = !hasValue
+    ? '#b0b8c2'
+    : inReferenceRange
+    ? '#198f63'
+    : status === 'warn'
+    ? '#f59e0b'
+    : '#ef4444';
   const levelKey = !hasValue ? '측정 없음' : percent >= 80 ? '높음' : percent >= 40 ? '중간' : '낮음';
   const levelText = !hasValue
     ? '측정 없음'
@@ -295,6 +387,10 @@ const makeScoreCard = (config: ScoreCardConfig) => {
     status,
     interpretation: interpretationMap[status],
     referenceRange,
+    referenceStartPercent,
+    referenceWidthPercent,
+    inReferenceRange,
+    activeColor,
     rangeLabel,
     levelText
   };
@@ -595,13 +691,32 @@ const mocaValue = computed(() => {
 
 const adasValue = computed(() => adasSeries.value.at(-1) ?? null);
 const faqValue = computed(() => faqSeries.value.at(-1) ?? null);
+const ldelTotalIndicatorValue = computed(
+  () =>
+    asFiniteNumber(patientSummary.value?.ldelTotal) ??
+    asFiniteNumber(patientSummary.value?.ldeltotal) ??
+    asFiniteNumber(currentPatient.value?.ldelTotal) ??
+    asFiniteNumber(currentPatient.value?.ldeltotal)
+);
+const cdrSbIndicatorValue = computed(
+  () =>
+    asFiniteNumber(patientSummary.value?.cdrSB) ??
+    asFiniteNumber(patientSummary.value?.cdr_sb) ??
+    asFiniteNumber(currentPatient.value?.cdrSB) ??
+    asFiniteNumber(currentPatient.value?.cdr_sb)
+);
+const nxauditoIndicatorValue = computed(
+  () =>
+    asFiniteNumber(patientSummary.value?.nxaudito) ??
+    asFiniteNumber(currentPatient.value?.nxaudito)
+);
 
 const cognitiveScoreCards = computed(() => {
-  const rangeLabel = '유사군(연령·교육) 참고 범위';
+  const rangeLabel = '참고 범위';
   const mmseCriteria = resolveScoreCriteria('mmse', patientAge.value, patientEducationYears.value);
   const mocaCriteria = resolveScoreCriteria('moca', patientAge.value, patientEducationYears.value);
   const adasCriteria = resolveScoreCriteria('adas', patientAge.value, patientEducationYears.value);
-  const faqCriteria = resolveScoreCriteria('faq', patientAge.value, patientEducationYears.value);
+  const ldelCriteria = resolveScoreCriteria('ldeltotal', patientAge.value, patientEducationYears.value);
 
   return [
     makeScoreCard({
@@ -614,6 +729,8 @@ const cognitiveScoreCards = computed(() => {
       goodThreshold: mmseCriteria.goodThreshold,
       warnThreshold: mmseCriteria.warnThreshold,
       referenceRange: mmseCriteria.referenceRange,
+      referenceMin: mmseCriteria.referenceMin,
+      referenceMax: mmseCriteria.referenceMax,
       rangeLabel
     }),
     makeScoreCard({
@@ -626,6 +743,8 @@ const cognitiveScoreCards = computed(() => {
       goodThreshold: mocaCriteria.goodThreshold,
       warnThreshold: mocaCriteria.warnThreshold,
       referenceRange: mocaCriteria.referenceRange,
+      referenceMin: mocaCriteria.referenceMin,
+      referenceMax: mocaCriteria.referenceMax,
       rangeLabel
     }),
     makeScoreCard({
@@ -638,9 +757,33 @@ const cognitiveScoreCards = computed(() => {
       goodThreshold: adasCriteria.goodThreshold,
       warnThreshold: adasCriteria.warnThreshold,
       referenceRange: adasCriteria.referenceRange,
+      referenceMin: adasCriteria.referenceMin,
+      referenceMax: adasCriteria.referenceMax,
       rangeLabel,
       digits: 1
     }),
+    makeScoreCard({
+      id: 'ldeltotal',
+      label: 'LDELTOTAL',
+      value: ldelTotalIndicatorValue.value,
+      unit: '점',
+      max: 25,
+      direction: 'higher-better',
+      goodThreshold: ldelCriteria.goodThreshold,
+      warnThreshold: ldelCriteria.warnThreshold,
+      referenceRange: ldelCriteria.referenceRange,
+      referenceMin: ldelCriteria.referenceMin,
+      referenceMax: ldelCriteria.referenceMax,
+      rangeLabel
+    })
+  ];
+});
+
+const functionalClinicalScoreCards = computed(() => {
+  const rangeLabel = '참고 범위';
+  const faqCriteria = resolveScoreCriteria('faq', patientAge.value, patientEducationYears.value);
+  const cdrCriteria = resolveScoreCriteria('cdrsb', patientAge.value, patientEducationYears.value);
+  return [
     makeScoreCard({
       id: 'faq',
       label: 'FAQ',
@@ -651,9 +794,54 @@ const cognitiveScoreCards = computed(() => {
       goodThreshold: faqCriteria.goodThreshold,
       warnThreshold: faqCriteria.warnThreshold,
       referenceRange: faqCriteria.referenceRange,
+      referenceMin: faqCriteria.referenceMin,
+      referenceMax: faqCriteria.referenceMax,
       rangeLabel
+    }),
+    makeScoreCard({
+      id: 'cdr-sb',
+      label: 'CDR-SB',
+      value: cdrSbIndicatorValue.value,
+      unit: '점',
+      max: 18,
+      direction: 'higher-worse',
+      goodThreshold: cdrCriteria.goodThreshold,
+      warnThreshold: cdrCriteria.warnThreshold,
+      referenceRange: cdrCriteria.referenceRange,
+      referenceMin: cdrCriteria.referenceMin,
+      referenceMax: cdrCriteria.referenceMax,
+      rangeLabel,
+      digits: 1
     })
   ];
+});
+
+const behavioralClinicalIndicators = computed(() => {
+  const value = nxauditoIndicatorValue.value;
+  const statusLabel = value === 1 ? '정상' : value === 2 ? '이상' : '-';
+  return [
+    {
+      id: 'nxaudito',
+      label: 'NXAUDITO',
+      displayValue: statusLabel,
+      unit: '',
+      status: value === 2 ? 'abnormal' : 'normal'
+    }
+  ];
+});
+
+const apoe4Biomarker = computed(() => {
+  const value =
+    asFiniteNumber(patientSummary.value?.apoe4) ??
+    asFiniteNumber(currentPatient.value?.apoe4) ??
+    asFiniteNumber(props.data?.apoe4);
+  return {
+    label: 'APOE4',
+    value,
+    unit: '개',
+    displayValue: formatScoreValue(value, 0),
+    hasValue: value !== null && value !== undefined
+  };
 });
 
 const biomarkerResults = computed<BiomarkerResults | null>(() =>
@@ -674,15 +862,9 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
 
   const platformKey = String(props.data?.biomarkerMeta?.platform || '').toUpperCase();
   const isElecsys = platformKey.includes('ELECSYS');
-  const ab42Ab40Range = isElecsys
-    ? '참고 범위(ADNI Elecsys): ≥ 0.057'
-    : '참고 범위: 플랫폼 기준 확인 필요';
-  const ptauAb42Range = isElecsys
-    ? '참고 범위(Elecsys FDA): ≤ 0.023'
-    : '참고 범위: 플랫폼 기준 확인 필요';
-  const ttauAb42Range = isElecsys
-    ? '참고 범위(Elecsys FDA): ≤ 0.28'
-    : '참고 범위: 플랫폼 기준 확인 필요';
+  const ab42Ab40Range = isElecsys ? '참고 범위: ≥ 0.057' : '참고 범위: 플랫폼 기준 확인 필요';
+  const ptauAb42Range = isElecsys ? '참고 범위: ≤ 0.023' : '참고 범위: 플랫폼 기준 확인 필요';
+  const ttauAb42Range = isElecsys ? '참고 범위: ≤ 0.28' : '참고 범위: 플랫폼 기준 확인 필요';
 
   return [
     {
@@ -690,7 +872,7 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       label: 'ABETA42',
       value: abeta42,
       unit: 'pg/mL',
-      range: '원값 참고 (키트별 상이)',
+      range: '',
       isRatio: false
     },
     {
@@ -698,7 +880,7 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       label: 'ABETA40',
       value: abeta40,
       unit: 'pg/mL',
-      range: '원값 참고 (키트별 상이)',
+      range: '',
       isRatio: false
     },
     {
@@ -706,7 +888,7 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       label: 'PTAU',
       value: ptau,
       unit: 'pg/mL',
-      range: '원값 참고 (키트별 상이)',
+      range: '',
       isRatio: false
     },
     {
@@ -714,7 +896,7 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       label: 'TAU',
       value: tau,
       unit: 'pg/mL',
-      range: '원값 참고 (키트별 상이)',
+      range: '',
       isRatio: false
     },
     {
@@ -723,7 +905,10 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       value: ratioAb42Ab40,
       unit: '',
       range: ab42Ab40Range,
-      isRatio: true
+      isRatio: true,
+      referenceType: isElecsys ? 'gte' : 'unknown',
+      referenceMin: isElecsys ? 0.057 : null,
+      referenceMax: null
     },
     {
       id: 'ratio-ptau-ab42',
@@ -731,7 +916,10 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       value: ratioPtauAb42,
       unit: '',
       range: ptauAb42Range,
-      isRatio: true
+      isRatio: true,
+      referenceType: isElecsys ? 'lte' : 'unknown',
+      referenceMin: null,
+      referenceMax: isElecsys ? 0.023 : null
     },
     {
       id: 'ratio-ttau-ab42',
@@ -739,16 +927,89 @@ const biomarkerItems = computed<BiomarkerItem[]>(() => {
       value: ratioTtauAb42,
       unit: '',
       range: ttauAb42Range,
-      isRatio: true
+      isRatio: true,
+      referenceType: isElecsys ? 'lte' : 'unknown',
+      referenceMin: null,
+      referenceMax: isElecsys ? 0.28 : null
     }
   ];
 });
 
 const biomarkerRatioItems = computed(() => biomarkerItems.value.filter((item) => item.isRatio));
 const biomarkerRawItems = computed(() => biomarkerItems.value.filter((item) => !item.isRatio));
+const biomarkerRatioDisplayItems = computed<BiomarkerRatioDisplayItem[]>(() =>
+  biomarkerRatioItems.value.map((item) => {
+    const hasValue = item.value !== null && item.value !== undefined && !Number.isNaN(item.value);
+    const referenceType = item.referenceType ?? 'unknown';
+    const referenceMin = item.referenceMin ?? null;
+    const referenceMax = item.referenceMax ?? null;
+    const hasReference = referenceType !== 'unknown' && (referenceMin !== null || referenceMax !== null);
+
+    const scaleCandidates = [0.1];
+    if (referenceMin !== null) scaleCandidates.push(referenceMin * 1.8);
+    if (referenceMax !== null) scaleCandidates.push(referenceMax * 1.8);
+    if (hasValue) scaleCandidates.push((item.value as number) * 1.2);
+    const scaleMax = Math.max(...scaleCandidates.filter((value) => Number.isFinite(value) && value > 0));
+
+    const toPercent = (value: number) => (scaleMax > 0 ? (clamp(value, 0, scaleMax) / scaleMax) * 100 : 0);
+
+    let referenceStartPercent = 0;
+    let referenceEndPercent = 0;
+    if (referenceType === 'gte' && referenceMin !== null) {
+      referenceStartPercent = toPercent(referenceMin);
+      referenceEndPercent = 100;
+    } else if (referenceType === 'lte' && referenceMax !== null) {
+      referenceStartPercent = 0;
+      referenceEndPercent = toPercent(referenceMax);
+    } else if (referenceType === 'between' && referenceMin !== null && referenceMax !== null) {
+      referenceStartPercent = toPercent(Math.min(referenceMin, referenceMax));
+      referenceEndPercent = toPercent(Math.max(referenceMin, referenceMax));
+    }
+    const referenceWidthPercent = Math.max(referenceEndPercent - referenceStartPercent, 0);
+
+    let inReference = false;
+    if (hasValue) {
+      if (referenceType === 'gte' && referenceMin !== null) inReference = (item.value as number) >= referenceMin;
+      else if (referenceType === 'lte' && referenceMax !== null) inReference = (item.value as number) <= referenceMax;
+      else if (referenceType === 'between' && referenceMin !== null && referenceMax !== null) {
+        inReference = (item.value as number) >= Math.min(referenceMin, referenceMax) && (item.value as number) <= Math.max(referenceMin, referenceMax);
+      } else {
+        inReference = true;
+      }
+    }
+
+    let markerColor = '#b0b8c2';
+    if (hasValue) {
+      if (!hasReference || inReference) {
+        markerColor = '#198f63';
+      } else {
+        let severeOutlier = false;
+        if (referenceType === 'gte' && referenceMin !== null) severeOutlier = (item.value as number) < referenceMin * 0.8;
+        if (referenceType === 'lte' && referenceMax !== null) severeOutlier = (item.value as number) > referenceMax * 1.2;
+        if (referenceType === 'between' && referenceMin !== null && referenceMax !== null) {
+          const low = Math.min(referenceMin, referenceMax);
+          const high = Math.max(referenceMin, referenceMax);
+          severeOutlier = (item.value as number) < low * 0.8 || (item.value as number) > high * 1.2;
+        }
+        markerColor = severeOutlier ? '#ef4444' : '#f59e0b';
+      }
+    }
+
+    return {
+      ...item,
+      hasReference,
+      referenceStartPercent,
+      referenceWidthPercent,
+      markerPercent: hasValue ? toPercent(item.value as number) : 0,
+      markerColor,
+      scaleMinLabel: '0',
+      scaleMaxLabel: formatRatioScaleValue(scaleMax)
+    };
+  })
+);
 
 const hasBiomarkerData = computed(() =>
-  biomarkerItems.value.some((item) => item.value !== null && item.value !== undefined)
+  biomarkerItems.value.some((item) => item.value !== null && item.value !== undefined) || apoe4Biomarker.value.hasValue
 );
 
 const findFeature = (keywords: string[]) =>
@@ -865,8 +1126,37 @@ const voiceSummary = computed(() => {
   };
 });
 
-const mriScanDate = computed(() => mriAnalysis.value?.scanDate || dataAvailability.value.lastUpdateDate || '-');
+const mriScanDate = computed(() => formatDateOnly(mriAnalysis.value?.scanDate || dataAvailability.value.lastUpdateDate));
 const mriScanCount = computed(() => (dataAvailability.value.mriCount ? `${dataAvailability.value.mriCount}건` : '-'));
+const mriClassificationRaw = computed(() => String(mriAnalysis.value?.classification || '').trim());
+const mriClassificationToken = computed(() =>
+  mriClassificationRaw.value.toUpperCase().replace(/[\s_-]/g, '')
+);
+const mriSubtypeDisplay = computed(() => {
+  const token = mriClassificationToken.value;
+  if (!token) return '-';
+  if (token === 'CN') return 'CN';
+  if (token === 'SMCI' || token === 'EMCI') return 'sMCI';
+  if (token === 'PMCI' || token === 'LMCI') return 'pMCI';
+  if (token === 'AD') return 'AD';
+  if (token === 'MCI') return 'MCI';
+  return mriClassificationRaw.value || '-';
+});
+const mriSubtypeBadgeKey = computed(() => {
+  const label = mriSubtypeDisplay.value;
+  if (label === 'CN') return 'cn';
+  if (label === 'sMCI') return 'smci';
+  if (label === 'pMCI') return 'pmci';
+  if (label === 'AD') return 'ad';
+  if (label === 'MCI') return 'mci';
+  return 'unknown';
+});
+const mriSubtypeConfidenceText = computed(() => {
+  const confidence = asFiniteNumber(mriAnalysis.value?.confidence);
+  if (confidence === null || mriSubtypeDisplay.value === '-') return '';
+  const percent = confidence <= 1 ? confidence * 100 : confidence;
+  return `신뢰도 ${Math.round(clamp(percent, 0, 100))}%`;
+});
 
 const handleDiagnosisSubmit = (data: any) => {
   console.log('진단 데이터 제출:', data);
@@ -948,12 +1238,12 @@ watch(
           />
 
           <template v-else>
-            <div class="section-header">
-              <div>
-                <h4>최근 측정 결과</h4>
+            <div class="section-main-header">
+              <h4>최근 측정 결과</h4>
+              <div class="section-subheader section-subheader--stack">
+                <span class="section-chip">현재 인지 상태</span>
                 <p>연령과 교육연수를 반영한 참고 기준으로 현재 인지 상태를 확인합니다.</p>
               </div>
-              <span class="section-chip">현재 인지 상태</span>
             </div>
 
             <div class="score-grid">
@@ -973,8 +1263,14 @@ watch(
                 <p class="score-sub">최근 측정 결과</p>
                 <div class="score-bar" aria-hidden="true">
                   <div class="score-bar__track"></div>
-                  <div class="score-bar__fill" :style="{ width: `${card.percent}%` }"></div>
-                  <div class="score-bar__marker" :style="{ left: `${card.percent}%` }"></div>
+                  <div
+                    class="score-bar__reference"
+                    :style="{ left: `${card.referenceStartPercent}%`, width: `${card.referenceWidthPercent}%` }"
+                  ></div>
+                  <div
+                    class="score-bar__marker"
+                    :style="{ '--marker-percent': `${card.percent}%`, '--marker-color': card.activeColor }"
+                  ></div>
                 </div>
                 <div class="score-scale">
                   <span>0</span>
@@ -987,23 +1283,113 @@ watch(
               </article>
             </div>
 
-            <div class="card biomarker-card">
-              <div class="biomarker-header">
-                <div>
-                  <h4>바이오마커 결과</h4>
-                  <p>혈액 기반 지표를 정적 정보로 요약합니다.</p>
+            <div class="clinical-group-section">
+              <div class="section-subheader">
+                <span class="section-chip section-chip--sub">기능/임상 단계</span>
+              </div>
+
+              <div class="score-grid">
+                <article
+                  v-for="card in functionalClinicalScoreCards"
+                  :key="card.id"
+                  class="score-card"
+                  :class="`score-${card.status}`"
+                >
+                  <div class="score-header">
+                    <span class="score-label">{{ card.label }}</span>
+                    <div class="score-value">
+                      <strong>{{ card.displayValue }}</strong>
+                      <span v-if="card.displayValue !== '-'" class="score-unit">{{ card.unit }}</span>
+                    </div>
+                  </div>
+                  <p class="score-sub">최근 측정 결과</p>
+                  <div class="score-bar" aria-hidden="true">
+                    <div class="score-bar__track"></div>
+                    <div
+                      class="score-bar__reference"
+                      :style="{ left: `${card.referenceStartPercent}%`, width: `${card.referenceWidthPercent}%` }"
+                    ></div>
+                    <div
+                      class="score-bar__marker"
+                      :style="{ '--marker-percent': `${card.percent}%`, '--marker-color': card.activeColor }"
+                    ></div>
+                  </div>
+                  <div class="score-scale">
+                    <span>0</span>
+                    <span>{{ card.max }}</span>
+                  </div>
+                  <div class="score-meta">
+                    <span class="score-range">{{ card.rangeLabel }}: {{ card.referenceRange }}</span>
+                    <span class="score-interpretation">점수 기반 참고 해석: {{ card.interpretation }}</span>
+                  </div>
+                </article>
+              </div>
+
+            </div>
+
+            <div class="clinical-group-section">
+              <div class="section-subheader">
+                <span class="section-chip section-chip--sub">추가 임상(행동·정신증상)</span>
+              </div>
+              <div class="clinical-extra-grid">
+                <div
+                  v-for="item in behavioralClinicalIndicators"
+                  :key="item.id"
+                  class="clinical-extra-item"
+                  :class="{ 'clinical-extra-item--warn': item.status === 'abnormal' }"
+                >
+                  <span class="clinical-extra-label">{{ item.label }}</span>
+                  <strong class="clinical-extra-value">
+                    {{ item.displayValue }}
+                    <span v-if="item.displayValue !== '-' && item.unit" class="clinical-extra-unit">{{ item.unit }}</span>
+                  </strong>
                 </div>
-                <span class="biomarker-chip">정적 정보</span>
+              </div>
+            </div>
+
+            <div class="biomarker-section">
+              <div class="section-subheader section-subheader--stack section-subheader--biomarker">
+                <span class="section-chip section-chip--sub">바이오마커 결과</span>
+                <p>체액/유전 바이오마커 지표를 정적 정보로 요약합니다.</p>
               </div>
 
               <div v-if="hasBiomarkerData" class="biomarker-content">
+                <div class="biomarker-grid biomarker-grid--genetic">
+                  <div class="biomarker-item biomarker-item--genetic">
+                    <span class="biomarker-label">{{ apoe4Biomarker.label }}</span>
+                    <strong class="biomarker-value">
+                      {{ apoe4Biomarker.displayValue }}
+                      <span v-if="apoe4Biomarker.displayValue !== '-'" class="biomarker-unit">{{ apoe4Biomarker.unit }}</span>
+                    </strong>
+                  </div>
+                </div>
+
                 <div class="biomarker-grid biomarker-grid--ratio">
-                  <div v-for="item in biomarkerRatioItems" :key="item.id" class="biomarker-item">
+                  <div v-for="item in biomarkerRatioDisplayItems" :key="item.id" class="biomarker-item">
                     <span class="biomarker-label">{{ item.label }}</span>
                     <strong class="biomarker-value">
                       {{ formatBiomarkerValue(item.value, item.unit ? 1 : 2) }}
                       <span v-if="item.unit" class="biomarker-unit">{{ item.unit }}</span>
                     </strong>
+                    <div class="biomarker-ratio-bar" aria-hidden="true">
+                      <div class="biomarker-ratio-bar__track"></div>
+                      <div
+                        v-if="item.hasReference"
+                        class="biomarker-ratio-bar__reference"
+                        :style="{ left: `${item.referenceStartPercent}%`, width: `${item.referenceWidthPercent}%` }"
+                      ></div>
+                      <div
+                        class="biomarker-ratio-bar__marker"
+                        :style="{
+                          '--ratio-marker-percent': `${item.markerPercent}%`,
+                          '--ratio-marker-color': item.markerColor
+                        }"
+                      ></div>
+                    </div>
+                    <div class="biomarker-ratio-scale">
+                      <span>{{ item.scaleMinLabel }}</span>
+                      <span>{{ item.scaleMaxLabel }}</span>
+                    </div>
                     <span class="biomarker-range">{{ item.range }}</span>
                   </div>
                 </div>
@@ -1017,7 +1403,7 @@ watch(
                         {{ formatBiomarkerValue(item.value, item.unit ? 1 : 2) }}
                         <span v-if="item.unit" class="biomarker-unit">{{ item.unit }}</span>
                       </strong>
-                      <span class="biomarker-range">{{ item.range }}</span>
+                      <span v-if="item.range" class="biomarker-range">{{ item.range }}</span>
                     </div>
                   </div>
                 </details>
@@ -1129,6 +1515,13 @@ watch(
               <div>
                 <h4>공간적 해석 요약</h4>
                 <p>관심 영역 하이라이트와 기여도 분석을 중심으로 구조적 원인을 해석합니다.</p>
+                <div class="mri-subtype-row">
+                  <span class="mri-subtype-label">MRI 기반 인지 분류(참고)</span>
+                  <span class="mri-subtype-badge" :class="`mri-subtype-${mriSubtypeBadgeKey}`">
+                    {{ mriSubtypeDisplay }}
+                  </span>
+                </div>
+                <p v-if="mriSubtypeConfidenceText" class="mri-subtype-confidence">{{ mriSubtypeConfidenceText }}</p>
               </div>
               <div class="mri-context-meta">
                 <div class="mri-meta-item">
@@ -1275,21 +1668,31 @@ watch(
   gap: 24px;
 }
 
-.section-header {
+.section-main-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.section-header h4 {
-  margin: 0 0 6px;
+.section-main-header h4 {
+  margin: 0;
   font-size: 20px;
   font-weight: 800;
   color: #2e2e2e;
 }
 
-.section-header p {
+.section-subheader {
+  margin-top: 0;
+}
+
+.section-subheader--stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.section-subheader--stack p {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
@@ -1393,50 +1796,46 @@ watch(
   position: relative;
   height: 10px;
   border-radius: 999px;
-  background: #eef1f3;
+  background: transparent;
   overflow: hidden;
 }
 
 .score-bar__track {
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, rgba(76, 183, 183, 0.15), rgba(255, 183, 77, 0.15), rgba(255, 138, 128, 0.12));
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(196, 205, 216, 0.7);
+  border-radius: 999px;
+  z-index: 1;
 }
 
-.score-bar__fill {
+.score-bar__reference {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 0;
-  background: #4cb7b7;
-  opacity: 0.6;
-}
-
-.score-card.score-warn .score-bar__fill {
-  background: #ffb74d;
-}
-
-.score-card.score-bad .score-bar__fill {
-  background: #ff8a80;
+  border-radius: 999px;
+  background: rgba(118, 216, 168, 0.58);
+  z-index: 2;
 }
 
 .score-bar__marker {
+  --marker-percent: 0%;
+  --marker-color: #198f63;
+  --marker-width: 14px;
   position: absolute;
-  top: -4px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  transform: translateX(-50%);
-  background: #ffffff;
-  border: 2px solid #4cb7b7;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-}
-
-.score-card.score-warn .score-bar__marker {
-  border-color: #ffb74d;
-}
-
-.score-card.score-bad .score-bar__marker {
-  border-color: #ff8a80;
+  left: clamp(calc(var(--marker-width) / 2), var(--marker-percent), calc(100% - (var(--marker-width) / 2)));
+  top: 50%;
+  width: var(--marker-width);
+  height: 8px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: var(--marker-color);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  z-index: 4;
 }
 
 .score-scale {
@@ -1458,33 +1857,56 @@ watch(
   color: #777;
 }
 
-.biomarker-card {
-  gap: 18px;
-}
-
-.biomarker-header {
+.clinical-group-section {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.biomarker-header p {
-  margin: 6px 0 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: #777;
+.clinical-extra-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
 }
 
-.biomarker-chip {
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(76, 183, 183, 0.12);
-  color: #2e7d7d;
+.clinical-extra-item {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: inset 3px 3px 8px rgba(209, 217, 230, 0.45), inset -3px -3px 8px #ffffff;
+  border: 1px solid rgba(76, 183, 183, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.clinical-extra-item--warn {
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+.clinical-extra-label {
   font-size: 12px;
   font-weight: 800;
-  white-space: nowrap;
-  flex-shrink: 0;
+  color: #8d9298;
+}
+
+.clinical-extra-value {
+  font-size: 22px;
+  font-weight: 900;
+  color: #2e2e2e;
+}
+
+.clinical-extra-unit {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #999;
+}
+
+.biomarker-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .biomarker-content {
@@ -1497,6 +1919,14 @@ watch(
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
+}
+
+.biomarker-grid--genetic {
+  grid-template-columns: minmax(180px, 1fr);
+}
+
+.biomarker-item--genetic {
+  border: 1px solid rgba(76, 183, 183, 0.24);
 }
 
 .biomarker-raw-details {
@@ -1574,6 +2004,61 @@ watch(
   font-size: 12px;
   font-weight: 700;
   color: #777;
+}
+
+.biomarker-ratio-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.biomarker-ratio-bar__track {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(196, 205, 216, 0.72);
+  border-radius: 999px;
+  z-index: 1;
+}
+
+.biomarker-ratio-bar__reference {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 999px;
+  background: rgba(118, 216, 168, 0.56);
+  z-index: 2;
+}
+
+.biomarker-ratio-bar__marker {
+  --ratio-marker-percent: 0%;
+  --ratio-marker-color: #198f63;
+  --ratio-marker-width: 12px;
+  position: absolute;
+  left: clamp(calc(var(--ratio-marker-width) / 2), var(--ratio-marker-percent), calc(100% - (var(--ratio-marker-width) / 2)));
+  top: 50%;
+  width: var(--ratio-marker-width);
+  height: 8px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: var(--ratio-marker-color);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  z-index: 4;
+}
+
+.biomarker-ratio-scale {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #a1a8b1;
+  margin-top: 2px;
 }
 
 .biomarker-empty {
@@ -1749,6 +2234,68 @@ watch(
   color: #777;
 }
 
+.mri-subtype-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mri-subtype-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #7a838d;
+}
+
+.mri-subtype-badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid rgba(178, 186, 196, 0.55);
+  background: #eef1f4;
+  color: #5f6670;
+  line-height: 1.2;
+}
+
+.mri-subtype-confidence {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: #8a9199;
+}
+
+.mri-subtype-cn {
+  border-color: rgba(76, 183, 183, 0.36);
+  background: rgba(76, 183, 183, 0.14);
+  color: #237c7c;
+}
+
+.mri-subtype-smci {
+  border-color: rgba(100, 181, 246, 0.42);
+  background: rgba(100, 181, 246, 0.14);
+  color: #2a6ea0;
+}
+
+.mri-subtype-pmci {
+  border-color: rgba(245, 158, 11, 0.48);
+  background: rgba(245, 158, 11, 0.14);
+  color: #9a6210;
+}
+
+.mri-subtype-ad {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.14);
+  color: #a43131;
+}
+
+.mri-subtype-mci {
+  border-color: rgba(255, 183, 77, 0.48);
+  background: rgba(255, 183, 77, 0.14);
+  color: #9a6616;
+}
+
 .mri-context-meta {
   display: flex;
   gap: 16px;
@@ -1870,8 +2417,12 @@ watch(
     align-items: flex-start;
   }
 
-  .section-header {
-    flex-direction: column;
+  .section-main-header {
+    gap: 8px;
+  }
+
+  .clinical-extra-grid {
+    grid-template-columns: 1fr;
   }
 
   .voice-summary-card {

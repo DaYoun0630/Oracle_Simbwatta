@@ -226,6 +226,28 @@ LIMIT 20;
 
 이 스크립트는 전체 DB->Celery->추론 파이프라인을 모두 수행하는 진입점은 아닙니다.
 
+### 음성 파일 복사 (m_ch -> final)
+
+MinIO의 `minio-data/` 내부 폴더를 OS 파일 탐색기로 보면 `xl.meta` 같은 내부 메타데이터 구조가 보일 수 있습니다.
+이것은 정상 동작이며, 실제 `.wav`/`.txt` 파일 복사는 반드시 MinIO API(S3)로 해야 합니다.
+
+1. m_ch MinIO(`9003`)에서 final MinIO(`9000`)로 실제 객체 복사:
+
+```bash
+<PROJECT_ROOT>/.venv/bin/python <PROJECT_ROOT>/scripts/copy_voice_pair_from_mch_minio.py \
+  --audio-key "patients/patient_001/<session_id>/audio/<file.wav>" \
+  --transcript-key "patients/patient_001/<session_id>/transcript/<file.txt>"
+```
+
+2. final API에 등록 + Celery 큐 발행:
+
+```bash
+curl -X POST "http://localhost:8000/api/patient/recordings/from-minio?patient_id=100&audio_key=voice-recordings/patients/patient_001/<session_id>/audio/<file.wav>&transcript_key=voice-transcript/patients/patient_001/<session_id>/transcript/<file.txt>"
+```
+
+현재 `from-minio` 엔드포인트는 전달한 `audio_key`/`transcript_key` 원본 객체를 그대로 사용해 DB 레코드를 생성합니다.
+(파일명/키를 강제로 UUID로 바꾸지 않음)
+
 ### 향후 계획 (요약)
 
 - CAM/XAI 결과 산출 및 저장 경로 분리(`mri-xai` 버킷)

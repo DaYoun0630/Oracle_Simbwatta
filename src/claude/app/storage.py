@@ -24,6 +24,7 @@ class StorageService:
         """Create default buckets if they don't exist"""
         buckets = [
             "voice-recordings",
+            "voice-transcript",
             "mri-scans",
             "processed",
             "exports",

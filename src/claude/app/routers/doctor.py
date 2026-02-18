@@ -78,6 +78,13 @@ def _safe_mtime(path: Path) -> float:
         return 0.0
 
 
+def _preprocessed_rank(path: Path):
+    """Prefer non-2mm preprocessed files first, then newer files."""
+    name = path.name.lower()
+    is_2mm = ("_2mm_" in name) or name.endswith("_2mm_preprocessed.nii.gz")
+    return (1 if is_2mm else 0, -_safe_mtime(path))
+
+
 def _find_preprocessed_nifti(subject_id: str) -> Optional[Path]:
     normalized_id = (subject_id or "").strip()
     if not normalized_id:
@@ -88,13 +95,18 @@ def _find_preprocessed_nifti(subject_id: str) -> Optional[Path]:
         if exact.is_file():
             return exact
 
-        matches = sorted(
-            processed_dir.glob(f"*{normalized_id}*.nii.gz"),
-            key=_safe_mtime,
-            reverse=True,
-        )
+        matches = sorted(processed_dir.glob(f"*{normalized_id}*.nii.gz"), key=_preprocessed_rank)
         if matches:
             return matches[0]
+
+        # Some pipelines archive processed outputs under subdirectories
+        # (e.g. processed/archive). Search recursively as fallback.
+        recursive_matches = sorted(
+            (path for path in processed_dir.rglob("*.nii.gz") if normalized_id in path.name),
+            key=_preprocessed_rank,
+        )
+        if recursive_matches:
+            return recursive_matches[0]
 
     return None
 
@@ -508,11 +520,14 @@ def _build_patient_summary(row: dict) -> dict:
         "age": _to_age(row.get("date_of_birth")),
         "gender": _to_gender_label(row.get("gender")),
         "pteducat": row.get("pteducat"),
+        "apoe4": row.get("apoe4"),
         "lastVisit": row.get("lastVisit"),
         "examDate": row.get("examDate"),
         "latestViscode2": row.get("latestViscode2"),
         "riskLevel": row.get("risk_level"),
         "cdrSB": row.get("cdrSB"),
+        "nxaudito": row.get("nxaudito"),
+        "ldelTotal": row.get("ldelTotal"),
         "mmse": row.get("mmse"),
         "moca": row.get("moca"),
         "participationRate": row.get("participation_rate"),
@@ -570,7 +585,9 @@ async def get_patient(patient_id: str):
                 lv.viscode2 AS "latestViscode2",
                 lc.mmse,
                 lc.moca,
-                lc.cdr_sb AS "cdrSB"
+                lc.cdr_sb AS "cdrSB",
+                lc.nxaudito AS "nxaudito",
+                ln.avdeltot AS "ldelTotal"
             FROM patients p
             JOIN users u ON p.user_id = u.user_id
             LEFT JOIN doctor d ON p.doctor_id = d.user_id
@@ -582,12 +599,19 @@ async def get_patient(patient_id: str):
                 LIMIT 1
             ) lv ON TRUE
             LEFT JOIN LATERAL (
-                SELECT ca.mmse, ca.moca, ca.cdr_sb
+                SELECT ca.mmse, ca.moca, ca.cdr_sb, ca.nxaudito
                 FROM clinical_assessments ca
                 WHERE ca.patient_id = p.user_id
                 ORDER BY ca.exam_date DESC NULLS LAST, ca.created_at DESC
                 LIMIT 1
             ) lc ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT nt.avdeltot
+                FROM neuropsych_tests nt
+                WHERE nt.patient_id = p.user_id
+                ORDER BY nt.exam_date DESC NULLS LAST, nt.created_at DESC
+                LIMIT 1
+            ) ln ON TRUE
             WHERE p.doctor_id = $1
             ORDER BY p.created_at DESC
             """,
@@ -601,6 +625,47 @@ async def get_patient(patient_id: str):
         (p for p in patients if p["id"] == patient_id or str(p.get("rid")) == patient_id),
         patients[0] if patients else _build_patient_summary(patient_dict),
     )
+
+    latest_clinical_extra = await db.fetchrow(
+        """
+        SELECT cdr_sb AS "cdrSB", nxaudito
+        FROM clinical_assessments
+        WHERE patient_id = $1
+        ORDER BY exam_date DESC NULLS LAST, created_at DESC
+        LIMIT 1
+        """,
+        user_id,
+    )
+
+    latest_neuro_extra = await db.fetchrow(
+        """
+        SELECT avdeltot AS "ldelTotal"
+        FROM neuropsych_tests
+        WHERE patient_id = $1
+        ORDER BY exam_date DESC NULLS LAST, created_at DESC
+        LIMIT 1
+        """,
+        user_id,
+    )
+
+    # Ensure current patient always includes key clinical extras even when doctor linkage is absent.
+    if current_patient.get("apoe4") is None:
+        current_patient["apoe4"] = patient_dict.get("apoe4")
+    if latest_clinical_extra:
+        latest_clinical_extra_dict = dict(latest_clinical_extra)
+        if current_patient.get("cdrSB") is None:
+            current_patient["cdrSB"] = latest_clinical_extra_dict.get("cdrSB")
+        if current_patient.get("nxaudito") is None:
+            current_patient["nxaudito"] = latest_clinical_extra_dict.get("nxaudito")
+    else:
+        current_patient.setdefault("nxaudito", None)
+
+    if latest_neuro_extra:
+        latest_neuro_extra_dict = dict(latest_neuro_extra)
+        if current_patient.get("ldelTotal") is None:
+            current_patient["ldelTotal"] = latest_neuro_extra_dict.get("ldelTotal")
+    else:
+        current_patient.setdefault("ldelTotal", None)
 
     # 2. Clinical Trends (MMSE, MoCA, ADAS, FAQ)
     clinical_rows = await db.fetch(

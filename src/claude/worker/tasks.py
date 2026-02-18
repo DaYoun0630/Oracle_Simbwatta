@@ -2,7 +2,7 @@
 Celery tasks for ML processing pipelines.
 
 This module contains async tasks for:
-- Voice recording processing (Whisper + wav2vec2 + BERT + Kiwi → RandomForest)
+- Voice recording processing (transcript-first lightweight features + RandomForest)
 - MRI scan processing (3D CNN + ResNet)
 """
 
@@ -86,6 +86,7 @@ def _resolve_bucket_and_key(file_path: str, default_bucket: str = "voice-recordi
     bucket, key = path.split("/", 1)
     known = {
         "voice-recordings",
+        "voice-transcript",
         "processed",
         "mri-scans",
         "exports",
@@ -97,6 +98,54 @@ def _resolve_bucket_and_key(file_path: str, default_bucket: str = "voice-recordi
 
     # path doesn't include bucket prefix, treat it as an object key
     return default_bucket, path
+
+
+def _candidate_transcript_keys(recording_id: str, patient_id: Optional[str], audio_key: str) -> list[str]:
+    """
+    Return likely transcript object keys in priority order.
+
+    New final convention:
+    - {patient_id}/{recording_id}.txt
+    Also support audio-relative sidecar:
+    - {audio_key_without_ext}.txt
+    """
+    keys = []
+    if patient_id and recording_id:
+        keys.append(f"{patient_id}/{recording_id}.txt")
+
+    if audio_key:
+        audio_key = audio_key.strip("/")
+        if "." in audio_key:
+            keys.append(f"{audio_key.rsplit('.', 1)[0]}.txt")
+
+    # De-duplicate while preserving order.
+    deduped = []
+    for key in keys:
+        if key and key not in deduped:
+            deduped.append(key)
+    return deduped
+
+
+def _load_transcript_from_minio(recording_id: str, patient_id: Optional[str], audio_key: str) -> Optional[str]:
+    """Try loading transcript text from MinIO transcript bucket."""
+    transcript_bucket = (os.getenv("MINIO_TRANSCRIPT_BUCKET", "voice-transcript") or "").strip() or "voice-transcript"
+    minio_client = _get_minio_client()
+
+    for key in _candidate_transcript_keys(recording_id, patient_id, audio_key):
+        response = None
+        try:
+            response = minio_client.get_object(transcript_bucket, key)
+            text = response.read().decode("utf-8", errors="replace").strip()
+            if text:
+                logger.info(f"Loaded transcript from MinIO: {transcript_bucket}/{key}")
+                return text
+        except Exception:
+            continue
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+    return None
 
 
 def _get_preprocessed_dir() -> str:
@@ -225,12 +274,10 @@ def process_voice_recording(
     Pipeline:
     1. Download audio from MinIO
     2. Use transcript from chatbot/OpenAI STT (required)
-    3. Extract audio embeddings (wav2vec2)
-    4. Extract text embeddings (klue/bert-base)
-    5. Extract linguistic features (Kiwi)
-    6. Concatenate → 1561 features
-    7. Impute + RandomForest prediction
-    8. Store results in database
+    3. Extract lightweight transcript/session features (Kiwi + heuristics)
+    4. Build bundle-model input (numeric + text SVD + audio PCA zeros)
+    5. RandomForest prediction + SHAP
+    6. Store results in database
 
     Args:
         recording_id: UUID of the recording
@@ -268,6 +315,12 @@ def process_voice_recording(
 
             transcript = (transcript or "").strip()
             if not transcript:
+                try:
+                    _, audio_key_for_transcript = _resolve_bucket_and_key(file_path or db_file_path or "")
+                except Exception:
+                    audio_key_for_transcript = ""
+                transcript = (_load_transcript_from_minio(recording_id, patient_id, audio_key_for_transcript) or "").strip()
+            if not transcript:
                 raise RuntimeError("Transcript is required for post-STT voice pipeline")
 
             # Move status to processing as soon as we start.
@@ -299,18 +352,22 @@ def process_voice_recording(
 
         # Step 2-6: Feature extraction pipeline
         from .feature_extractor import extract_features_after_stt
-        transcript, features, linguistic_detail = extract_features_after_stt(
+        transcript, feature_row, linguistic_detail = extract_features_after_stt(
             temp_path,
             transcript=transcript,
         )
 
-        logger.info(f"Features extracted: {features.shape[0]} dims, transcript: {len(transcript)} chars")
+        logger.info(
+            "Lightweight features extracted: %s keys, transcript: %s chars",
+            len(feature_row),
+            len(transcript),
+        )
 
-        # Step 7: Model inference
+        # Step 4-5: Model inference
         from .model_inference import predict
-        result = predict(features)
+        result = predict(feature_row, audio_path=temp_path)
 
-        # Step 8: Store results in database
+        # Step 6: Store results in database
         conn = _get_db_connection()
         try:
             cur = conn.cursor()
@@ -319,22 +376,50 @@ def process_voice_recording(
             confidence_score = max(result["mci_probability"], 1.0 - result["mci_probability"])
 
             # Build features JSONB
-            features_json = json.dumps({
-                "audio_embedding_dim": 768,
-                "text_embedding_dim": 768,
-                "linguistic_features_dim": 25,
-                "total_features": int(features.shape[0]),
-                "linguistic_detail": linguistic_detail,
-            })
+            features_json = json.dumps(
+                {
+                    "pipeline": "post_stt_lightweight_bundle",
+                    "numeric_feature_count": int(result.get("numeric_feature_count", 0)),
+                    "text_feature_count": int(result.get("text_feature_count", 0)),
+                    "audio_feature_count": int(result.get("audio_feature_count", 0)),
+                    "model_feature_count": int(result.get("model_feature_count", 0)),
+                    "raw_feature_key_count": int(len(feature_row)),
+                    "linguistic_detail": linguistic_detail,
+                }
+            )
             acoustic_summary_json = json.dumps({
-                "pipeline": "post_stt_rf",
+                "pipeline": "post_stt_lightweight_bundle",
                 "feature_dims": {
-                    "audio": 768,
-                    "text": 768,
-                    "linguistic": 25,
-                    "total": int(features.shape[0]),
+                    "numeric": int(result.get("numeric_feature_count", 0)),
+                    "text_svd": int(result.get("text_feature_count", 0)),
+                    "audio_pca": int(result.get("audio_feature_count", 0)),
+                    "model_input": int(result.get("model_feature_count", 0)),
                 },
+                "threshold": float(result.get("threshold", 0.5)),
             })
+            shap_payload = result.get("shap") if isinstance(result, dict) else None
+            shap_payload = shap_payload if isinstance(shap_payload, dict) else {}
+            shap_available = bool(shap_payload.get("available"))
+            shap_top_features_json = json.dumps(shap_payload.get("top_features")) if shap_available else None
+            shap_feature_contributions_json = (
+                json.dumps(shap_payload.get("feature_contributions")) if shap_available else None
+            )
+            shap_meta_json = json.dumps(
+                {
+                    "enabled": bool(shap_payload.get("enabled", False)),
+                    "available": shap_available,
+                    "reason": shap_payload.get("reason"),
+                    "method": shap_payload.get("method"),
+                    "model_stage": shap_payload.get("model_stage"),
+                    "class_label": shap_payload.get("class_label"),
+                    "class_index": shap_payload.get("class_index"),
+                    "base_value": shap_payload.get("base_value"),
+                    "output_value": shap_payload.get("output_value"),
+                    "predicted_mci_probability": shap_payload.get("predicted_mci_probability"),
+                    "feature_count": shap_payload.get("feature_count"),
+                    "top_k": shap_payload.get("top_k"),
+                }
+            )
 
             # Insert voice assessment
             cur.execute("""
@@ -342,8 +427,9 @@ def process_voice_recording(
                     (assessment_id, recording_id, transcript, cognitive_score,
                      mci_probability, flag, flag_reasons, features,
                      acoustic_summary, predicted_stage, confidence_score,
-                     model_version, assessed_at, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     model_version, assessed_at, created_at,
+                     shap_available, shap_top_features, shap_feature_contributions, shap_meta)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 assessment_id,
                 recording_id,
@@ -359,6 +445,10 @@ def process_voice_recording(
                 result["model_version"],
                 now,
                 now,
+                shap_available,
+                shap_top_features_json,
+                shap_feature_contributions_json,
+                shap_meta_json,
             ))
 
             # Update recording status
