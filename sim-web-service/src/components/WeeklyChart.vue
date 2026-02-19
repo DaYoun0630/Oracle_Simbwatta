@@ -7,11 +7,10 @@ type ChartPoint = {
   index: number;
   x: number;
   y: number | null;
-  value: TrendValue;
   state: TrendState;
 };
 type DrawablePoint = { index: number; x: number; y: number };
-type AxisTick = { index: number; label: string; left: number; required: boolean };
+type AxisTick = { index: number; label: string; left: number };
 type YearMark = { year: number; left: number };
 
 const props = withDefaults(
@@ -21,33 +20,26 @@ const props = withDefaults(
     dates?: string[];
     states?: TrendState[];
     highlights?: number[];
-    activeIndex?: number | null;
     yStateLabels?: [string, string, string, string];
   }>(),
   {
     dates: () => [],
     states: () => [],
     highlights: () => [],
-    activeIndex: null,
     yStateLabels: () => ["안정", "변화", "저하", "미참여"] as [string, string, string, string],
   }
 );
 
-const emit = defineEmits<{
-  (e: "point-click", index: number): void;
-}>();
-
 const chartWidth = 420;
-const chartHeight = 212;
+const chartHeight = 220;
 const minPointCount = 7;
 const paddingLeft = 52;
 const paddingRight = 24;
 const topY = 28;
-const changeY = 87;
-const bottomY = 146;
-const missingY = 180;
+const changeY = 86;
+const bottomY = 144;
 const baselineY = bottomY + 10;
-const missingMarkerY = missingY;
+const missingTrackY = 186;
 
 const stateLevelMap: Record<Exclude<TrendState, "missing">, number> = {
   stable: topY,
@@ -62,48 +54,24 @@ const xStep = computed(() =>
 
 const hasStateMode = computed(() => props.states.length === props.data.length && props.states.length > 0);
 
-const validValues = computed(() =>
-  props.data.filter((value): value is number => value !== null && Number.isFinite(value))
-);
-
-const domain = computed(() => {
-  if (validValues.value.length === 0) {
-    return { min: 0, max: 100 };
-  }
-  const min = Math.min(...validValues.value);
-  const max = Math.max(...validValues.value);
-  const range = Math.max(max - min, 1);
-  const padding = Math.max(range * 0.24, 3);
-  return {
-    min: min - padding,
-    max: max + padding,
-  };
-});
-
-const valueToY = (value: number) => {
-  const range = Math.max(domain.value.max - domain.value.min, 1);
-  const ratio = (value - domain.value.min) / range;
-  return bottomY - ratio * (bottomY - topY);
-};
-
-const stateToY = (state: TrendState) => {
-  if (state === "missing") return null;
-  return stateLevelMap[state];
-};
-
 const points = computed<ChartPoint[]>(() =>
   Array.from({ length: totalPoints.value }, (_, index) => {
     const value = props.data[index] ?? null;
     const state = props.states[index] ?? (value === null ? "missing" : "change");
-    const y = hasStateMode.value ? stateToY(state) : value === null ? null : valueToY(value);
+    const y = state === "missing" ? null : stateLevelMap[state];
     return {
       index,
       x: paddingLeft + xStep.value * index,
-      y,
-      value,
+      y: hasStateMode.value ? y : null,
       state,
     };
   })
+);
+
+const trendPoints = computed<DrawablePoint[]>(() =>
+  points.value
+    .filter((point): point is ChartPoint & { y: number } => point.y !== null)
+    .map((point) => ({ index: point.index, x: point.x, y: point.y }))
 );
 
 const segments = computed<DrawablePoint[][]>(() => {
@@ -119,11 +87,7 @@ const segments = computed<DrawablePoint[][]>(() => {
       return;
     }
 
-    currentSegment.push({
-      index: point.index,
-      x: point.x,
-      y: point.y,
-    });
+    currentSegment.push({ index: point.index, x: point.x, y: point.y });
   });
 
   if (currentSegment.length > 0) {
@@ -132,6 +96,8 @@ const segments = computed<DrawablePoint[][]>(() => {
 
   return result;
 });
+
+const missingPoints = computed(() => points.value.filter((point) => point.state === "missing"));
 
 const toLinePath = (segment: DrawablePoint[]) =>
   segment.reduce((path, point, index) => (index === 0 ? `M ${point.x},${point.y}` : `${path} L ${point.x},${point.y}`), "");
@@ -144,14 +110,7 @@ const toAreaPath = (segment: DrawablePoint[]) => {
   return `${linePath} L ${last.x},${baselineY} L ${first.x},${baselineY} Z`;
 };
 
-const gridLines = computed(() => {
-  if (hasStateMode.value) {
-    return [topY, changeY, bottomY, missingY];
-  }
-  const lineCount = 4;
-  const gap = (bottomY - topY) / (lineCount - 1);
-  return Array.from({ length: lineCount }, (_, index) => topY + gap * index);
-});
+const gridLines = [topY, changeY, bottomY];
 
 const parsedDates = computed(() =>
   props.dates.map((value) => {
@@ -160,104 +119,17 @@ const parsedDates = computed(() =>
   })
 );
 
-const normalizedHighlightIndices = computed(() =>
-  [...new Set(props.highlights)]
-    .filter((index) => Number.isInteger(index))
-    .filter((index) => index >= 0 && index < props.labels.length)
-);
-
-const requiredTickIndices = computed(() => {
-  if (props.labels.length === 0) return [] as number[];
-  const indices = new Set<number>([0, props.labels.length - 1, ...normalizedHighlightIndices.value]);
-  if (props.activeIndex !== null && props.activeIndex >= 0 && props.activeIndex < props.labels.length) {
-    indices.add(props.activeIndex);
-  }
-  return [...indices].sort((a, b) => a - b);
-});
-
-const tickBaseLabels = computed(() =>
-  props.labels.map((label, index) => {
-    const parsed = parsedDates.value[index];
-    if (!parsed) return label;
-    return `${parsed.getMonth() + 1}.${parsed.getDate()}`;
-  })
-);
-
-const getMaxTickCount = (length: number) => {
-  if (length <= 4) return length;
-  if (length <= 7) return 4;
-  if (length <= 12) return 5;
-  if (length <= 20) return 6;
-  return 7;
-};
-
-const buildTickIndices = (length: number, maxTicks: number) => {
-  if (length <= 0) return [] as number[];
-  if (length === 1) return [0];
-
-  const lastIndex = length - 1;
-  const step = Math.max(1, Math.ceil(lastIndex / Math.max(maxTicks - 1, 1)));
-  const indices: number[] = [];
-
-  for (let index = 0; index <= lastIndex; index += step) {
-    indices.push(index);
-  }
-  if (indices[indices.length - 1] !== lastIndex) {
-    indices.push(lastIndex);
-  }
-
-  return indices;
-};
-
-const MIN_TICK_GAP_PERCENT = 15;
-
-const compactTicksByGap = (ticks: AxisTick[]) => {
-  if (ticks.length <= 2) return ticks;
-
-  const compacted: AxisTick[] = [];
-
-  for (let i = 0; i < ticks.length; i += 1) {
-    const current = ticks[i];
-    if (!compacted.length) {
-      compacted.push(current);
-      continue;
-    }
-
-    const prevKept = compacted[compacted.length - 1];
-    const gapFromPrev = current.left - prevKept.left;
-
-    if (gapFromPrev >= MIN_TICK_GAP_PERCENT) {
-      compacted.push(current);
-      continue;
-    }
-
-    if (!current.required) continue;
-    if (!prevKept.required) {
-      compacted[compacted.length - 1] = current;
-      continue;
-    }
-
-    compacted.push(current);
-  }
-
-  return compacted;
-};
-
 const axisTicks = computed<AxisTick[]>(() => {
   if (props.labels.length === 0) return [];
-
-  const maxTickCount = getMaxTickCount(props.labels.length);
-  const autoIndices = buildTickIndices(props.labels.length, maxTickCount);
-  const mergedIndices = [...new Set([...autoIndices, ...requiredTickIndices.value])].sort((a, b) => a - b);
-  const requiredSet = new Set(requiredTickIndices.value);
-  const baseTicks = mergedIndices.map((index) => ({
-    index,
-    label: tickBaseLabels.value[index] ?? "",
-    left: ((paddingLeft + xStep.value * index) / chartWidth) * 100,
-    required: requiredSet.has(index),
-  }));
-
-  return compactTicksByGap(baseTicks);
+  return props.labels.map((label, index) => {
+    const parsed = parsedDates.value[index];
+    const tickLabel = parsed ? `${parsed.getMonth() + 1}.${parsed.getDate()}` : label;
+    return {
+      index,
+      label: tickLabel,
+      left: ((paddingLeft + xStep.value * index) / chartWidth) * 100,
+    };
+  });
 });
 
 const yearMarks = computed<YearMark[]>(() => {
@@ -283,10 +155,6 @@ const highlightSet = computed(() => new Set(props.highlights));
 const isHighlight = (index: number) => highlightSet.value.has(index);
 
 const gradientId = `trend-${Math.random().toString(36).slice(2, 9)}`;
-
-const handlePointClick = (index: number) => {
-  emit("point-click", index);
-};
 </script>
 
 <template>
@@ -312,7 +180,11 @@ const handlePointClick = (index: number) => {
         <text :x="4" :y="topY + 3">{{ yStateLabels[0] }}</text>
         <text :x="4" :y="changeY + 3">{{ yStateLabels[1] }}</text>
         <text :x="4" :y="bottomY + 3">{{ yStateLabels[2] }}</text>
-        <text :x="4" :y="missingY + 3">{{ yStateLabels[3] }}</text>
+      </g>
+
+      <g class="missing-track">
+        <line :x1="paddingLeft - 4" :y1="missingTrackY" :x2="chartWidth - 6" :y2="missingTrackY" />
+        <text :x="4" :y="missingTrackY + 3">{{ yStateLabels[3] }}</text>
       </g>
 
       <template v-for="(segment, segmentIndex) in segments" :key="`segment-${segmentIndex}`">
@@ -327,29 +199,23 @@ const handlePointClick = (index: number) => {
       </template>
 
       <g
-        v-for="point in points"
-        :key="point.index"
+        v-for="point in trendPoints"
+        :key="`trend-${point.index}`"
         class="point"
         :class="{
           highlight: isHighlight(point.index),
-          active: point.index === activeIndex,
-          missing: point.state === 'missing',
-          stable: point.state === 'stable',
-          change: point.state === 'change',
-          decline: point.state === 'decline'
+          stable: points[point.index]?.state === 'stable',
+          change: points[point.index]?.state === 'change',
+          decline: points[point.index]?.state === 'decline'
         }"
-        @click="handlePointClick(point.index)"
       >
-        <template v-if="point.y !== null">
-          <circle class="point-hit" :cx="point.x" :cy="point.y" r="16" />
-          <circle class="point-core" :cx="point.x" :cy="point.y" r="7.5" />
-          <circle v-if="isHighlight(point.index)" class="point-ring" :cx="point.x" :cy="point.y" r="13" />
-        </template>
-        <template v-else>
-          <circle class="point-hit" :cx="point.x" :cy="missingMarkerY" r="16" />
-          <circle class="point-missing" :cx="point.x" :cy="missingMarkerY" r="5.6" />
-          <circle v-if="isHighlight(point.index)" class="point-missing-ring" :cx="point.x" :cy="missingMarkerY" r="12.5" />
-        </template>
+        <circle class="point-core" :cx="point.x" :cy="point.y" r="7.5" />
+        <circle v-if="isHighlight(point.index)" class="point-ring" :cx="point.x" :cy="point.y" r="13" />
+      </g>
+
+      <g v-for="point in missingPoints" :key="`missing-${point.index}`" class="missing-point">
+        <rect :x="point.x - 5.4" :y="missingTrackY - 5.4" width="10.8" height="10.8" rx="2.5" />
+        <line :x1="point.x - 3.5" :y1="missingTrackY + 3.5" :x2="point.x + 3.5" :y2="missingTrackY - 3.5" />
       </g>
     </svg>
 
@@ -394,18 +260,17 @@ const handlePointClick = (index: number) => {
   stroke-width: 1.9;
 }
 
-.state-y-labels text {
+.state-y-labels text,
+.missing-track text {
   font-size: 11px;
   font-weight: 700;
   fill: #8c98a1;
 }
 
-.point {
-  cursor: pointer;
-}
-
-.point-hit {
-  fill: transparent;
+.missing-track line {
+  stroke: rgba(160, 170, 180, 0.3);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
 }
 
 .point-core {
@@ -426,26 +291,16 @@ const handlePointClick = (index: number) => {
   stroke-width: 2;
 }
 
-.point.active .point-core {
-  stroke: #356b6b;
-  stroke-width: 2.4;
-}
-
-.point-missing {
-  fill: #f6c3bd;
+.missing-point rect {
+  fill: #f9d7d2;
   stroke: #e9897f;
-  stroke-width: 1.8;
+  stroke-width: 1.6;
 }
 
-.point-missing-ring {
-  fill: rgba(240, 163, 154, 0.18);
-  stroke: #f0a39a;
-  stroke-width: 2.2;
-}
-
-.point.active .point-missing {
-  stroke: #c76a62;
-  stroke-width: 2.4;
+.missing-point line {
+  stroke: #cf756b;
+  stroke-width: 1.6;
+  stroke-linecap: round;
 }
 
 .x-year-axis {
