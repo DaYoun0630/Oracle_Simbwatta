@@ -1,0 +1,16 @@
+FROM python:3.12-slim-bookworm
+
+# Install UV
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+# Copy dependency files first for better caching
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+
+# Copy application code
+COPY src ./src
+
+# Start Celery worker
+CMD ["uv", "run", "celery", "-A", "src.claude.worker.tasks", "worker", "--loglevel=info", "--concurrency=1"]
