@@ -17,13 +17,44 @@ const profileImageUrl = computed(
 );
 const email = computed(() => authStore.user?.email || localStorage.getItem('doctor-email') || '미등록');
 
-const phoneNumber = ref(localStorage.getItem('doctor-phone-number') || localStorage.getItem('user-phone') || '');
-const dateOfBirth = ref(localStorage.getItem('doctor-date-of-birth') || authStore.user?.dateOfBirth || '');
+const phoneNumber = ref(
+  authStore.user?.phone_number
+  || authStore.user?.phoneNumber
+  || localStorage.getItem('doctor-phone-number')
+  || localStorage.getItem('user-phone')
+  || ''
+);
+const dateOfBirth = ref(
+  authStore.user?.date_of_birth
+  || authStore.user?.dateOfBirth
+  || localStorage.getItem('doctor-date-of-birth')
+  || ''
+);
 
-const department = ref(localStorage.getItem('doctor-department') || localStorage.getItem('doctor-specialty') || '');
-const isenseNumber = ref(localStorage.getItem('doctor-isense-number') || localStorage.getItem('doctor-license') || '');
-const hospital = ref(localStorage.getItem('doctor-hospital') || localStorage.getItem('doctor-hospital-name') || '');
-const hospitalNumber = ref(localStorage.getItem('doctor-hospital-number') || localStorage.getItem('doctor-hospital-phone') || '');
+const department = ref(
+  authStore.user?.department
+  || localStorage.getItem('doctor-department')
+  || localStorage.getItem('doctor-specialty')
+  || ''
+);
+const isenseNumber = ref(
+  authStore.user?.license_number
+  || localStorage.getItem('doctor-isense-number')
+  || localStorage.getItem('doctor-license')
+  || ''
+);
+const hospital = ref(
+  authStore.user?.hospital
+  || localStorage.getItem('doctor-hospital')
+  || localStorage.getItem('doctor-hospital-name')
+  || ''
+);
+const hospitalNumber = ref(
+  authStore.user?.hospital_number
+  || localStorage.getItem('doctor-hospital-number')
+  || localStorage.getItem('doctor-hospital-phone')
+  || ''
+);
 
 const showIsenseNumber = ref(false);
 const saveMessage = ref('');
@@ -183,6 +214,18 @@ const saveSettings = () => {
   localStorage.setItem('doctor-license', isenseNumber.value.trim());
   localStorage.setItem('doctor-hospital-name', hospital.value.trim());
   localStorage.setItem('doctor-hospital-phone', hospitalNumber.value.trim());
+
+  if (authStore.user) {
+    authStore.setUser({
+      ...authStore.user,
+      phone_number: phoneNumber.value.trim() || null,
+      date_of_birth: dateOfBirth.value || null,
+      department: department.value.trim() || null,
+      license_number: isenseNumber.value.trim() || null,
+      hospital: hospital.value.trim() || null,
+      hospital_number: hospitalNumber.value.trim() || null,
+    });
+  }
 
   saveMessage.value = '저장되었습니다.';
   setTimeout(() => {

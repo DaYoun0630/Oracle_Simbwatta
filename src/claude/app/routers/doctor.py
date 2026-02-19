@@ -1,15 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, Response
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from collections import deque
 import os
 import gzip
 import struct
 import zlib
+import json
 
 from .. import db
 from ..schemas.patient import PatientOut, PatientCreate, PatientUpdate, PatientWithUser
@@ -505,6 +506,60 @@ def _to_age(date_of_birth) -> Optional[int]:
     )
 
 
+def _as_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _format_mmdd(value: Any) -> Optional[str]:
+    if isinstance(value, datetime):
+        return value.strftime("%m-%d")
+    if isinstance(value, date):
+        return value.strftime("%m-%d")
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Fallback for string timestamps.
+    return text[:10]
+
+
+def _build_trend_feature(label: str, trend: List[float], unit: str) -> Optional[Dict[str, Any]]:
+    cleaned = [float(v) for v in trend if v is not None]
+    if not cleaned:
+        return None
+
+    def _fmt(value: float) -> str:
+        if unit == "%":
+            return f"{value:.1f}%"
+        return f"{value:.1f} {unit}".strip()
+
+    return {
+        "label": label,
+        "current": _fmt(cleaned[-1]),
+        "baseline": _fmt(cleaned[0]),
+        "trend": [round(v, 4) for v in cleaned],
+    }
+
+
 def _to_front_patient_id(row: dict) -> str:
     subject_id = row.get("subject_id")
     if subject_id:
@@ -791,6 +846,97 @@ async def get_patient(patient_id: str):
             "aiAnalysis": ai_analysis,
         }
 
+    # 6. Voice summary (main report payload)
+    recording_rows = await db.fetch(
+        """
+        SELECT COALESCE(recorded_at, created_at) AS "recordedAt"
+        FROM recordings
+        WHERE patient_id = $1
+        ORDER BY COALESCE(recorded_at, created_at) ASC, created_at ASC
+        """,
+        user_id,
+    )
+
+    voice_rows = await db.fetch(
+        """
+        SELECT
+            COALESCE(va.assessed_at, r.recorded_at, va.created_at, r.created_at) AS "timepoint",
+            va.cognitive_score AS "cognitiveScore",
+            va.mci_probability AS "mciProbability",
+            va.features,
+            r.duration_seconds AS "durationSeconds"
+        FROM voice_assessments va
+        JOIN recordings r ON va.recording_id = r.recording_id
+        WHERE r.patient_id = $1
+        ORDER BY COALESCE(va.assessed_at, r.recorded_at, va.created_at, r.created_at) ASC,
+                 va.created_at ASC
+        LIMIT 120
+        """,
+        user_id,
+    )
+
+    counts_by_day: Dict[str, int] = {}
+    for row in recording_rows:
+        row_dict = dict(row)
+        day_label = _format_mmdd(row_dict.get("recordedAt"))
+        if not day_label:
+            continue
+        counts_by_day[day_label] = counts_by_day.get(day_label, 0) + 1
+
+    daily_participation = {
+        "labels": list(counts_by_day.keys()),
+        "counts": [counts_by_day[label] for label in counts_by_day.keys()],
+    }
+
+    utterance_trend: List[float] = []
+    intensity_trend: List[float] = []
+    pause_trend: List[float] = []
+
+    for row in voice_rows:
+        row_dict = dict(row)
+        features = _as_dict(row_dict.get("features"))
+        linguistic_detail = _as_dict(features.get("linguistic_detail"))
+
+        utterance_count = _as_float(linguistic_detail.get("n_par_utts"))
+        duration_ms = _as_float(linguistic_detail.get("dur_ms"))
+        duration_seconds = _as_float(row_dict.get("durationSeconds"))
+        mci_probability = _as_float(row_dict.get("mciProbability"))
+        cognitive_score = _as_float(row_dict.get("cognitiveScore"))
+
+        # Fallback for legacy rows without extracted linguistic detail.
+        if utterance_count is None and cognitive_score is not None:
+            utterance_count = max(cognitive_score / 10.0, 0.0)
+        if utterance_count is not None:
+            utterance_trend.append(round(utterance_count, 4))
+
+        avg_length_seconds = None
+        if duration_ms is not None and utterance_count is not None and utterance_count > 0:
+            avg_length_seconds = (duration_ms / 1000.0) / utterance_count
+        elif duration_seconds is not None:
+            avg_length_seconds = duration_seconds
+        if avg_length_seconds is not None:
+            intensity_trend.append(round(avg_length_seconds, 4))
+
+        pause_value = _as_float(linguistic_detail.get("filler_rate"))
+        if pause_value is not None and pause_value <= 1.0:
+            pause_value *= 100.0
+        elif pause_value is None and mci_probability is not None:
+            pause_value = mci_probability * 100.0
+        if pause_value is not None:
+            pause_trend.append(round(max(pause_value, 0.0), 4))
+
+    acoustic_features: List[Dict[str, Any]] = []
+    for feature in [
+        _build_trend_feature("발화 빈도", utterance_trend, "회"),
+        _build_trend_feature("음성 강도", intensity_trend, "초"),
+        _build_trend_feature("멈춤 빈도", pause_trend, "%"),
+    ]:
+        if feature:
+            acoustic_features.append(feature)
+
+    has_voice_data = bool(recording_rows or voice_rows)
+    voice_data_days = len(daily_participation["labels"])
+
     # Construct response matching frontend expectations
     response = {
         "patients": patients,
@@ -799,11 +945,15 @@ async def get_patient(patient_id: str):
         "biomarkerResults": dict(biomarker) if biomarker else {},
         "biomarkerMeta": biomarker_meta,
         "visits": [dict(v) for v in visits],
+        "dailyParticipation": daily_participation,
+        "acousticFeatures": acoustic_features,
         "mriAnalysis": mri_analysis,
         "dataAvailability": {
             "hasCognitiveTests": bool(clinical_rows),
             "hasMRI": bool(mri),
-            "hasBiomarkers": bool(biomarker)
+            "hasBiomarkers": bool(biomarker),
+            "hasVoiceData": has_voice_data,
+            "voiceDataDays": voice_data_days,
         }
     }
     

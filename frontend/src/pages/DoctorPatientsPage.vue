@@ -115,7 +115,7 @@ const handleSelectPatient = (patientId) => {
         <input
           v-model="searchQuery"
           type="search"
-          placeholder="이름 / 환자 ID / RID 검색"
+          placeholder="이름 / 환자 ID / 병원 검색"
           class="search-input"
         />
       </div>
@@ -143,8 +143,6 @@ const handleSelectPatient = (patientId) => {
             </div>
             <div class="patient-sub">
               <span>{{ patient.id }}</span>
-              <span class="divider">·</span>
-              <span>{{ patient.rid || '-' }}</span>
               <span class="divider">·</span>
               <span>{{ patient.hospital || '-' }}</span>
             </div>

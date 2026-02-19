@@ -10,10 +10,11 @@ const pinia = createPinia();
 const app = createApp(App);
 
 app.use(pinia);
-app.use(router);
 
-// Auth store 복원
+// 라우터 가드가 실행되기 전에 인증 세션을 복원한다.
 const authStore = useAuthStore();
 authStore.hydrate();
+
+app.use(router);
 
 app.mount("#app");

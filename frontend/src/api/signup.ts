@@ -1,4 +1,5 @@
 import type { Relationship, RoleCode } from "@/stores/signup";
+import { registerWithPassword, verifySubjectLinkCodeApi } from "@/api/auth";
 
 export interface SignupTermsPayload {
   agree_service: boolean;
@@ -35,21 +36,8 @@ export interface SubjectLinkCodeResult {
   linked_subject_name?: string;
 }
 
-const MOCK_DELAY_MS = 700;
-const MEMBER_NUMBER_REGEX = /^SM-\d{6}$/;
-const VALID_SUBJECT_CODES: Record<string, string> = {
-  "LINK-1200": "김영희",
-  "LINK-5521": "박민수",
-  "LINK-8910": "이정은",
-};
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// 보호자 대상자 회원번호 유효성 검증 Mock API
 export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCodeResult> {
-  await sleep(MOCK_DELAY_MS);
-
-  const normalizedCode = code.trim().toUpperCase();
+  const normalizedCode = code.trim();
   if (!normalizedCode) {
     return {
       valid: false,
@@ -57,46 +45,25 @@ export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCo
     };
   }
 
-  if (MEMBER_NUMBER_REGEX.test(normalizedCode)) {
-    return {
-      valid: true,
-      linked_subject_name: "대상자",
-      message: "유효한 대상자 회원번호입니다.",
-    };
-  }
-
-  const linkedSubjectName = VALID_SUBJECT_CODES[normalizedCode];
-  if (!linkedSubjectName) {
+  try {
+    return await verifySubjectLinkCodeApi(normalizedCode);
+  } catch (error) {
+    console.error("verifySubjectLinkCode API failed:", error);
     return {
       valid: false,
-      message: "유효하지 않은 대상자 회원번호입니다. 다시 확인해 주세요.",
+      message: "회원번호 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
     };
   }
-
-  return {
-    valid: true,
-    linked_subject_name: linkedSubjectName,
-    message: `연결 가능한 대상자: ${linkedSubjectName}`,
-  };
 }
 
-// 회원가입 Mock API
 export async function signupWithMockApi(payload: SignupApiPayload): Promise<SignupApiResponse> {
-  await sleep(MOCK_DELAY_MS + 300);
-
   if (!payload.terms.agree_service || !payload.terms.agree_privacy) {
     throw new Error("필수 약관 동의가 필요합니다.");
   }
 
-  if (payload.role_code === 1 && payload.subject_link_code) {
-    const verifyResult = await verifySubjectLinkCode(payload.subject_link_code);
-    if (!verifyResult.valid) {
-      throw new Error("대상자 회원번호 검증이 필요합니다.");
-    }
-  }
-
+  const response = await registerWithPassword(payload as unknown as Record<string, unknown>);
   return {
-    user_id: `USR-${Date.now()}`,
+    user_id: String(response.user?.id ?? ""),
     message: "회원가입이 완료되었습니다.",
   };
 }

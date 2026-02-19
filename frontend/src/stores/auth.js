@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     user: null, // { id, name, role }
+    accessToken: null,
   }),
 
   getters: {
@@ -10,11 +11,13 @@ export const useAuthStore = defineStore('auth', {
     userName: (state) => state.user?.name ?? '사용자',
     userId: (state) => state.user?.id ?? null,
     isAuthenticated: (state) => state.user !== null,
+    token: (state) => state.accessToken,
   },
 
   actions: {
     // 역할 정규화 함수
     normalizeRole(role) {
+      if (!role || typeof role !== 'string') return 'subject';
       const normalized = role.toLowerCase();
       if (normalized === 'patient') return 'subject';
       if (normalized === 'caregiver') return 'caregiver';
@@ -36,6 +39,15 @@ export const useAuthStore = defineStore('auth', {
       this.persist();
     },
 
+    setSession(userData, accessToken) {
+      this.user = {
+        ...userData,
+        role: this.normalizeRole(userData.role)
+      };
+      this.accessToken = accessToken || null;
+      this.persist();
+    },
+
     setUser(userData) {
       this.user = {
         ...userData,
@@ -46,13 +58,17 @@ export const useAuthStore = defineStore('auth', {
 
     clear() {
       this.user = null;
+      this.accessToken = null;
       localStorage.removeItem('auth-user');
     },
 
     // 로컬스토리지 저장
     persist() {
-      if (this.user) {
-        localStorage.setItem('auth-user', JSON.stringify(this.user));
+      if (this.user || this.accessToken) {
+        localStorage.setItem('auth-user', JSON.stringify({
+          user: this.user,
+          accessToken: this.accessToken,
+        }));
       }
     },
 
@@ -62,10 +78,19 @@ export const useAuthStore = defineStore('auth', {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          this.user = {
-            ...parsed,
-            role: this.normalizeRole(parsed.role)
-          };
+
+          // Backward compatibility: old format stored only user object.
+          const savedUser = parsed?.user ? parsed.user : parsed;
+          this.accessToken = parsed?.accessToken ?? null;
+
+          if (savedUser) {
+            this.user = {
+              ...savedUser,
+              role: this.normalizeRole(savedUser.role)
+            };
+          } else {
+            this.user = null;
+          }
         } catch (e) {
           console.error('Failed to hydrate auth:', e);
           this.clear();

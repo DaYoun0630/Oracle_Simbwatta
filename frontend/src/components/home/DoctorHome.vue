@@ -126,7 +126,7 @@ const goToReport = () => {
       <section class="patient-card">
         <div class="patient-main">
           <h2>{{ currentPatient?.name }}</h2>
-          <p class="patient-id">{{ currentPatient?.id }} · {{ currentPatient?.rid || '-' }}</p>
+          <p class="patient-id">{{ currentPatient?.id }}</p>
           <p class="patient-sub">
             {{ patientRecord?.age }}세 · {{ genderLabel }} · 최근 검사 {{ lastUpdated }}
           </p>

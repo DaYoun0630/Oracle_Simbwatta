@@ -18,6 +18,7 @@ postgres-data/
 minio-data/
 models/
 data/
+migrations/
 
 # Local tooling state
 .claude/

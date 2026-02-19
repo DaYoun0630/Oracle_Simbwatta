@@ -325,7 +325,7 @@ watch(
                   v-model="patientQuery"
                   class="patient-sheet__input"
                   type="search"
-                  placeholder="이름 / ID / RID 검색"
+                  placeholder="이름 / ID 검색"
                   autocomplete="off"
                 />
               </div>
@@ -348,8 +348,6 @@ watch(
                   <div class="patient-row__sub">
                     <span class="muted">{{ p.id }}</span>
                     <span class="divider">·</span>
-                    <span class="muted">{{ p.rid || '-' }}</span>
-                    <span class="divider">·</span>
                     <span class="muted">{{ p.hospital || '-' }}</span>
                   </div>
                 </div>
@@ -369,7 +367,6 @@ watch(
                 <div class="patient-sheet__hint">
                   선택됨:
                   <strong>{{ currentPatientInfo?.name || '-' }}</strong>
-                  <span class="muted">({{ currentPatientInfo?.rid || '-' }})</span>
                 </div>
               </footer>
             </section>

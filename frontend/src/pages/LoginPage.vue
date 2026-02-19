@@ -14,6 +14,7 @@
 import { useRoute, useRouter } from "vue-router";
 import { computed, ref } from "vue";
 import { useAuthStore } from "../stores/auth";
+import { loginWithPassword } from "@/api/auth";
 
 /* ── 라우터·스토어 인스턴스 ── */
 const route = useRoute();
@@ -46,6 +47,7 @@ const roleLabel = computed(() => roleLabelMap[selectedRole.value] ?? "대상자"
 const username = ref("");   // 아이디 입력값
 const password = ref("");   // 비밀번호 입력값
 const error = ref("");      // 유효성 검증 에러 메시지
+const isSubmitting = ref(false);
 
 /**
  * 로그인 처리 핸들러
@@ -53,18 +55,46 @@ const error = ref("");      // 유효성 검증 에러 메시지
  * 2) 스토어에 역할 저장
  * 3) 홈 화면으로 이동
  */
-const handleLogin = () => {
+const handleLogin = async () => {
   /* 빈 값 체크 — 아이디·비밀번호 모두 입력해야 통과 */
-  if (!username.value || !password.value) {
+  if (!username.value.trim() || !password.value) {
     error.value = "아이디와 비밀번호를 입력해주세요";
     return;
   }
 
-  /* 역할 정규화는 store 내부에서 자동 처리 */
-  authStore.setRole(selectedRole.value);
+  error.value = "";
+  isSubmitting.value = true;
 
-  /* 인증 완료 후 홈으로 라우팅 */
-  router.push({ name: "home" });
+  try {
+    const authResponse = await loginWithPassword({
+      email: username.value.trim(),
+      password: password.value,
+    });
+
+    authStore.setSession(
+      {
+        id: authResponse.user.id,
+        email: authResponse.user.email ?? null,
+        name: authResponse.user.name ?? "사용자",
+        role: authResponse.user.role,
+        entity_id: authResponse.user.entity_id ?? null,
+        profile_image_url: authResponse.user.profile_image_url ?? null,
+        phone_number: authResponse.user.phone_number ?? null,
+        date_of_birth: authResponse.user.date_of_birth ?? null,
+        department: authResponse.user.department ?? null,
+        license_number: authResponse.user.license_number ?? null,
+        hospital: authResponse.user.hospital ?? null,
+        hospital_number: authResponse.user.hospital_number ?? null,
+      },
+      authResponse.access_token
+    );
+
+    await router.push({ name: "home" });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "로그인 중 오류가 발생했습니다.";
+  } finally {
+    isSubmitting.value = false;
+  }
 };
 </script>
 
@@ -139,8 +169,8 @@ const handleLogin = () => {
           ─ 뉴모피즘 양각 금지: CTA는 항상 "떠 있는" 느낌이어야 한다.
           ─ 틸(teal) 계열 배경 + 아래쪽 드롭 쉐도우로 부양감 표현.
         -->
-        <button class="login-button" @click="handleLogin">
-          로그인 완료
+        <button class="login-button" @click="handleLogin" :disabled="isSubmitting">
+          {{ isSubmitting ? "로그인 중..." : "로그인 완료" }}
         </button>
       </div>
     </div>
@@ -361,4 +391,3 @@ const handleLogin = () => {
   box-shadow: 0 6px 12px rgba(76, 183, 183, 0.25);
 }
 </style>
-

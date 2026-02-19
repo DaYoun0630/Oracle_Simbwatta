@@ -1208,7 +1208,7 @@ watch(
         <section class="patient-banner" aria-label="환자 기본 정보">
           <div>
             <h3>{{ currentPatient?.name }}</h3>
-            <p>{{ currentPatient?.id }} · {{ currentPatient?.rid || '-' }}</p>
+            <p>{{ currentPatient?.id }}</p>
           </div>
           <span class="patient-meta">{{ currentPatient?.age }}세 · {{ currentPatient?.gender === 'F' ? '여' : '남' }}</span>
         </section>
@@ -1891,7 +1891,7 @@ watch(
 }
 
 .clinical-extra-value {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 900;
   color: #2e2e2e;
 }
