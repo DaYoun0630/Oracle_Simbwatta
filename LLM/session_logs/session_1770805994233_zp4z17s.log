@@ -1,5 +1,0 @@
-[2026-02-11T10:33:14.549494+00:00] assistant: 안녕하세요. 오늘 하루는 어땠는지 편하게 이야기해볼까요?
-[2026-02-11T10:33:14.549932+00:00] event:session_start {"meta": {"session_id": "session_1770805994233_zp4z17s", "profile_id": "profile_1770792017087_sqgps9lw", "session_mode": "live", "turn_index": 0, "elapsed_sec": 0, "remaining_sec": 300, "target_sec": 300, "hard_limit_sec": 300, "should_wrap_up": false, "source": "session_start", "conversation_phase": "dialog", "request_close": false}, "started_at": "2026-02-11T10:33:14.549923+00:00"}
-[2026-02-11T10:33:26.672580+00:00] user: 결제해야 돼
-[2026-02-11T10:33:26.673041+00:00] assistant: 결제를 해야 해서 조금 바쁘시겠어요. 어떤 결제를 준비 중이신가요? 필요한 부분이 있으면 말씀해 주세요.
-[2026-02-11T10:33:43.788018+00:00] event:session_end {"session_id": "session_1770805994233_zp4z17s", "end_reason": "reset", "elapsed_sec": 29, "turn_count": 1, "session_mode": "live", "ended_at": "2026-02-11T10:33:43.788003+00:00"}

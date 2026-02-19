@@ -1,0 +1,76 @@
+{
+  "schema_version": "audio_gate_v1",
+  "gate_policy": "drop_during_tts",
+  "dropped_segments": [
+    {
+      "start_ms": 3009,
+      "end_ms": 7346,
+      "dropped_ms": 4337
+    },
+    {
+      "start_ms": 16686,
+      "end_ms": 24082,
+      "dropped_ms": 7396
+    },
+    {
+      "start_ms": 32507,
+      "end_ms": 39132,
+      "dropped_ms": 6625
+    },
+    {
+      "start_ms": 53022,
+      "end_ms": 61391,
+      "dropped_ms": 8369
+    },
+    {
+      "start_ms": 72229,
+      "end_ms": 78531,
+      "dropped_ms": 6302
+    },
+    {
+      "start_ms": 87754,
+      "end_ms": 93181,
+      "dropped_ms": 5427
+    },
+    {
+      "start_ms": 105312,
+      "end_ms": 112601,
+      "dropped_ms": 7289
+    },
+    {
+      "start_ms": 132160,
+      "end_ms": 140841,
+      "dropped_ms": 8681
+    },
+    {
+      "start_ms": 153321,
+      "end_ms": 161821,
+      "dropped_ms": 8500
+    },
+    {
+      "start_ms": 179579,
+      "end_ms": 187522,
+      "dropped_ms": 7943
+    },
+    {
+      "start_ms": 205327,
+      "end_ms": 214291,
+      "dropped_ms": 8964
+    },
+    {
+      "start_ms": 227031,
+      "end_ms": 235871,
+      "dropped_ms": 8840
+    },
+    {
+      "start_ms": 245807,
+      "end_ms": 254140,
+      "dropped_ms": 8333
+    }
+  ],
+  "dropped_total_ms": 97006,
+  "client_clock": {
+    "started_at_ms": 1771485492042,
+    "ended_at_ms": 1771485746184
+  }
+}

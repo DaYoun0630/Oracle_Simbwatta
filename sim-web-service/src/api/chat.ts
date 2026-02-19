@@ -133,13 +133,17 @@ export async function startChatSession(
 export async function uploadSessionAudio(
   sessionId: string,
   file: File,
-  profileId?: string
+  profileId?: string,
+  audioGateMeta?: Record<string, unknown>
 ): Promise<UploadSessionAudioResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("session_id", sessionId);
   if (profileId) {
     formData.append("profile_id", profileId);
+  }
+  if (audioGateMeta) {
+    formData.append("audio_gate_meta", JSON.stringify(audioGateMeta));
   }
 
   const res = await fetch(`${BASE_URL}/session/upload-audio`, {

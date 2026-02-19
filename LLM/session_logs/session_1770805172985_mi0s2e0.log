@@ -1,3 +1,0 @@
-[2026-02-11T10:19:33.339051+00:00] assistant: 안녕하세요. 오늘 하루는 어땠는지 편하게 이야기해볼까요?
-[2026-02-11T10:19:33.339468+00:00] event:session_start {"meta": {"session_id": "session_1770805172985_mi0s2e0", "profile_id": "profile_1770792017087_sqgps9lw", "session_mode": "live", "turn_index": 0, "elapsed_sec": 0, "remaining_sec": 300, "target_sec": 300, "hard_limit_sec": 300, "should_wrap_up": false, "source": "session_start", "conversation_phase": "dialog", "request_close": false}, "started_at": "2026-02-11T10:19:33.339462+00:00"}
-[2026-02-11T10:20:28.781574+00:00] event:session_end {"session_id": "session_1770805172985_mi0s2e0", "end_reason": "reset", "elapsed_sec": 55, "turn_count": 0, "session_mode": "live", "ended_at": "2026-02-11T10:20:28.781538+00:00"}

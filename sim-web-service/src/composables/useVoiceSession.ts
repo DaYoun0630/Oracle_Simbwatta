@@ -7,10 +7,28 @@ import {
   type ChatMetaPayload,
 } from "@/api/chat";
 
-type VoiceState = "idle" | "speaking" | "listening" | "processing" | "cooldown";
+type VoiceState = "idle" | "speaking" | "listening" | "processing";
 type SessionEndReason = "manual_stop" | "target_reached" | "reset";
 type DialogStatePayload = Record<string, unknown> | null;
 type ConversationPhase = "opening" | "warmup" | "dialog" | "closing";
+type TtsEndReason = "ended" | "error" | "cancel" | "session_end" | "failsafe";
+
+export interface DroppedSegment {
+  start_ms: number;
+  end_ms: number;
+  dropped_ms: number;
+}
+
+export interface AudioGateMeta {
+  schema_version: "audio_gate_v1";
+  gate_policy: "drop_during_tts";
+  dropped_segments: DroppedSegment[];
+  dropped_total_ms: number;
+  client_clock: {
+    started_at_ms: number | null;
+    ended_at_ms: number | null;
+  };
+}
 
 export interface ChatMessage {
   id: string;
@@ -21,6 +39,7 @@ export interface ChatMessage {
 
 type SpeechRecognitionResultEvent = Event & {
   results: SpeechRecognitionResultList;
+  resultIndex?: number;
 };
 
 type SpeechRecognitionErrorEvent = Event & {
@@ -47,9 +66,6 @@ const SOFT_WRAP_START_SEC = 240;
 const LISTEN_RETRY_DELAY_MS = 350;
 const PROFILE_ID_STORAGE_KEY = "voice_profile_id";
 const SPEECH_SILENCE_COMMIT_MS = 1300;
-const INCOMPLETE_SILENCE_EXTRA_MS = 1800;
-const INCOMPLETE_SILENCE_RETRY_LIMIT = 2;
-const POST_SPEAK_INPUT_GRACE_MS = 800;
 const STT_NO_SPEECH_RETRY_LIMIT = 1;
 const NO_SPEECH_GRACE_RETRIES = 1;
 const NO_SPEECH_RETRY_DELAY_MS = 700;
@@ -59,7 +75,12 @@ const MIC_ACTIVE_THRESHOLD = 0.024;
 const SPEAKING_ACTIVE_THRESHOLD = 0.045;
 const SPEAKING_LEVEL_INTERVAL_MS = 50;
 const DEFAULT_CONVERSATION_MODE = "mixed";
-const SESSION_AUDIO_TIMESLICE_MS = 1000;
+const SESSION_AUDIO_TIMESLICE_MS = 100;
+const TTS_END_FAILSAFE_MS = 30_000;
+const CLINICAL_MODE =
+  String(import.meta.env.VITE_VOICE_CLINICAL_MODE ?? "false").toLowerCase() ===
+  "true";
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "").trim();
 const EMERGENCY_RESPONSE_FALLBACK =
   "지금 연결이 잠시 불안정해요. 잠깐 후 다시 시도해 주세요.";
 
@@ -82,6 +103,10 @@ const dialogState = ref<DialogStatePayload>(null);
 const turnIndex = ref(0);
 const voiceLevel = ref(0);
 const isVoiceActive = ref(false);
+const isTtsPlaying = ref(false);
+const droppedSegments = ref<DroppedSegment[]>([]);
+const droppedTotalMs = ref(0);
+const audioGateMetaSnapshot = ref<AudioGateMeta | null>(null);
 
 const conversationPhase = ref<ConversationPhase>("opening");
 
@@ -106,7 +131,8 @@ let speakingLevelTimer: number | null = null;
 let speakingLevelPhase = 0;
 let noSpeechRetryCount = 0;
 let sttNoSpeechRetryCount = 0;
-let incompleteCommitRetryCount = 0;
+let ttsSegmentStartMs: number | null = null;
+let ttsEndFailSafeTimer: number | null = null;
 let sessionRecorder: MediaRecorder | null = null;
 let sessionRecorderStream: MediaStream | null = null;
 let sessionAudioChunks: Blob[] = [];
@@ -134,6 +160,7 @@ const pickSessionAudioMimeType = () => {
     return "";
   }
   const candidates = [
+    "audio/wav",
     "audio/webm;codecs=opus",
     "audio/webm",
     "audio/mp4",
@@ -190,8 +217,8 @@ const encodeMonoWav16 = (samples: Float32Array, sampleRate: number) => {
   writeString(8, "WAVE");
   writeString(12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true);
   view.setUint16(32, blockAlign, true);
@@ -206,6 +233,7 @@ const encodeMonoWav16 = (samples: Float32Array, sampleRate: number) => {
     view.setInt16(offset, Math.round(value), true);
     offset += 2;
   }
+
   return buffer;
 };
 
@@ -241,6 +269,26 @@ const stopSessionRecorderStream = () => {
   sessionRecorderStream = null;
 };
 
+const pauseSessionAudioRecorder = () => {
+  if (!sessionRecorder) return;
+  if (sessionRecorder.state !== "recording") return;
+  try {
+    sessionRecorder.pause();
+  } catch {
+    // noop
+  }
+};
+
+const resumeSessionAudioRecorder = () => {
+  if (!sessionRecorder) return;
+  if (sessionRecorder.state !== "paused") return;
+  try {
+    sessionRecorder.resume();
+  } catch {
+    // noop
+  }
+};
+
 const startSessionAudioRecorder = async () => {
   if (typeof window === "undefined") return;
   if (typeof MediaRecorder === "undefined") return;
@@ -251,10 +299,11 @@ const startSessionAudioRecorder = async () => {
     sessionRecorderStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        noiseSuppression: !CLINICAL_MODE,
+        autoGainControl: !CLINICAL_MODE,
       },
     });
+
     sessionAudioChunks = [];
     const preferredMimeType = pickSessionAudioMimeType();
     const recorder = preferredMimeType
@@ -263,9 +312,9 @@ const startSessionAudioRecorder = async () => {
 
     sessionAudioMimeType = recorder.mimeType || preferredMimeType || "audio/webm";
     recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        sessionAudioChunks.push(event.data);
-      }
+      if (!event.data || event.data.size <= 0) return;
+      if (isTtsPlaying.value) return;
+      sessionAudioChunks.push(event.data);
     };
     recorder.start(SESSION_AUDIO_TIMESLICE_MS);
     sessionRecorder = recorder;
@@ -328,6 +377,107 @@ const getElapsedMilliseconds = () => {
 };
 
 const getElapsedSeconds = () => Math.floor(getElapsedMilliseconds() / 1000);
+
+const clearTtsEndFailSafeTimer = () => {
+  if (ttsEndFailSafeTimer === null) return;
+  clearTimeout(ttsEndFailSafeTimer);
+  ttsEndFailSafeTimer = null;
+};
+
+const buildAudioGateMeta = (endedAtMs: number | null = null): AudioGateMeta => ({
+  schema_version: "audio_gate_v1",
+  gate_policy: "drop_during_tts",
+  dropped_segments: droppedSegments.value.map((segment) => ({ ...segment })),
+  dropped_total_ms: droppedTotalMs.value,
+  client_clock: {
+    started_at_ms: sessionStartTime.value?.getTime() ?? null,
+    ended_at_ms: endedAtMs,
+  },
+});
+
+const postSessionEvent = async (
+  eventName: "tts_start" | "tts_end",
+  payload: Record<string, unknown>
+) => {
+  if (!API_BASE_URL) return;
+  if (!sessionId.value) return;
+
+  try {
+    await fetch(`${API_BASE_URL}/session/event`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        session_id: sessionId.value,
+        event_name: eventName,
+        payload,
+      }),
+    });
+  } catch (error) {
+    console.error("Failed to send TTS session event", error);
+  }
+};
+
+const markTtsStart = () => {
+  if (!isSessionActive.value) return;
+  if (isTtsPlaying.value) return;
+
+  isTtsPlaying.value = true;
+  pauseSessionAudioRecorder();
+  ttsSegmentStartMs = getElapsedMilliseconds();
+  void postSessionEvent("tts_start", {
+    elapsed_ms: ttsSegmentStartMs,
+    gate_policy: "drop_during_tts",
+  });
+  clearTtsEndFailSafeTimer();
+  ttsEndFailSafeTimer = window.setTimeout(() => {
+    markTtsEnd("failsafe");
+  }, TTS_END_FAILSAFE_MS);
+};
+
+const markTtsEnd = (reason: TtsEndReason) => {
+  if (!isTtsPlaying.value && ttsSegmentStartMs === null) return;
+
+  const startMs = ttsSegmentStartMs ?? getElapsedMilliseconds();
+  const endMs = Math.max(startMs, getElapsedMilliseconds());
+  const droppedMs = Math.max(0, endMs - startMs);
+
+  if (droppedMs > 0) {
+    droppedSegments.value = [
+      ...droppedSegments.value,
+      {
+        start_ms: startMs,
+        end_ms: endMs,
+        dropped_ms: droppedMs,
+      },
+    ];
+    droppedTotalMs.value += droppedMs;
+  }
+
+  void postSessionEvent("tts_end", {
+    reason,
+    start_ms: startMs,
+    end_ms: endMs,
+    dropped_ms: droppedMs,
+    dropped_total_ms: droppedTotalMs.value,
+    gate_policy: "drop_during_tts",
+  });
+
+  isTtsPlaying.value = false;
+  resumeSessionAudioRecorder();
+  ttsSegmentStartMs = null;
+  clearTtsEndFailSafeTimer();
+};
+
+const resetAudioGateTracking = () => {
+  isTtsPlaying.value = false;
+  droppedSegments.value = [];
+  droppedTotalMs.value = 0;
+  ttsSegmentStartMs = null;
+  clearTtsEndFailSafeTimer();
+  audioGateMetaSnapshot.value = null;
+};
 
 const hasTimedOut = () => getElapsedMilliseconds() >= SESSION_LIMIT_MS;
 
@@ -460,13 +610,17 @@ const ensureMicMeter = async () => {
   }
 
   if (!micStream) {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    if (sessionRecorderStream) {
+      micStream = sessionRecorderStream.clone();
+    } else {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: !CLINICAL_MODE,
+          autoGainControl: !CLINICAL_MODE,
+        },
+      });
+    }
   }
 
   if (!micAnalyser) {
@@ -532,6 +686,7 @@ const startMicMeter = async (token: number) => {
 };
 
 const cancelSpeaking = () => {
+  markTtsEnd("cancel");
   stopSpeakingLevelMeter();
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
@@ -550,7 +705,6 @@ const clearSilenceCommitTimer = () => {
 const clearRecognitionBuffers = () => {
   stableTranscriptBuffer = "";
   interimTranscriptBuffer = "";
-  incompleteCommitRetryCount = 0;
 };
 
 const composeBufferedTranscript = () =>
@@ -561,24 +715,6 @@ const isLikelyFillerUtterance = (text: string) => {
   if (!normalized) return true;
   const fillers = ["음", "어", "응", "아", "그", "저", "그러니까", "그니까", "음음"];
   return fillers.includes(normalized) || normalized.length <= 1;
-};
-
-const isLikelyIncompleteUtterance = (text: string) => {
-  const cleaned = text.trim();
-  if (!cleaned) return false;
-  if (cleaned.endsWith("...") || /[,\-…(（]$/.test(cleaned)) return true;
-  if (/(요|다|죠|네|까|나요|군요|습니다|이에요|예요|였어요|했어요)[.!?]?$/.test(cleaned)) {
-    return false;
-  }
-  if (
-    /(은|는|이|가|을|를|에|에서|와|과|도|만|부터|까지|처럼|인|인데|면|고|서|인지|는지|거나|며)$/.test(
-      cleaned
-    )
-  ) {
-    return true;
-  }
-  if (/(무슨|어떤|왜|언제|어디|누가|뭐|무엇)$/.test(cleaned)) return true;
-  return cleaned.replace(/\s+/g, "").length <= 1;
 };
 
 const stopRecognition = () => {
@@ -698,6 +834,7 @@ const stopIfTimedOut = async (token: number) => {
 const botSpeak = async (text: string, token: number) => {
   if (!isCurrentSession(token)) return false;
 
+  markTtsStart();
   stopMicMeter(false);
   startSpeakingLevelMeter();
   state.value = "speaking";
@@ -708,6 +845,7 @@ const botSpeak = async (text: string, token: number) => {
     await new Promise<void>((resolve) => {
       globalThis.setTimeout(resolve, Math.min(2500, 700 + text.length * 20));
     });
+    markTtsEnd("ended");
   } else {
     await new Promise<void>((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
@@ -716,12 +854,13 @@ const botSpeak = async (text: string, token: number) => {
       utterance.lang = "ko-KR";
       utterance.rate = 0.95;
 
-      const settle = () => {
+      const settle = (reason: TtsEndReason) => {
+        markTtsEnd(reason);
         settleSpeakingPromise();
       };
 
-      utterance.onend = settle;
-      utterance.onerror = settle;
+      utterance.onend = () => settle("ended");
+      utterance.onerror = () => settle("error");
       window.speechSynthesis.speak(utterance);
     });
   }
@@ -729,11 +868,6 @@ const botSpeak = async (text: string, token: number) => {
   stopSpeakingLevelMeter();
   if (!isCurrentSession(token)) return false;
   currentResponse.value = "";
-  state.value = "cooldown";
-  await new Promise<void>((resolve) => {
-    globalThis.setTimeout(resolve, POST_SPEAK_INPUT_GRACE_MS);
-  });
-  if (!isCurrentSession(token)) return false;
   setAwaitingInputState();
   return true;
 };
@@ -749,7 +883,7 @@ const scheduleRecognitionRetry = (
 ) => {
   window.setTimeout(() => {
     if (!isCurrentSession(token)) return;
-    if (state.value === "processing" || state.value === "speaking" || state.value === "cooldown") return;
+    if (state.value === "processing" || state.value === "speaking") return;
     if (isRecognitionActive()) return;
     startLiveRecognition(token);
   }, delayMs);
@@ -757,7 +891,7 @@ const scheduleRecognitionRetry = (
 
 const handleNoSpeechDetected = async (token: number) => {
   if (!isCurrentSession(token)) return;
-  if (state.value === "processing" || state.value === "speaking" || state.value === "cooldown") return;
+  if (state.value === "processing" || state.value === "speaking") return;
 
   if (noSpeechRetryCount < NO_SPEECH_GRACE_RETRIES) {
     noSpeechRetryCount += 1;
@@ -817,22 +951,26 @@ const handleNoSpeechDetected = async (token: number) => {
   }
 };
 
-const extractTranscriptFromResults = (results: SpeechRecognitionResultList) => {
-  let stable = "";
+const extractTranscriptDelta = (event: SpeechRecognitionResultEvent) => {
+  let stableDelta = "";
   let interim = "";
+  const startIndex =
+    typeof event.resultIndex === "number" && Number.isFinite(event.resultIndex)
+      ? Math.max(0, event.resultIndex)
+      : 0;
 
-  for (let i = 0; i < results.length; i += 1) {
-    const segment = results[i][0]?.transcript?.trim();
+  for (let i = startIndex; i < event.results.length; i += 1) {
+    const segment = event.results[i][0]?.transcript?.trim();
     if (!segment) continue;
-    if (results[i].isFinal) {
-      stable += `${segment} `;
+    if (event.results[i].isFinal) {
+      stableDelta += `${segment} `;
     } else {
       interim += `${segment} `;
     }
   }
 
   return {
-    stable: stable.trim(),
+    stableDelta: stableDelta.trim(),
     interim: interim.trim(),
   };
 };
@@ -873,7 +1011,7 @@ const startLiveRecognition = (token: number) => {
   localRecognition.continuous = true;
   localRecognition.interimResults = true;
 
-  const scheduleSilenceCommit = (delayMs = SPEECH_SILENCE_COMMIT_MS) => {
+  const scheduleSilenceCommit = () => {
     clearSilenceCommitTimer();
     silenceCommitTimer = window.setTimeout(() => {
       if (!isCurrentSession(token)) return;
@@ -887,27 +1025,23 @@ const startLiveRecognition = (token: number) => {
         return;
       }
 
-      if (
-        isLikelyIncompleteUtterance(combined) &&
-        incompleteCommitRetryCount < INCOMPLETE_SILENCE_RETRY_LIMIT
-      ) {
-        incompleteCommitRetryCount += 1;
-        scheduleSilenceCommit(SPEECH_SILENCE_COMMIT_MS + INCOMPLETE_SILENCE_EXTRA_MS);
-        return;
-      }
-
       currentTranscript.value = combined;
       clearRecognitionBuffers();
       stopRecognition();
       void handleUserTurn(combined, token);
-    }, delayMs);
+    }, SPEECH_SILENCE_COMMIT_MS);
   };
 
   localRecognition.onresult = (event) => {
     if (!isCurrentSession(token)) return;
 
-    const next = extractTranscriptFromResults(event.results);
-    stableTranscriptBuffer = next.stable;
+    const next = extractTranscriptDelta(event);
+    if (next.stableDelta) {
+      stableTranscriptBuffer = [stableTranscriptBuffer, next.stableDelta]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+    }
     interimTranscriptBuffer = next.interim;
 
     const combined = composeBufferedTranscript();
@@ -915,7 +1049,6 @@ const startLiveRecognition = (token: number) => {
 
     sttNoSpeechRetryCount = 0;
     noSpeechRetryCount = 0;
-    incompleteCommitRetryCount = 0;
     currentTranscript.value = combined;
     scheduleSilenceCommit();
   };
@@ -971,7 +1104,7 @@ const startLiveRecognition = (token: number) => {
       void stopSession("target_reached");
       return;
     }
-    if (state.value === "processing" || state.value === "speaking" || state.value === "cooldown") return;
+    if (state.value === "processing" || state.value === "speaking") return;
 
     setAwaitingInputState();
     scheduleRecognitionRetry(token);
@@ -992,7 +1125,6 @@ const handleUserTurn = async (transcript: string, token: number) => {
 
   noSpeechRetryCount = 0;
   sttNoSpeechRetryCount = 0;
-  incompleteCommitRetryCount = 0;
   const elapsedBefore = getElapsedSeconds();
   const requestClose = shouldRequestClose(elapsedBefore);
 
@@ -1080,6 +1212,7 @@ const startSessionTimer = (token: number) => {
 const startSession = async () => {
   if (isSessionActive.value) return;
 
+  resetAudioGateTracking();
   sessionToken += 1;
   const token = sessionToken;
 
@@ -1095,7 +1228,6 @@ const startSession = async () => {
   conversationPhase.value = "opening";
   noSpeechRetryCount = 0;
   sttNoSpeechRetryCount = 0;
-  incompleteCommitRetryCount = 0;
   await startSessionAudioRecorder();
 
   startSessionTimer(token);
@@ -1116,13 +1248,18 @@ const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
   const endedProfileId = getOrCreateProfileId();
   const elapsedSec = getElapsedSeconds();
   const completedTurns = turnIndex.value;
+  const endedAtMs = Date.now();
+
+  markTtsEnd("session_end");
+  audioGateMetaSnapshot.value = buildAudioGateMeta(endedAtMs);
+  const gateMetaForUpload = getAudioGateMetaForUpload() as Record<string, unknown>;
   const recordedAudio = await stopSessionAudioRecorder();
   let uploadBlob = recordedAudio.blob;
   let uploadExtension = recordedAudio.extension;
 
   if (uploadBlob) {
     const convertedBlob = await convertBlobToWavIfPossible(uploadBlob);
-    if (convertedBlob.type.toLowerCase().includes("wav")) {
+    if ((convertedBlob.type || "").toLowerCase().includes("wav")) {
       uploadBlob = convertedBlob;
       uploadExtension = "wav";
     } else {
@@ -1148,7 +1285,6 @@ const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
   conversationPhase.value = "opening";
   noSpeechRetryCount = 0;
   sttNoSpeechRetryCount = 0;
-  incompleteCommitRetryCount = 0;
 
   if (clearMessages) {
     messages.value = [];
@@ -1163,7 +1299,12 @@ const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
           `conversation.user.${uploadExtension}`,
           { type: mimeType }
         );
-        await uploadSessionAudio(endedSessionId, uploadFile, endedProfileId);
+        await uploadSessionAudio(
+          endedSessionId,
+          uploadFile,
+          endedProfileId,
+          gateMetaForUpload
+        );
       } catch (error) {
         console.error("Session audio upload failed", error);
       }
@@ -1191,6 +1332,7 @@ const resetSession = () => {
     cancelSpeaking();
     void stopSessionAudioRecorder();
     void releaseMicMeterResources();
+    resetAudioGateTracking();
     state.value = "idle";
     currentTranscript.value = "";
     currentResponse.value = "";
@@ -1201,7 +1343,6 @@ const resetSession = () => {
     conversationPhase.value = "opening";
     noSpeechRetryCount = 0;
     sttNoSpeechRetryCount = 0;
-    incompleteCommitRetryCount = 0;
     messages.value = [];
     return;
   }
@@ -1209,11 +1350,15 @@ const resetSession = () => {
   void stopSession("reset", true);
 };
 
+const getAudioGateMetaForUpload = () =>
+  audioGateMetaSnapshot.value ?? buildAudioGateMeta(Date.now());
+
 export function useVoiceSession() {
   const isListening = computed(() => state.value === "listening");
   const isProcessing = computed(() => state.value === "processing");
   const isSpeaking = computed(() => state.value === "speaking");
   const isMockMode = computed(() => false);
+  const audioGateMeta = computed(() => buildAudioGateMeta(null));
 
   const startListening = () => {
     if (!isSessionActive.value) {
@@ -1242,6 +1387,12 @@ export function useVoiceSession() {
     currentResponse: readonly(currentResponse),
     voiceLevel: readonly(voiceLevel),
     isVoiceActive: readonly(isVoiceActive),
+    isTtsPlaying: readonly(isTtsPlaying),
+    droppedSegments: readonly(droppedSegments),
+    droppedTotalMs: readonly(droppedTotalMs),
+    audioGateMeta,
+    lastAudioGateMeta: readonly(audioGateMetaSnapshot),
+    getAudioGateMetaForUpload,
     sessionStartTime: readonly(sessionStartTime),
     isSessionActive: readonly(isSessionActive),
     isListening,

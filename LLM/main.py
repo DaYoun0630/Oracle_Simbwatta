@@ -98,6 +98,7 @@ STIMULUS_DUPLICATE_RETRY_LIMIT = 2
 STIMULUS_KEYWORD_JACCARD_THRESHOLD = 0.7
 STIMULUS_PROMPT_NGRAM_THRESHOLD = 0.82
 MAX_TRACE_READ_LIMIT = 1000
+DEFAULT_DIALOG_SUMMARY = "인사로 대화를 시작하고 안부를 나눔"
 
 # OpenAI Realtime API ?ㅼ젙
 REALTIME_MODEL = os.getenv("REALTIME_MODEL", "gpt-4o-realtime-preview")
@@ -166,37 +167,37 @@ MODULE_SEQUENCE = ("naming", "fluency", "discourse", "working_memory")
 # ???곸뿭蹂??몄? ?덈젴 留ㅽ븨 (?붾? 湲곕컲, ?ㅼ젣 紐⑤뜽 寃곌낵濡?諛붾줈 ?泥?媛??
 BRAIN_REGION_PROFILE_MAP: dict[str, dict[str, Any]] = {
     "hippocampus_atrophy": {
-        "label": "?대쭏 ?꾩텞",
+        "label": "해마 위축",
         "cognitive_targets": ["episodic_memory", "recent_memory", "sequence_memory", "spatial_memory"],
         "task_families": ["recent_event_recall", "timeline_recall", "daily_routine_sequence", "place_memory"],
         "module_weights": {"discourse": 3, "working_memory": 2, "naming": 1, "fluency": 1},
     },
     "temporal_atrophy": {
-        "label": "痢〓몢???꾩텞",
+        "label": "측두엽 위축",
         "cognitive_targets": ["semantic_memory", "language_comprehension", "word_retrieval", "auditory_processing"],
         "task_families": ["semantic_naming", "category_fluency", "meaning_explanation", "synonym_antonym"],
         "module_weights": {"naming": 3, "fluency": 3, "discourse": 1, "working_memory": 1},
     },
     "prefrontal_cortex_reduction": {
-        "label": "?꾩쟾?먯뿽 ?쇱쭏 媛먯냼",
+        "label": "전전두엽 피질 감소",
         "cognitive_targets": ["executive_function", "planning", "decision_making", "working_memory"],
         "task_families": ["step_planning", "priority_sorting", "problem_solving", "rule_based_recall"],
         "module_weights": {"working_memory": 3, "discourse": 3, "fluency": 1, "naming": 1},
     },
     "white_matter_lesions": {
-        "label": "諛깆쭏 蹂묐?",
+        "label": "백질 병변",
         "cognitive_targets": ["processing_speed", "attention", "response_latency", "cognitive_efficiency"],
         "task_families": ["quick_association", "simple_response", "yes_no_reaction", "short_calculation"],
         "module_weights": {"working_memory": 3, "fluency": 2, "naming": 1, "discourse": 1},
     },
     "frontal_atrophy": {
-        "label": "?꾨몢???꾩텞",
+        "label": "전두엽 위축",
         "cognitive_targets": ["emotion_regulation", "language_generation", "behavior_control", "action_description"],
         "task_families": ["emotion_expression", "sentence_generation", "preference_reasoning", "action_explanation"],
         "module_weights": {"discourse": 3, "fluency": 2, "working_memory": 2, "naming": 1},
     },
     "parietal_atrophy": {
-        "label": "?먯젙???꾩텞",
+        "label": "두정엽 위축",
         "cognitive_targets": ["visuospatial_attention", "direction_orientation", "numeracy", "spatial_relation"],
         "task_families": ["location_relation", "direction_description", "simple_numeracy", "distance_estimation"],
         "module_weights": {"working_memory": 3, "discourse": 2, "naming": 1, "fluency": 1},
@@ -270,6 +271,8 @@ KNOWN_CLIENT_SESSION_EVENTS = {
     "realtime_turn_ended",
     "realtime_timeout_triggered",
     "realtime_error",
+    "tts_start",
+    "tts_end",
     "client_audio_started",
     "client_audio_commit",
     "client_audio_stopped",
@@ -282,13 +285,13 @@ KNOWN_CLIENT_SESSION_EVENTS = {
 # =============================================================================
 @dataclass
 class UserPolicy:
-    """?ъ슜?먮퀎 LLM/STT/TTS 紐⑤뜽 諛??덈젴 ?뚮씪誘명꽣 ?뺤콉"""
+    """사용자별 LLM/STT/TTS 모델 및 세션 파라미터 정책."""
     llm_model: str = "gpt-4o"
     llm_fallback_model: str = "gpt-4o-mini"
     stt_model: str = "gpt-4o-transcribe"
     tts_model: str = "gpt-4o-mini-tts"
     tts_voice: str = "alloy"
-    tts_style: str = "?곕쑜?섍퀬 ?ㅼ젙?섍쾶 泥쒖쿇???먮컯?먮컯"
+    tts_style: str = "친절하고 다정하게, 천천히 또박또박 말해줘"
     warmup_turns: int = 2
     silence_hint_threshold: int = 1
     silence_switch_threshold: int = 2
@@ -303,7 +306,7 @@ class UserPolicy:
 
 @dataclass
 class SessionContext:
-    """?몄뀡 ?⑥쐞 ???留λ씫 (?붿빟, 理쒓렐 硫붿떆吏, ?섏옄 ?꾨줈?? 媛먯젙 ?곹깭 ??"""
+    """세션 컨텍스트(요약, 최근 메시지, 사용자 프로필, 감정 톤 등)."""
     session_id: str
     conversation_summary: str = ""
     recent_messages: list[dict[str, str]] = field(default_factory=list)
@@ -327,7 +330,7 @@ class SessionContext:
 
 @dataclass
 class RuntimeSessionState:
-    """?대퀎 ?고????곹깭 (移⑤У ?잛닔, ?뚰듃 ?덈꺼, ?꾩옱 ?먭레, ?ъ슜 ?대젰 ??"""
+    """런타임 상태(턴 수, 힌트 레벨, 현재 자극, 사용 이력 등)."""
     session_id: str
     dialog_state: DialogState = field(default_factory=DialogState)
     turn_count: int = 0
@@ -353,7 +356,7 @@ class RuntimeSessionState:
 
 @dataclass
 class BehaviorContract:
-    """LLM?먭쾶 ?꾨떖???됰룞 吏移?(?섎룄, 紐⑤뱢, ?뚰듃, ?쒖빟 議곌굔 ??"""
+    """LLM 응답 제약 계약(의도, 모듈, 힌트, 제약 조건 등)."""
     intent: str
     module: str
     hint_level: str
@@ -383,6 +386,62 @@ def parse_state(payload: dict[str, Any] | None) -> DialogState:
 
 def _clean_text(text: str) -> str:
     return " ".join((text or "").split()).strip()  # ?곗냽 怨듬갚???섎굹濡? ?욌뮘 怨듬갚 ?쒓굅
+
+
+MOJIBAKE_HINT_TOKENS = (
+    "몄궗濡",
+    "쒖옉",
+    "섎닎",
+    "寃쎈룄",
+    "留덉튌",
+    "理쒓렐",
+    "吏덈Ц",
+)
+
+
+def _looks_like_mojibake(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return False
+
+    if "\ufffd" in cleaned:
+        return True
+    if any(token in cleaned for token in MOJIBAKE_HINT_TOKENS):
+        return True
+    if "?" in cleaned and len(cleaned) >= 4:
+        return True
+    return False
+
+
+def _repair_possible_utf8_mojibake(text: str) -> str:
+    repaired = _clean_text(text)
+    if not repaired:
+        return repaired
+
+    # Handles common mojibake pattern such as "ìë..." -> "안녕..."
+    for _ in range(2):
+        try:
+            candidate = repaired.encode("latin-1").decode("utf-8")
+        except Exception:
+            break
+        candidate = _clean_text(candidate)
+        if not candidate or candidate == repaired:
+            break
+        repaired = candidate
+    return repaired
+
+
+def _sanitize_dialog_summary(summary: str, fallback: str = DEFAULT_DIALOG_SUMMARY) -> str:
+    repaired = _repair_possible_utf8_mojibake(summary)
+    fallback_clean = _repair_possible_utf8_mojibake(fallback)
+
+    if not repaired:
+        return fallback_clean[:MAX_SUMMARY_CHARS]
+    if _looks_like_mojibake(repaired):
+        if fallback_clean and not _looks_like_mojibake(fallback_clean):
+            return fallback_clean[:MAX_SUMMARY_CHARS]
+        return DEFAULT_DIALOG_SUMMARY[:MAX_SUMMARY_CHARS]
+    return repaired[:MAX_SUMMARY_CHARS]
 
 
 # ?덉쟾???뺤닔 蹂??(?ㅽ뙣 ??湲곕낯媛?諛섑솚)
@@ -439,7 +498,7 @@ def _parse_json_like(value: Any) -> Any:
 
 # 留ㅼ묶???띿뒪???뺢퇋??(怨듬갚, 援щ몢?? ?レ옄留??④린怨??뚮Ц?먰솕)
 def _normalize_for_match(text: str) -> str:
-    return re.sub(r"[^\w?-?]+", "", _clean_text(text)).lower()
+    return re.sub(r"[^\w\-\?]+", "", _clean_text(text)).lower()
 
 
 def _list_from_any(value: Any) -> list[str]:
@@ -651,7 +710,7 @@ def _get_next_session_slot(session_slot: str) -> str:
 
 def _get_session_label(session_slot: str) -> str:
     normalized = _normalize_session_slot(session_slot) or "morning"
-    return SESSION_SLOT_LABEL.get(normalized, "?꾩묠")
+    return SESSION_SLOT_LABEL.get(normalized, "아침")
 
 
 def _normalize_conversation_mode(raw_mode: Any) -> str:
@@ -752,7 +811,7 @@ def _load_user_policy_config() -> dict[str, Any]:
             "stt_model": "gpt-4o-transcribe",
             "tts_model": "gpt-4o-mini-tts",
             "tts_voice": "alloy",
-            "tts_style": "?곕쑜?섍퀬 ?ㅼ젙?섍쾶 泥쒖쿇???먮컯?먮컯",
+            "tts_style": "친절하고 다정하게, 천천히 또박또박 말해줘",
             "switch_sensitivity": "medium",
         },
     }
@@ -839,6 +898,10 @@ def _get_or_create_session_context(
         context.policy = policy
         if conversation_mode:
             context.conversation_mode = conversation_mode
+        context.conversation_summary = _sanitize_dialog_summary(
+            context.conversation_summary,
+            fallback=DEFAULT_DIALOG_SUMMARY,
+        )
         return context
 
     # ?놁쑝硫??덈줈 ?앹꽦
@@ -847,6 +910,10 @@ def _get_or_create_session_context(
         profile_id=profile_id,
         policy=policy,
         conversation_mode=conversation_mode,
+    )
+    created.conversation_summary = _sanitize_dialog_summary(
+        created.conversation_summary,
+        fallback=DEFAULT_DIALOG_SUMMARY,
     )
     SESSION_CONTEXT_STORE[session_id] = created
     return created
@@ -883,7 +950,7 @@ def _is_uncertain_utterance(user_text: str) -> bool:
     cleaned = _clean_text(user_text).lower()
     if not cleaned:
         return True  # 鍮?諛쒗솕??遺덊솗?ㅻ줈 媛꾩＜
-    # UNCERTAIN_TOKENS 以??섎굹?쇰룄 ?ы븿?섏뼱 ?덉쑝硫?遺덊솗??    return any(token in cleaned for token in UNCERTAIN_TOKENS)
+    return any(token in cleaned for token in UNCERTAIN_TOKENS)
 
 
 def _is_incomplete_utterance(user_text: str) -> bool:
@@ -1159,7 +1226,7 @@ def _build_fallback_stimulus(context: SessionContext, runtime: RuntimeSessionSta
     return {
         "module": runtime.module,
         "difficulty": runtime.difficulty,
-        "prompt": f"{topic}????????댁빞湲고빐 蹂????덉쓣源뚯슂?",
+        "prompt": f"{topic}와 관련된 이야기를 한 가지 더 들려주실래요?",
         "target_keywords": [topic],
         "related_keywords": [],
         "superordinate_keywords": [],
@@ -1267,8 +1334,6 @@ def _normalize_fatigue_state(raw: Any) -> str:
     value = _clean_text(str(raw or "")).lower()
     if value in ("normal", "warning", "stop"):
         return value
-    # ?ㅻⅨ ?쒗쁽???섏튂瑜?媛믪쑝濡?蹂??
-        return "normal"
     if value in ("medium",):
         return "warning"
     if value in ("high",):
@@ -1306,7 +1371,7 @@ def _decide_behavior_contract(
             outcome=outcome,
             next_move="close",
             constraints=constraints,
-            notes="?몄뀡 醫낅즺 ?붿껌. ?곕쑜??留덈Т由?1~2臾몄옣?쇰줈 ?몄궗?섏꽭??",
+            notes="Session close requested. Finish with a short 1-2 sentence wrap-up.",
         )
 
     if stt_uncertain:
@@ -1318,7 +1383,7 @@ def _decide_behavior_contract(
                 outcome="stt_uncertain",
                 next_move="confirm_stt",
                 constraints=constraints,
-                notes="STT 遺덊솗?? ?ㅼ떆 留먰빐?щ씪怨?1臾몄옣?쇰줈 ?붿껌?섏꽭??",
+                notes="STT uncertain. Ask for one short repetition.",
             )
         return BehaviorContract(
             intent="feedback",
@@ -1327,7 +1392,7 @@ def _decide_behavior_contract(
             outcome="stt_uncertain",
             next_move="retry",
             constraints=constraints,
-            notes="STT ?뺤씤??怨꾩냽 ?ㅽ뙣. 媛숈? ?쒗쁽??諛섎났?섏? 留먭퀬 吏㏃? ?뺤씤 吏덈Ц?쇰줈 ?꾪솚?섏꽭??",
+            notes="STT confirmation failed repeatedly. Switch to one concise confirmation question.",
         )
 
     if no_response:
@@ -1339,7 +1404,7 @@ def _decide_behavior_contract(
                 outcome="no_response",
                 next_move="close",
                 constraints=constraints,
-                notes="移⑤У??3???댁긽 怨꾩냽?? ?곕쑜??留덈Т由??몄궗濡?醫낅즺?섏꽭??",
+                notes="Silence repeated over threshold. Close gently.",
             )
         return BehaviorContract(
             intent="check_in",
@@ -1348,7 +1413,7 @@ def _decide_behavior_contract(
             outcome="no_response",
             next_move="ask",
             constraints=constraints,
-            notes="臾댁쓳???곹솴. ?섎?瑜?異붿젙?섏? 留먭퀬 諛붾줈 ?댁뼱 留먰븷 ???덈뒗 吏㏃? 吏덈Ц 1媛쒕줈 李몄뿬瑜??좊룄?섏꽭??",
+            notes="No response. Use one easy check-in question without assumptions.",
         )
 
     if not training_active:
@@ -1359,7 +1424,7 @@ def _decide_behavior_contract(
             outcome=outcome,
             next_move="ask",
             constraints=constraints,
-            notes="?뚮컢???④퀎. ?뺤삤???됯?/怨쇱젣 ?꾪솚 ?놁씠 諛섏쓳 ??諛붾줈 ?ㅼ쓬 吏덈Ц 1媛쒕? ?댁뼱媛?몄슂.",
+            notes="Warmup phase. Respond briefly and continue with one question.",
         )
 
     if outcome == "incomplete":
@@ -1370,7 +1435,7 @@ def _decide_behavior_contract(
             outcome="incomplete",
             next_move="ask",
             constraints=constraints,
-            notes="?ъ슜??諛쒗솕媛 誘몄셿?? ?댁슜???⑥젙?섏? 留먭퀬 留먮걹???댁뼱媛????덇쾶 吏㏐쾶 臾쇱뼱蹂댁꽭??",
+            notes="Incomplete utterance. Do not infer meaning; ask one short follow-up.",
         )
 
     if outcome == "correct":
@@ -1381,7 +1446,7 @@ def _decide_behavior_contract(
             outcome="correct",
             next_move="ask",
             constraints=constraints,
-            notes="?뺣떟. 吏㏃? 移?갔怨??④퍡 ??吏덈Ц?쇰줈 ?섏뼱媛?몄슂.",
+            notes="Near-correct answer. Brief praise then one next question.",
         )
 
     if outcome in {"related", "superordinate", "phonological"}:
@@ -1393,7 +1458,7 @@ def _decide_behavior_contract(
             outcome=outcome,
             next_move="hint_up",
             constraints=constraints,
-            notes="遺遺??뺣떟/愿???묐떟. ?뚰듃 ?덈꺼???щ젮 ?꾩?二쇱꽭??",
+            notes="Partially related answer. Increase hint level and retry.",
         )
 
     if runtime.error_streak + 1 >= 2:
@@ -1404,7 +1469,7 @@ def _decide_behavior_contract(
             outcome="unrelated",
             next_move="switch",
             constraints=constraints,
-            notes="?곗냽 ?ㅻ떟 諛쒖깮. 怨쇱젣瑜??꾪솚?섏꽭??",
+            notes="Consecutive unrelated answers. Switch task.",
         )
 
     return BehaviorContract(
@@ -1414,32 +1479,32 @@ def _decide_behavior_contract(
         outcome="unrelated",
         next_move="retry",
         constraints=constraints,
-        notes="?ㅻ떟 ?묐떟. 寃⑸젮 ???ㅼ떆 ??踰??쒕룄?섍쾶 ?섏꽭??",
+        notes="Unrelated answer. Encourage and ask one retry question.",
     )
 
 
 def _build_action_text(*, contract: BehaviorContract, policy: UserPolicy) -> str:
     constraints = contract.constraints or {}
-    one_question = "吏덈Ц 1媛쒕쭔" if _to_bool(constraints.get("one_question_only"), True) else ""
+    one_question = "one question only" if _to_bool(constraints.get("one_question_only"), True) else ""
 
     if contract.next_move == "close":
-        return "1~2臾몄옣?쇰줈 吏㏐쾶 ?붿빟?섍퀬 ?곕쑜?섍쾶 醫낅즺?섏꽭?? ??怨쇱젣????吏덈Ц? ?쒖옉?섏? 留덉꽭??"
+        return "Close with a warm 1-2 sentence wrap-up. Do not start a new task."
     if contract.next_move == "confirm_stt":
-        return "???ㅻ━吏 ?딆븯?ㅻ뒗 ?먮쭔 媛꾨떒??留먰븯怨? ??踰???留먰빐?щ씪??吏㏃? 吏덈Ц 1媛쒕? ?섏꽭??"
+        return "Ask one short confirmation question for repetition."
     if contract.outcome == "stt_uncertain":
-        return "異붿륫?섏? 留먭퀬 ?뺤씤 吏덈Ц 1媛쒕줈 ?ㅼ떆 ?낅젰???붿껌?섏꽭??"
+        return "Do not infer; request one concise reconfirmation question."
     if contract.outcome == "incomplete":
-        return "?ъ슜??諛쒗솕媛 ?앸굹吏 ?딆? ?곹깭濡?蹂닿퀬, ?댁꽍???⑥젙?섏? 留먭퀬 留먯쓣 ?댁뼱媛????덇쾶 吏덈Ц 1媛쒕? ?섏꽭??"
+        return "Treat as incomplete speech and ask one continuation-friendly question."
     if contract.outcome == "no_response":
-        return "移⑤У ?곹솴?낅땲?? 吏㏃? 泥댄겕????諛붾줈 ?듯븯湲??ъ슫 吏덈Ц 1媛쒕줈 ?ㅼ떆 李몄뿬瑜??좊룄?섏꽭??"
+        return "Use one gentle check-in question to re-engage."
     if contract.next_move == "switch":
-        return "二쇱젣 ?꾪솚 ?숈쓽瑜?臾살? 留먭퀬, 媛숈? ?댁뿉????怨쇱젣??泥?吏덈Ц 1媛쒓퉴吏 諛붾줈 ?댁뼱??留먰븯?몄슂."
+        return "Do not ask for topic-switch consent; immediately continue with one first question of the new task."
     if contract.next_move == "hint_up":
-        return "?뚰듃瑜?吏㏐쾶 ?쒓났?섍퀬 諛붾줈 ?ㅼ쓬 吏덈Ц 1媛쒕? ?섏꽭?? ?뺣떟??吏곸젒 怨듦컻?섏? 留덉꽭??"
+        return "Provide a short hint and continue with one next question without revealing the answer."
     if contract.next_move == "retry":
-        return "寃⑸젮 臾몄옣?쇰줈 ?앸궡吏 留먭퀬, 媛숈? 二쇱젣?먯꽌 諛붾줈 ?듯븷 ???덈뒗 援ъ껜 吏덈Ц 1媛쒕? ?댁뼱媛?몄슂."
+        return "Do not end with only encouragement; continue with one concrete retry question."
 
-    base = "?뺣떟??媛源뚯슫 吏㏃? 移?갔 ???먯뿰?ㅻ윭???ㅼ쓬 吏덈Ц 1媛쒕? ?섏꽭??"
+    base = "Give brief positive feedback and continue with one natural follow-up question."
     if one_question:
         return f"{base} ({one_question})"
     return base
@@ -1525,7 +1590,10 @@ def _refresh_summary_if_needed(context: SessionContext) -> None:
         recent_messages=context.recent_messages,
         user_profile=context.user_profile,
     )
-    context.conversation_summary = _clean_text(summary)[-MAX_SUMMARY_CHARS:]
+    context.conversation_summary = _sanitize_dialog_summary(
+        summary,
+        fallback=context.conversation_summary or DEFAULT_DIALOG_SUMMARY,
+    )
     context.last_summary_count = context.total_message_count
 
 
@@ -1544,7 +1612,7 @@ def _resolve_diagnosis_label(
 
     stage = _clean_text(str(model_result.get("diagnosis_label") or model_result.get("stage") or ""))
     lowered = stage.lower()
-    if "mci" in lowered or "寃쎈룄 ?몄??μ븷" in stage:
+    if "mci" in lowered or "경도 인지저하" in stage:
         return "MCI"
     return stage or "MCI"
 
@@ -1596,17 +1664,17 @@ def _finalize_closing_reply(reply: str, *, conversation_summary: str, user_text:
         if conversation_summary:
             first = re.split(r"[.!?]+", conversation_summary)[0].strip()
             if first:
-                return f"{first}. ?ㅻ뒛???ш린源뚯? ?댁슂."
+                return f"{first}. 오늘은 여기까지 할게요."
         if user_text:
-            return f"?ㅻ뒛 '{user_text[:24]}' ?댁빞湲곕? ???섏뀲?댁슂. ?ш린??留덉튌寃뚯슂."
-        return "?ㅻ뒛 ??붾뒗 ?ш린??留덉튌寃뚯슂."
+            return f"오늘 '{user_text[:24]}' 이야기를 나눴어요. 여기서 마칠게요."
+        return "오늘 대화는 여기서 마칠게요."
 
     # 臾쇱쓬?쒕? 留덉묠?쒕줈 蹂寃?(吏덈Ц ?쒓굅)
     text = text.replace("?", ".")
     # ?얜챷???브쑬??
     sentences = [segment.strip() for segment in re.split(r"[.!?]+", text) if segment.strip()]
     if not sentences:
-        return "?ㅻ뒛 ??붾뒗 ?ш린??留덉튌寃뚯슂."
+        return "오늘 대화는 여기서 마칠게요."
     if len(sentences) == 1:
         return f"{sentences[0]}."
     # 理쒕? 2臾몄옣?쇰줈 ?쒗븳
@@ -2317,6 +2385,10 @@ def _execute_turn(
 ) -> dict[str, Any]:
     # 寃쎄낵 ?쒓컙 ?낅뜲?댄듃
     context.elapsed_time = _safe_int(incoming_meta.get("elapsed_sec"), context.elapsed_time)
+    context.conversation_summary = _sanitize_dialog_summary(
+        context.conversation_summary,
+        fallback=DEFAULT_DIALOG_SUMMARY,
+    )
     # 醫낅즺 ?붿껌 ?뺤씤
     explicit_close = _to_bool(incoming_meta.get("request_close"), default=context.request_close)
     if request_close_override is not None:
@@ -2482,8 +2554,8 @@ def _execute_turn(
     action_text = _build_action_text(contract=contract, policy=policy)
     if user_time_reference and contract.next_move != "close":
         action_text = (
-            f"{action_text} ?ъ슜?먭? ?쒓컙 ?쒗쁽??留먰븯硫??쒓뎅?쒓컙(Asia/Seoul) 湲곗??쇰줈 "
-            "?꾩옱 ?쒓컖??吏㏐쾶 ?뺤씤????媛숈? ?댁뿉??吏덈Ц 1媛쒕? ?댁뼱媛?몄슂."
+            f"{action_text} 사용자가 시간 표현을 말하면 한국 시간(Asia/Seoul) 기준으로 "
+            "현재 시각을 짧게 확인하고, 같은 흐름에서 질문 1개를 이어가세요."
         )
     turn_phase = _build_turn_phase(runtime, policy, explicit_close or contract.next_move == "close")
     if turn_phase == "warmup":
@@ -2561,6 +2633,10 @@ def _execute_turn(
     _append_used_phrase(runtime, reply)
     # ?꾩슂 ??????붿빟 媛깆떊
     _refresh_summary_if_needed(context)
+    context.conversation_summary = _sanitize_dialog_summary(
+        context.conversation_summary,
+        fallback=DEFAULT_DIALOG_SUMMARY,
+    )
 
     # DialogState ?낅뜲?댄듃
     dialog_state = runtime.dialog_state
@@ -2903,7 +2979,7 @@ async def start_chat(req: StartRequest):
             outcome="related",
             next_move="ask",
             constraints=_build_contract_constraints(policy),
-            notes="泥??몄궗 ?? ?곕쑜???덈? ?몄궗 ??媛踰쇱슫 吏덈Ц 1媛?",
+            notes="첫 인사 후 사용자의 반응을 확인하는 가벼운 질문 1개",
         )
         
         # ?쒖옉 硫뷀? ?뺣낫 援ъ꽦
@@ -2950,7 +3026,10 @@ async def start_chat(req: StartRequest):
         runtime.dialog_state.last_assistant_utterance = opening_message
         _append_recent_message(context, "assistant", opening_message)
         _append_used_phrase(runtime, opening_message)
-        context.conversation_summary = "?몄궗濡???붾? ?쒖옉?섍퀬 ?덈?瑜??섎닎"
+        context.conversation_summary = _sanitize_dialog_summary(
+            DEFAULT_DIALOG_SUMMARY,
+            fallback=DEFAULT_DIALOG_SUMMARY,
+        )
 
         # 嚥≪뮄??疫꿸퀡以?
         append_conversation("assistant", opening_message)
@@ -3012,7 +3091,7 @@ async def start_chat(req: StartRequest):
             "session_start_turn",
             {
                 "turn_index": runtime.dialog_state.turn_index,
-                "user_text": "????몄궗 ?쒖옉",
+                "user_text": "세션 인사 시작",
                 "assistant_text": opening_message,
                 "behavior_contract": _contract_to_dict(opening_contract),
                 "response_meta": opening_meta_response,
@@ -3102,6 +3181,7 @@ async def upload_session_audio(
     file: UploadFile = File(...),
     session_id: str = Form(...),
     profile_id: str = Form(default=""),
+    audio_gate_meta: str = Form(default=""),
 ):
     safe_session = sanitize_session_id(session_id)
     if not safe_session:
@@ -3117,6 +3197,13 @@ async def upload_session_audio(
     raw_path = archive_dir / f"conversation.user{suffix}"
     temp_raw_path: Path | None = None
     conversion_error: str | None = None
+
+    gate_meta_payload = parse_json_object_form(
+        audio_gate_meta,
+        field_name="audio_gate_meta",
+        default=None,
+    )
+    gate_meta_path: Path | None = None
 
     try:
         payload = await file.read()
@@ -3148,6 +3235,13 @@ async def upload_session_audio(
             except Exception:
                 conversion_error = "invalid_wav_source_saved_as_is"
 
+        if isinstance(gate_meta_payload, dict):
+            gate_meta_path = archive_dir / "conversation.user.meta.json"
+            gate_meta_path.write_text(
+                json.dumps(gate_meta_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
         event_payload = {
             "session_id": safe_session,
             "patient_id": patient_id,
@@ -3155,6 +3249,8 @@ async def upload_session_audio(
             "audio_format": final_path.suffix.lstrip("."),
             "converted_to_wav": converted_to_wav,
             "conversion_error": conversion_error,
+            "audio_gate_meta_path": str(gate_meta_path) if gate_meta_path else None,
+            "audio_gate_meta": gate_meta_payload if isinstance(gate_meta_payload, dict) else None,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
         }
         append_session_event(safe_session, "session_audio_uploaded", event_payload)
@@ -3844,10 +3940,19 @@ async def voice_chat(
             append_conversation("user", transcript_text)
             append_session_conversation(session_id, "user", transcript_text)
 
-        runtime.dialog_state = update_state(
+        runtime.dialog_state = decide_next_state(
             runtime.dialog_state,
-            transcript_text,
-            meta=voice_meta,
+            {
+                "user_text": transcript_text,
+                "is_speech_detected": transcription.is_speech_detected,
+                "is_recognized": transcription.is_recognized,
+                "recognition_confidence": transcription.confidence,
+                "silence_duration": silence_duration,
+                "consecutive_failures": runtime.consecutive_failures,
+                "elapsed_sec": context.elapsed_time,
+                "turn_index": runtime.turn_count,
+                "request_close": _to_bool(voice_meta.get("request_close"), False),
+            },
         )
 
         if not auto_chat:
