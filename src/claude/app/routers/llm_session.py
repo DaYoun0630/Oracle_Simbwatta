@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -17,6 +18,7 @@ from ..storage import storage
 
 router = APIRouter(tags=["llm-session"])
 KST = timezone(timedelta(hours=9))
+logger = logging.getLogger(__name__)
 
 SESSION_OUTPUT_BUCKET = settings.llm_session_output_bucket
 VOICE_RECORDING_BUCKET = "voice-recordings"
@@ -32,6 +34,22 @@ CONVERSATION_MODE_ALIASES = {
     "both": "mixed",
     "hybrid": "mixed",
     "일상+치료": "mixed",
+}
+
+MRI_BOOL_TO_NEURO_REGION = {
+    "hippocampal_atrophy": "hippocampus_atrophy",
+    "medial_temporal_atrophy": "temporal_atrophy",
+    "white_matter_lesions": "white_matter_lesions",
+    "frontal_atrophy": "frontal_atrophy",
+    "parietal_atrophy": "parietal_atrophy",
+}
+
+NEURO_REGION_TRAINING_HINTS = {
+    "hippocampus_atrophy": ["최근 기억 회상", "순서 기억"],
+    "temporal_atrophy": ["의미 기반 단어 찾기", "범주 유창성"],
+    "white_matter_lesions": ["주의 전환", "처리 속도 훈련"],
+    "frontal_atrophy": ["문장 생성", "행동 설명"],
+    "parietal_atrophy": ["공간/방향 설명", "간단 수리 과제"],
 }
 
 _SCHEMA_READY = False
@@ -91,6 +109,145 @@ def _safe_object_token(value: Any, default: str = "anonymous") -> str:
     raw = _normalize_text(value) or default
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in raw)
     return (cleaned[:120] or default).strip("_") or default
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    lowered = _normalize_text(value).lower()
+    return lowered in {"true", "t", "1", "yes", "y", "on"}
+
+
+def _dedupe_keep_order(values: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        normalized = _normalize_text(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+async def _fetch_patient_model_context(patient_id: int) -> Dict[str, Any]:
+    try:
+        patient_row = await db.fetchrow(
+            """
+            SELECT COALESCE(risk_level, '') AS risk_level
+            FROM patients
+            WHERE user_id = $1
+            """,
+            patient_id,
+        )
+    except Exception:
+        logger.exception("Failed to read patient risk_level for patient_id=%s", patient_id)
+        return {}
+    risk_level = _normalize_text(patient_row["risk_level"]) if patient_row else ""
+
+    try:
+        mri_row = await db.fetchrow(
+            """
+            SELECT
+                assessment_id,
+                classification,
+                predicted_stage,
+                confidence,
+                COALESCE(scan_date, created_at) AS assessed_at,
+                hippocampal_atrophy,
+                medial_temporal_atrophy,
+                white_matter_lesions,
+                frontal_atrophy,
+                parietal_atrophy
+            FROM mri_assessments
+            WHERE patient_id = $1
+            ORDER BY scan_date DESC NULLS LAST, created_at DESC
+            LIMIT 1
+            """,
+            patient_id,
+        )
+    except Exception:
+        logger.exception("Failed to read mri_assessments for patient_id=%s", patient_id)
+        mri_row = None
+
+    payload: Dict[str, Any] = {}
+    if risk_level:
+        payload["risk_level"] = risk_level
+
+    if not mri_row:
+        return payload
+
+    row = dict(mri_row)
+    neuro_pattern: List[str] = []
+    region_scores: Dict[str, float] = {}
+    for db_col, region_key in MRI_BOOL_TO_NEURO_REGION.items():
+        if _coerce_bool(row.get(db_col)):
+            neuro_pattern.append(region_key)
+            region_scores[region_key] = 1.0
+
+    recommended_training: List[str] = []
+    for region_key in neuro_pattern:
+        recommended_training.extend(NEURO_REGION_TRAINING_HINTS.get(region_key, []))
+
+    stage = _normalize_text(row.get("classification") or row.get("predicted_stage"))
+    if stage:
+        payload["stage"] = stage
+    if neuro_pattern:
+        payload["neuro_pattern"] = neuro_pattern
+        payload["main_region"] = neuro_pattern[0]
+        payload["region_scores"] = region_scores
+    if recommended_training:
+        payload["recommended_training"] = _dedupe_keep_order(recommended_training)
+
+    confidence = row.get("confidence")
+    if confidence is not None:
+        try:
+            payload["confidence"] = float(confidence)
+        except (TypeError, ValueError):
+            pass
+
+    assessment_id = row.get("assessment_id")
+    if assessment_id is not None:
+        payload["mri_assessment_id"] = str(assessment_id)
+    assessed_at = row.get("assessed_at")
+    if isinstance(assessed_at, datetime):
+        payload["mri_assessed_at"] = assessed_at.isoformat()
+    return payload
+
+
+def _build_effective_model_result(
+    original_model_result: Optional[Dict[str, Any]],
+    *,
+    patient_id: int,
+    patient_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(original_model_result or {})
+    if not patient_context:
+        return merged
+
+    for key in (
+        "stage",
+        "risk_level",
+        "neuro_pattern",
+        "main_region",
+        "region_scores",
+        "recommended_training",
+        "confidence",
+    ):
+        value = patient_context.get(key)
+        if value in (None, "", [], {}):
+            continue
+        merged[key] = value
+
+    merged["context_source"] = "patient_latest_mri_assessment"
+    merged["context_patient_id"] = patient_id
+    if patient_context.get("mri_assessment_id"):
+        merged["mri_assessment_id"] = patient_context["mri_assessment_id"]
+    if patient_context.get("mri_assessed_at"):
+        merged["mri_assessed_at"] = patient_context["mri_assessed_at"]
+    return merged
 
 
 async def _ensure_schema() -> None:
@@ -513,6 +670,12 @@ async def start_chat(req: StartRequest):
     conversation_mode = _normalize_conversation_mode(meta.conversation_mode)
     elapsed_sec = int(meta.elapsed_sec or 0)
     now = _kst_now_naive()
+    patient_context = await _fetch_patient_model_context(patient_id)
+    effective_model_result = _build_effective_model_result(
+        req.model_result or {},
+        patient_id=patient_id,
+        patient_context=patient_context,
+    )
 
     state_payload: Dict[str, Any] = {
         "conversation_phase": "opening",
@@ -527,7 +690,7 @@ async def start_chat(req: StartRequest):
         "last_assistant_utterance": "",
     }
 
-    patient_stage = _normalize_text((req.model_result or {}).get("stage") or "")
+    patient_stage = _normalize_text(effective_model_result.get("stage") or "")
     if not patient_stage:
         patient_stage = await _fetch_patient_stage(patient_id)
 
@@ -536,6 +699,7 @@ async def start_chat(req: StartRequest):
         conversation_history=[],
         prompt_type="cognitive_training",
         patient_stage=patient_stage,
+        model_result=effective_model_result,
     )
     opening_message = _normalize_text(opening_message) or "안녕하세요. 오늘은 어떻게 지내셨나요?"
     state_payload["last_assistant_utterance"] = opening_message
@@ -551,7 +715,7 @@ async def start_chat(req: StartRequest):
         status="active",
         state=state_payload,
         dialog_summary=dialog_summary,
-        metadata={"model_result": req.model_result or {}, "meta": meta_payload},
+        metadata={"model_result": effective_model_result, "meta": meta_payload},
         started_at=now,
     )
     await _insert_turn(
@@ -581,6 +745,8 @@ async def start_chat(req: StartRequest):
             "stt_event": "speech",
             "patient_id": patient_id,
             "profile_id": profile_id,
+            "main_region": effective_model_result.get("main_region"),
+            "neuro_pattern": effective_model_result.get("neuro_pattern"),
         },
     }
 
@@ -623,7 +789,13 @@ async def chat(req: ChatRequest):
         await _upsert_training_session(session_id, patient_id, now)
 
     history = await _load_history(session_id)
-    patient_stage = _normalize_text((req.model_result or {}).get("stage") or "")
+    patient_context = await _fetch_patient_model_context(patient_id)
+    effective_model_result = _build_effective_model_result(
+        req.model_result or {},
+        patient_id=patient_id,
+        patient_context=patient_context,
+    )
+    patient_stage = _normalize_text(effective_model_result.get("stage") or "")
     if not patient_stage:
         patient_stage = await _fetch_patient_stage(patient_id)
 
@@ -640,6 +812,7 @@ async def chat(req: ChatRequest):
         conversation_history=history,
         prompt_type="cognitive_training",
         patient_stage=patient_stage,
+        model_result=effective_model_result,
     )
     assistant_message = _normalize_text(assistant_message) or "말씀 감사합니다. 이어서 한 가지 더 들려주실래요?"
 
@@ -673,7 +846,7 @@ async def chat(req: ChatRequest):
         state=state_payload,
         metadata={
             "meta": meta_payload,
-            "model_result": req.model_result or {},
+            "model_result": effective_model_result,
             "stt_event": stt_event,
             "request_close": requested_close,
             "closing_reason": closing_reason,
@@ -694,7 +867,7 @@ async def chat(req: ChatRequest):
             "last_turn_index": turn_index,
             "last_stt_event": stt_event,
             "meta": meta_payload,
-            "model_result": req.model_result or {},
+            "model_result": effective_model_result,
         },
         started_at=now,
     )
@@ -714,6 +887,8 @@ async def chat(req: ChatRequest):
             "closing_reason": closing_reason,
             "patient_id": patient_id,
             "profile_id": profile_id,
+            "main_region": effective_model_result.get("main_region"),
+            "neuro_pattern": effective_model_result.get("neuro_pattern"),
         },
     }
 

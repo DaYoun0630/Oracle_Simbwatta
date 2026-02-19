@@ -249,6 +249,43 @@ LLM 대화 세션의 결과를 PostgreSQL + MinIO에 남기고, 조건 충족 �
 docker compose --env-file docker/.env -f docker/docker-compose.yml up -d api
 ```
 
+#### 13) 프론트-백엔드 LLM 컨텍스트 자동 연결 (frontend_backend_connect, 2026-02-19)
+
+LLM 프롬프트가 프론트의 고정 더미값에만 의존하지 않도록, `patient_id` 기준 최신 MRI 진단 플래그를 백엔드에서 자동 주입하도록 반영했습니다.
+
+- 대상 파일:
+  - `src/claude/app/routers/llm_session.py`
+  - `src/claude/app/llm.py`
+
+- 동작 방식:
+  1. `/start`, `/chat` 요청 시 `meta.patient_id`로 환자 식별
+  2. `mri_assessments` 최신 1건을 조회
+  3. 의사진단 체크박스(Boolean) 컬럼을 LLM 지역 키로 매핑
+  4. `model_result`를 서버에서 병합(override) 후 프롬프트 구성
+
+- MRI 체크박스 -> LLM 지역 매핑:
+  - `hippocampal_atrophy` -> `hippocampus_atrophy`
+  - `medial_temporal_atrophy` -> `temporal_atrophy`
+  - `white_matter_lesions` -> `white_matter_lesions`
+  - `frontal_atrophy` -> `frontal_atrophy`
+  - `parietal_atrophy` -> `parietal_atrophy`
+
+- 최종 프롬프트 반영 필드(자동):
+  - `stage`
+  - `risk_level`
+  - `neuro_pattern`
+  - `main_region`
+  - `region_scores`
+  - `recommended_training`
+
+- 장애/예외 처리:
+  - MRI 데이터가 없거나 조회 실패 시 기존 로직으로 fallback
+  - 즉, 서비스 중단 없이 일반 대화 경로 유지
+
+- 기대 효과:
+  - 의사가 체크한 뇌영역 정보가 같은 환자 세션 프롬프트에 일관되게 반영
+  - 프론트가 단순 payload를 보내도 백엔드에서 환자 맞춤형 컨텍스트 보정 가능
+
 ### 실행 방법 (MRI 풀 파이프라인)
 
 프로젝트 루트에서:

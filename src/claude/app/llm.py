@@ -5,7 +5,7 @@ Provides Korean-optimized conversational AI for cognitive training.
 Uses OpenAI GPT-4o-mini with carefully crafted prompts for elderly patients.
 """
 
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 import yaml
 from pathlib import Path
 
@@ -16,6 +16,15 @@ from .config import settings
 
 class LLMService:
     """Service for LLM-based chat interactions."""
+
+    REGION_LABELS: Dict[str, str] = {
+        "hippocampus_atrophy": "해마 위축",
+        "temporal_atrophy": "측두엽 위축",
+        "prefrontal_cortex_reduction": "전전두엽 기능 저하",
+        "white_matter_lesions": "백질 병변",
+        "frontal_atrophy": "전두엽 위축",
+        "parietal_atrophy": "두정엽 위축",
+    }
 
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -38,12 +47,75 @@ class LLMService:
             data = yaml.safe_load(f)
             return data.get("prompts", {})
 
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @classmethod
+    def _region_label(cls, region_key: str) -> str:
+        key = cls._normalize_text(region_key)
+        if not key:
+            return ""
+        return cls.REGION_LABELS.get(key, key)
+
+    @classmethod
+    def _list_from_any(cls, value: Any) -> List[str]:
+        if isinstance(value, list):
+            return [cls._normalize_text(item) for item in value if cls._normalize_text(item)]
+        normalized = cls._normalize_text(value)
+        if normalized:
+            return [normalized]
+        return []
+
+    @staticmethod
+    def _dedupe_keep_order(values: List[str]) -> List[str]:
+        seen = set()
+        result: List[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    def _build_model_context(self, patient_stage: str, model_result: Optional[Dict[str, Any]]) -> str:
+        stage = self._normalize_text(patient_stage)
+        result = dict(model_result or {})
+        risk_level = self._normalize_text(result.get("risk_level"))
+        main_region = self._normalize_text(result.get("main_region"))
+        neuro_pattern = self._list_from_any(result.get("neuro_pattern"))
+        recommended_training = self._list_from_any(result.get("recommended_training"))
+
+        region_labels = self._dedupe_keep_order(
+            [self._region_label(region) for region in neuro_pattern if self._region_label(region)]
+        )
+        if not region_labels and main_region:
+            region_labels = [self._region_label(main_region)]
+
+        lines = [f"환자의 현재 상태: {stage or 'unknown'}"]
+        if risk_level:
+            lines.append(f"위험도: {risk_level}")
+        if region_labels:
+            lines.append(f"중점 뇌영역: {', '.join(region_labels)}")
+        if recommended_training:
+            lines.append(f"권장 훈련: {', '.join(recommended_training)}")
+
+        lines.extend(
+            [
+                "지침:",
+                "- 중점 뇌영역/권장 훈련을 우선 반영해서 질문을 구성하세요.",
+                "- 환자가 부담스럽지 않게 짧고 명확한 문장으로 진행하세요.",
+            ]
+        )
+        return "\n".join(lines)
+
     async def chat(
         self,
         message: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         prompt_type: str = "cognitive_training",
-        patient_stage: str = "unknown"
+        patient_stage: str = "unknown",
+        model_result: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Send a chat message and get LLM response.
@@ -53,6 +125,7 @@ class LLMService:
             conversation_history: Previous conversation (list of {"role": "user/assistant", "content": "..."})
             prompt_type: Type of prompt to use (cognitive_training, memory_exercise, etc.)
             patient_stage: Patient's MCI stage for tailored responses
+            model_result: Additional patient model context (region/risk/training)
 
         Returns:
             LLM response text
@@ -61,9 +134,8 @@ class LLMService:
         system_prompt = self.prompts.get("system", "")
         task_prompt = self.prompts.get(prompt_type, "")
 
-        # Add patient stage context
-        stage_context = f"\n\n환자의 현재 상태: {patient_stage}"
-        full_system_prompt = f"{system_prompt}\n\n{task_prompt}{stage_context}"
+        model_context = self._build_model_context(patient_stage, model_result)
+        full_system_prompt = f"{system_prompt}\n\n{task_prompt}\n\n{model_context}"
 
         # Build messages
         messages = [{"role": "system", "content": full_system_prompt}]
