@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "change_me"
     minio_secure: bool = False
+    llm_session_output_bucket: str = "llm-session-outputs"
 
     # JWT
     jwt_secret: str = "change_me_this_is_secret_key_for_jwt_tokens"

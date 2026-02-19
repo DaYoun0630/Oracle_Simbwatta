@@ -39,7 +39,7 @@ Raspberry Pi 5 + Docker Compose 환경에서 동작하는 이중(음성/MRI) 인
 └── pyproject.toml
 ```
 
-### 지금까지 완료된 핵심 작업 (2026-02-16 기준)
+### 지금까지 완료된 핵심 작업 (2026-02-19 기준)
 
 #### 1) MRI 풀 파이프라인 연결
 
@@ -130,7 +130,8 @@ MRI 워커 경로에서 ANTs + CatBoost 추론이 동작하도록 의존성이 �
 
 #### 8) 프론트엔드 영향 범위
 
-이번 작업은 MRI 백엔드 파이프라인 중심이며, 프론트 연동 로직을 건드리지 않는 방향으로 진행되었습니다.
+2026-02-16 시점까지는 MRI 백엔드 파이프라인 중심으로 진행되어 프론트 영향이 제한적이었습니다.
+이후 2026-02-19 기준으로 프론트 소스 동기화가 추가로 수행되었습니다(아래 10, 11 항목).
 
 #### 9) 백엔드-프론트 연동 현황 (현재 기준)
 
@@ -158,13 +159,95 @@ MRI 워커 경로에서 ANTs + CatBoost 추론이 동작하도록 의존성이 �
   - 즉, 대상자/보호자 실연동을 위해 경로 통일이 필요
 
 - 음성 세션 경로:
-  - 프론트 음성 세션은 `VITE_API_BASE_URL` 기준 REST(`/start`, `/chat`, `/session/end`) 사용
+  - 프론트 음성 세션은 `VITE_API_BASE_URL` 기준 REST(`/start`, `/chat`, `/session/upload-audio`, `/session/end`) 사용
+  - 동일 라우트 alias(`/api/start`, `/api/chat`, `/api/session/upload-audio`, `/api/session/end`)도 지원
   - 별도로 백엔드에는 `/api/patient/chat` WebSocket 엔드포인트도 존재
   - 현재 어떤 경로를 표준으로 운영할지 결정 후 단일화 권장
 
 - MRI 업로드 -> 추론 자동 시작:
   - 현재는 `scripts/ingest_mri_folder.py`가 풀 파이프라인 진입점
   - 프론트 업로드 이벤트에서 자동으로 ingest를 트리거하는 API 연동은 다음 단계
+
+#### 10) 비밀번호 로그인 백엔드 추가 (2026-02-19)
+
+OAuth 기반 로그인과 별개로, 이메일/비밀번호 로그인 백엔드를 추가했습니다.
+
+- 마이그레이션 추가:
+  - `migrations/009_add_password_hash_to_users.sql`
+  - `users.password_hash` 컬럼 + `LOWER(email)` 인덱스 추가
+- 인증 라우터 확장:
+  - `POST /api/auth/register`
+  - `POST /api/auth/login`
+  - `POST /api/auth/verify-subject-link`
+- 해시 방식:
+  - `pbkdf2_sha256` 기반 해시 저장/검증
+- 기존 Google OAuth 흐름은 그대로 유지
+
+적용 시 유의사항:
+
+- 신규 컬럼 반영을 위해 `009` 마이그레이션 적용이 필요합니다.
+- API 컨테이너 재빌드/재시작 후 사용해야 합니다.
+
+#### 11) 프론트 소스 동기화 작업 (2026-02-19)
+
+프론트 최신 UI를 반영하기 위해 원격 브랜치 소스를 안전 방식으로 동기화했습니다.
+
+- 소스 기준 브랜치:
+  - `oracle/chore/upload-sim-web-service-llm-20260219`
+- 동기화 원칙:
+  - 원격 `src/**` -> 로컬 `frontend/src/**` 매핑 반영
+  - 백엔드 코드가 있는 로컬 `src/claude/**`는 절대 덮어쓰지 않음
+- 반영 결과:
+  - 매핑 대상 77개 파일 기준 `SAME=77, DIFF=0, NEW=0` 상태 확인
+  - 프론트 빌드(`npm --prefix frontend run build`) 성공
+
+주의:
+
+- 동기화 과정에서 프론트 로그인/회원가입 화면 로직이 원격 최신본으로 바뀔 수 있으므로,
+  비밀번호 로그인 UI를 최종 운영하려면 백엔드 `/api/auth/*` 엔드포인트 호출 연결을 재확인해야 합니다.
+
+#### 12) LLM 세션 파이프라인 백엔드 연동 (2026-02-19)
+
+LLM 대화 세션의 결과를 PostgreSQL + MinIO에 남기고, 조건 충족 시 음성 ML 워커까지 자동 연결되도록 반영했습니다.
+
+- 신규/수정 파일:
+  - `src/claude/app/routers/llm_session.py` (신규)
+  - `src/claude/app/schemas/llm_session.py` (신규)
+  - `src/claude/app/main.py` (라우터 등록)
+  - `src/claude/app/config.py` (`llm_session_output_bucket`)
+  - `src/claude/app/storage.py` (기본 버킷 생성 목록 확장)
+
+- REST 엔드포인트:
+  - `POST /start` (`/api/start` alias)
+  - `POST /chat` (`/api/chat` alias)
+  - `POST /session/upload-audio` (`/api/session/upload-audio` alias)
+  - `POST /session/end` (`/api/session/end` alias)
+
+- 저장 구조:
+  - MinIO: `llm-session-outputs` 버킷에 세션 오디오/대화 로그/manifest 저장
+  - PostgreSQL:
+    - `llm_chat_sessions`
+    - `llm_chat_turns`
+    - `llm_session_outputs`
+  - 공통 오브젝트 이력: `storage_objects`에도 함께 기록
+
+- Celery 트리거 규칙(`process_voice_recording`):
+  - 업로드 파일은 우선 `llm-session-outputs`에 항상 저장
+  - 아래 조건에서만 음성 ML 파이프라인 큐 발행
+    - 업로드 포맷이 `wav`
+    - 세션 transcript(사용자 발화 누적)가 비어있지 않음
+  - 조건 충족 시:
+    - `voice-recordings` / `voice-transcript` 객체 생성
+    - `recordings` 레코드 생성
+    - Redis broker 통해 Celery 태스크 enqueue
+
+- 운영 시 주의:
+  - API 컨테이너 환경변수는 `docker/.env`를 기준으로 로드됩니다.
+  - 변경 반영 시 아래처럼 env 파일을 명시해 재기동하는 것을 권장합니다.
+
+```bash
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d api
+```
 
 ### 실행 방법 (MRI 풀 파이프라인)
 
@@ -212,6 +295,28 @@ SELECT
   processed_at,
   created_at
 FROM mri_assessments
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+#### LLM 세션 + 음성 워커 연동 확인 SQL
+
+```sql
+-- 최근 LLM 세션 상태
+SELECT session_id, patient_id, status, started_at, ended_at, end_reason
+FROM llm_chat_sessions
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- 세션 산출물(MinIO 객체) 확인
+SELECT session_id, output_type, bucket, object_key, size_bytes, created_at
+FROM llm_session_outputs
+ORDER BY created_at DESC
+LIMIT 30;
+
+-- 음성 워커 처리 완료 여부 확인
+SELECT recording_id, training_id, patient_id, status, file_path, uploaded_at
+FROM recordings
 ORDER BY created_at DESC
 LIMIT 20;
 ```

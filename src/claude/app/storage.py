@@ -32,6 +32,7 @@ class StorageService:
             "mri-preprocessed",
             # Future CAM/XAI artifacts (heatmaps, overlays, metadata)
             "mri-xai",
+            settings.llm_session_output_bucket,
         ]
 
         for bucket in buckets:
