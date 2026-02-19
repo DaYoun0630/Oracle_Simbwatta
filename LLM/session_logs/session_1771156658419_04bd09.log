@@ -1,6 +1,0 @@
-[2026-02-15T11:57:38.419750+00:00] assistant: ??? ?????.
-[2026-02-15T11:57:38.420305+00:00] event:session_start {"started_at": "2026-02-15T11:57:38.420287+00:00", "conversation_mode": "therapy", "session_slot": "evening", "next_session_slot": "morning", "policy": {"llm_model": "gpt-4o", "llm_fallback_model": "gpt-4o-mini", "stt_model": "gpt-4o-transcribe", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_style": "???? ????? ?? ?? ?", "warmup_turns": 2, "silence_hint_threshold": 1, "silence_switch_threshold": 2, "silence_close_threshold": 3, "stt_confirm_limit": 1, "wait_time_sec": 3, "max_sentences": 2, "max_turn_seconds": 18, "hint_speed": "medium", "switch_sensitivity": "medium"}, "training_type": "semantic_fluency"}
-[2026-02-15T11:57:38.430580+00:00] user: ?? ??? ?????
-[2026-02-15T11:57:38.431670+00:00] assistant: ??? ?????.
-[2026-02-15T11:57:38.454796+00:00] event:realtime_turn_ended {"event_id": "evt-1", "event_seq": 1, "event_ts": null, "payload": {"turn_end_reason": "silence"}}
-[2026-02-15T11:57:38.478920+00:00] event:session_end {"session_id": "session_1771156658419_04bd09", "end_reason": "manual", "elapsed_sec": 60, "turn_count": 2, "session_mode": "therapy", "ended_at": "2026-02-15T11:57:38.478905+00:00"}
