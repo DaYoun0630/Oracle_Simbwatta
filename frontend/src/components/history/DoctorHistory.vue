@@ -5,6 +5,7 @@ import RegionContributionChart from '../mri/RegionContributionChart.vue';
 import DoctorDiagnosisForm from '../mri/DoctorDiagnosisForm.vue';
 import EmptyState from '../common/EmptyState.vue';
 import AlertBanner from '../common/AlertBanner.vue';
+import { useAuthStore } from '@/stores/auth';
 
 // 임상 추세 데이터 타입 정의
 interface ClinicalTrends {
@@ -122,6 +123,7 @@ interface ScoreCardConfig {
 const STALE_THRESHOLD_DAYS = 120;
 const VOICE_CHART_WIDTH = 640;
 const VOICE_CHART_HEIGHT = 200;
+const authStore = useAuthStore();
 
 const ensureArray = <T,>(value: T[] | null | undefined) => (Array.isArray(value) ? value : []);
 
@@ -1318,8 +1320,58 @@ const mriSubtypeConfidenceText = computed(() => {
   return `신뢰도 ${Math.round(clamp(percent, 0, 100))}%`;
 });
 
-const handleDiagnosisSubmit = (data: any) => {
-  console.log('진단 데이터 제출:', data);
+const handleDiagnosisSubmit = async (data: any) => {
+  const patientId = data?.patientId ?? currentPatient.value?.id;
+  if (!patientId) {
+    alert('환자 정보가 없어 진단을 저장할 수 없습니다.');
+    return;
+  }
+
+  const payload = {
+    stage: String(data?.stage ?? '').trim(),
+    diagnoses: Array.isArray(data?.diagnoses) ? data.diagnoses : [],
+    additionalNotes: String(data?.additionalNotes ?? '').trim(),
+    timestamp: data?.timestamp ?? new Date().toISOString(),
+    doctorId: data?.doctorId || String(authStore.userId ?? ''),
+  };
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  if (authStore.token) {
+    headers.Authorization = `Bearer ${authStore.token}`;
+  }
+
+  try {
+    const res = await fetch(
+      `/api/doctor/patients/${encodeURIComponent(String(patientId))}/mri/doctor-diagnosis`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }
+    );
+
+    let body: any = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+
+    if (!res.ok) {
+      const detail = body?.detail || `HTTP ${res.status}`;
+      throw new Error(String(detail));
+    }
+
+    console.log('진단 데이터 제출 완료:', body);
+    alert('의사 진단이 저장되었습니다.');
+  } catch (error) {
+    console.error('진단 저장 실패:', error);
+    const message = error instanceof Error ? error.message : '알 수 없는 오류';
+    alert(`진단 저장 실패: ${message}`);
+  }
 };
 
 const handleSendDiagnosis = () => {
