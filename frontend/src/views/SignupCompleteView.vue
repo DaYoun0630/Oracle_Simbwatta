@@ -71,7 +71,7 @@ const goLoginPage = () => {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #2563eb;
+  color: #4cb7b7;
 }
 
 h1 {
@@ -105,11 +105,11 @@ h1 {
 
 .primary {
   min-height: 48px;
-  border: none;
+  border: 1px solid #4cb7b7;
   border-radius: 10px;
   font-size: 18px;
   font-weight: 700;
   color: #ffffff;
-  background: #2563eb;
+  background: #4cb7b7;
 }
 </style>

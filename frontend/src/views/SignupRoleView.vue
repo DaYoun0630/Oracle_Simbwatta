@@ -107,7 +107,7 @@ const goBack = () => {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #2563eb;
+  color: #4cb7b7;
 }
 
 h1 {
@@ -157,8 +157,8 @@ h1 {
 }
 
 .role-item.selected {
-  border-color: #2563eb;
-  background: #eff6ff;
+  border-color: #4cb7b7;
+  background: #e9f7f7;
 }
 
 .button-row {
@@ -171,7 +171,7 @@ h1 {
 button {
   min-height: 46px;
   min-width: 96px;
-  border: none;
+  border: 1px solid #4cb7b7;
   border-radius: 10px;
   font-size: 17px;
   font-weight: 700;
@@ -179,9 +179,10 @@ button {
 }
 
 .secondary {
-  background: #e2e8f0;
-  color: #1e293b;
-  box-shadow: 0 6px 14px rgba(148, 163, 184, 0.32);
+  background: #4cb7b7;
+  color: #ffffff;
+  border: 1px solid #4cb7b7;
+  box-shadow: 0 6px 14px rgba(76, 183, 183, 0.25);
 }
 
 .back-icon {
@@ -199,13 +200,16 @@ button {
 }
 
 .primary {
-  background: #2563eb;
+  background: #4cb7b7;
   color: #ffffff;
-  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.32);
+  box-shadow: 0 8px 16px rgba(76, 183, 183, 0.28);
 }
 
 .primary:disabled {
-  background: #9cb7f0;
+  background: #4cb7b7 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff;
+  opacity: 0.62;
   box-shadow: none;
   cursor: not-allowed;
 }

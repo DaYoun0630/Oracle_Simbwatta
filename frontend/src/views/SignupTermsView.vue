@@ -15,7 +15,13 @@ const agreeHealthTransfer = ref(false);
 const submitError = ref("");
 
 const canSubmit = computed(
-  () => agreeService.value && agreePrivacy.value && !signupStore.isSubmitting
+  () =>
+    agreeService.value &&
+    agreePrivacy.value &&
+    agreeHealthHighwayLink.value &&
+    agreeHealthSensitive.value &&
+    agreeHealthTransfer.value &&
+    !signupStore.isSubmitting
 );
 
 const goBack = () => {
@@ -27,7 +33,13 @@ const noop = () => {};
 const submitSignup = async () => {
   submitError.value = "";
 
-  if (!agreeService.value || !agreePrivacy.value) {
+  if (
+    !agreeService.value ||
+    !agreePrivacy.value ||
+    !agreeHealthHighwayLink.value ||
+    !agreeHealthSensitive.value ||
+    !agreeHealthTransfer.value
+  ) {
     submitError.value = "필수 약관에 동의해 주세요.";
     return;
   }
@@ -37,6 +49,9 @@ const submitSignup = async () => {
       agree_service: agreeService.value,
       agree_privacy: agreePrivacy.value,
       agree_marketing: agreeMarketing.value,
+      agree_health_highway_link: agreeHealthHighwayLink.value,
+      agree_health_sensitive: agreeHealthSensitive.value,
+      agree_health_transfer: agreeHealthTransfer.value,
     });
 
     router.push({ name: "signup-complete" });
@@ -95,9 +110,9 @@ onMounted(() => {
             있습니다.
           </p>
 
-          <label class="check-row">
+          <label class="check-row required">
             <input v-model="agreeHealthHighwayLink" type="checkbox" />
-            <span>[선택] 건강정보 고속도로 연동하기</span>
+            <span>[필수] 건강정보 고속도로 연동하기</span>
           </label>
           <p class="term-content">가입 후 바로 연동을 진행합니다.</p>
 
@@ -165,7 +180,7 @@ onMounted(() => {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #2563eb;
+  color: #4cb7b7;
 }
 
 h1 {
@@ -206,6 +221,9 @@ h1 {
 input[type="checkbox"] {
   width: 20px;
   height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  flex: 0 0 20px;
 }
 
 .term-content {
@@ -260,7 +278,7 @@ input[type="checkbox"] {
   border: none;
   border-radius: 0;
   background: transparent;
-  color: #2563eb;
+  color: #4cb7b7;
   font-size: 14px;
   font-weight: 700;
   padding: 0;
@@ -284,8 +302,8 @@ input[type="checkbox"] {
   padding: 0 14px;
   font-size: 15px;
   font-weight: 700;
-  background: #e2e8f0;
-  color: #1e293b;
+  background: #4cb7b7;
+  color: #ffffff;
 }
 
 .error {
@@ -305,15 +323,15 @@ input[type="checkbox"] {
 button {
   min-height: 46px;
   min-width: 110px;
-  border: none;
+  border: 1px solid #4cb7b7;
   border-radius: 10px;
   font-size: 17px;
   font-weight: 700;
 }
 
 .secondary {
-  background: #e2e8f0;
-  color: #1e293b;
+  background: #4cb7b7;
+  color: #ffffff;
 }
 
 .back-icon {
@@ -331,11 +349,17 @@ button {
 }
 
 .primary {
-  background: #2563eb;
+  background: #4cb7b7;
   color: #ffffff;
 }
 
+.button-row .primary {
+  padding: 0 22px;
+}
+
 .primary:disabled {
-  background: #9cb7f0;
+  background: #4cb7b7;
+  color: #ffffff;
+  opacity: 0.62;
 }
 </style>

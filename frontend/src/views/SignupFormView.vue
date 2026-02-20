@@ -520,7 +520,7 @@ onMounted(() => {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #2563eb;
+  color: #4cb7b7;
 }
 
 h1 {
@@ -607,15 +607,15 @@ select {
 button {
   min-height: 46px;
   min-width: 96px;
-  border: none;
+  border: 1px solid #4cb7b7;
   border-radius: 10px;
   font-size: 17px;
   font-weight: 700;
 }
 
 .secondary {
-  background: #e2e8f0;
-  color: #1e293b;
+  background: #4cb7b7;
+  color: #ffffff;
 }
 
 .back-icon {
@@ -633,12 +633,14 @@ button {
 }
 
 .primary {
-  background: #2563eb;
+  background: #4cb7b7;
   color: #ffffff;
 }
 
 .primary:disabled {
-  background: #9cb7f0;
+  background: #4cb7b7;
+  color: #ffffff;
+  opacity: 0.62;
 }
 
 @media (max-width: 720px) {

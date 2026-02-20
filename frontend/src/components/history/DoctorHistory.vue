@@ -122,10 +122,58 @@ interface ScoreCardConfig {
 const STALE_THRESHOLD_DAYS = 120;
 const VOICE_CHART_WIDTH = 640;
 const VOICE_CHART_HEIGHT = 200;
+const VOICE_CHART_MAX_TICK_LABELS = 7;
 
 const ensureArray = <T,>(value: T[] | null | undefined) => (Array.isArray(value) ? value : []);
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const toDateOnly = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const getYesterday = () => {
+  const date = toDateOnly(new Date());
+  date.setDate(date.getDate() - 1);
+  return date;
+};
+
+const parseMonthDayLabel = (label: string, pivotDate: Date) => {
+  const matched = label.match(/^(\d{1,2})[-/.](\d{1,2})$/);
+  if (!matched) return null;
+  const month = Number(matched[1]);
+  const day = Number(matched[2]);
+  if (!Number.isFinite(month) || !Number.isFinite(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  let year = pivotDate.getFullYear();
+  let candidate = new Date(year, month - 1, day);
+  if (candidate.getMonth() !== month - 1 || candidate.getDate() !== day) return null;
+
+  if (candidate.getTime() > pivotDate.getTime()) {
+    year -= 1;
+    candidate = new Date(year, month - 1, day);
+    if (candidate.getMonth() !== month - 1 || candidate.getDate() !== day) return null;
+  }
+  return candidate;
+};
+
+const parseLabelToDate = (label: string, pivotDate: Date) => {
+  const normalized = String(label ?? '').trim();
+  if (!normalized) return null;
+
+  const ymdMatched = normalized.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (ymdMatched) {
+    const year = Number(ymdMatched[1]);
+    const month = Number(ymdMatched[2]);
+    const day = Number(ymdMatched[3]);
+    const candidate = new Date(year, month - 1, day);
+    if (candidate.getFullYear() === year && candidate.getMonth() === month - 1 && candidate.getDate() === day) {
+      return candidate;
+    }
+    return null;
+  }
+
+  return parseMonthDayLabel(normalized, pivotDate);
+};
 
 const formatScoreValue = (value: number | null, digits = 0) => {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
@@ -439,6 +487,45 @@ const acousticFeatures = computed(() => props.data?.acousticFeatures || []);
 const voiceAssessments = computed<VoiceAssessmentPoint[]>(
   () => ensureArray((props.data?.voiceAssessments as VoiceAssessmentPoint[] | undefined) ?? [])
 );
+const voiceChartDailyParticipation = computed(() => {
+  const base = dailyParticipation.value || {};
+  const labels = ensureArray(base.labels).map((label) => String(label));
+  const counts = ensureArray(base.counts).map((count) => Number(count));
+  if (!labels.length) {
+    return {
+      labels,
+      counts
+    };
+  }
+
+  const cutoffDate = getYesterday();
+  const parsedDates = labels.map((label) => parseLabelToDate(label, cutoffDate));
+  if (parsedDates.some((date) => date === null)) {
+    return {
+      labels,
+      counts
+    };
+  }
+
+  let lastVisibleIndex = -1;
+  parsedDates.forEach((date, index) => {
+    if (date && date.getTime() <= cutoffDate.getTime()) {
+      lastVisibleIndex = index;
+    }
+  });
+
+  if (lastVisibleIndex < 0) {
+    return {
+      labels,
+      counts
+    };
+  }
+
+  return {
+    labels: labels.slice(0, lastVisibleIndex + 1),
+    counts: counts.slice(0, lastVisibleIndex + 1)
+  };
+});
 const mriAnalysis = computed(() => props.data?.mriAnalysis || null);
 
 const aiAnalysis = computed(() => mriAnalysis.value?.aiAnalysis || null);
@@ -1186,31 +1273,33 @@ const voiceMetrics = computed(() => {
   const utteranceFeature = findFeature(['발화', '속도', '빈도']);
   const lengthFeature = findFeature(['길이', 'length', '발화 길이']) || findFeature(['강도']);
   const pauseFeature = findFeature(['멈춤', 'pause']);
+  const timelineLength = voiceChartDailyParticipation.value.labels.length;
+  const clipByTimeline = (values: number[]) => (timelineLength ? values.slice(0, timelineLength) : values);
 
   const metrics = [
     {
       id: 'utterance',
       label: '발화 빈도',
       color: '#4cb7b7',
-      values: buildSeries(utteranceFeature?.trend)
+      values: clipByTimeline(buildSeries(utteranceFeature?.trend))
     },
     {
       id: 'length',
       label: '평균 발화 길이',
       color: '#8bc34a',
-      values: buildSeries(lengthFeature?.trend)
+      values: clipByTimeline(buildSeries(lengthFeature?.trend))
     },
     {
       id: 'pause',
       label: 'Pause 비율',
       color: '#ffb74d',
-      values: buildSeries(pauseFeature?.trend)
+      values: clipByTimeline(buildSeries(pauseFeature?.trend))
     },
     {
       id: 'participation',
       label: '대화 참여 빈도',
       color: '#ff8a80',
-      values: buildSeries(dailyParticipation.value?.counts)
+      values: buildSeries(voiceChartDailyParticipation.value.counts)
     }
   ];
 
@@ -1236,10 +1325,21 @@ const activeVoiceMetrics = computed(() =>
 );
 
 const voiceTimelineLabels = computed(() => {
-  const labels = dailyParticipation.value?.labels;
+  const labels = voiceChartDailyParticipation.value.labels;
   if (labels?.length) return labels;
   const maxLength = Math.max(0, ...normalizedVoiceMetrics.value.map((metric) => metric.normalized.length));
   return Array.from({ length: maxLength }, (_, index) => `T${index + 1}`);
+});
+
+const voiceTimelineTickLabels = computed(() => {
+  const labels = voiceTimelineLabels.value;
+  if (labels.length <= VOICE_CHART_MAX_TICK_LABELS) return labels;
+
+  const step = Math.ceil((labels.length - 1) / (VOICE_CHART_MAX_TICK_LABELS - 1));
+  return labels.map((label, index) => {
+    const isLast = index === labels.length - 1;
+    return index % step === 0 || isLast ? label : '';
+  });
 });
 
 const voiceSummary = computed(() => {
@@ -1682,7 +1782,13 @@ watch(
                   />
                 </svg>
                 <div class="voice-chart-labels">
-                  <span v-for="label in voiceTimelineLabels" :key="label">{{ label }}</span>
+                  <span
+                    v-for="(label, index) in voiceTimelineTickLabels"
+                    :key="`${index}-${label}`"
+                    :class="{ 'is-empty': !label }"
+                  >
+                    {{ label }}
+                  </span>
                 </div>
               </div>
 
@@ -2411,9 +2517,9 @@ watch(
 
 .voice-chart-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
 }
 
 .voice-chart-header p {
@@ -2421,13 +2527,19 @@ watch(
   font-size: 14px;
   font-weight: 700;
   color: #777;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .voice-toggle-group {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
   gap: 10px;
   justify-content: flex-end;
+  align-self: flex-end;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .voice-toggle {
@@ -2441,6 +2553,7 @@ watch(
   font-size: 13px;
   font-weight: 800;
   color: #2e2e2e;
+  white-space: nowrap;
 }
 
 .voice-toggle input {
@@ -2481,6 +2594,24 @@ watch(
   font-weight: 700;
   color: #999;
   font-size: 12px;
+}
+
+.voice-chart-labels span {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.voice-chart-labels span:first-child {
+  text-align: left;
+}
+
+.voice-chart-labels span:last-child {
+  text-align: right;
+}
+
+.voice-chart-labels .is-empty {
+  visibility: hidden;
 }
 
 .voice-chart-empty {
@@ -2704,9 +2835,17 @@ watch(
     align-items: flex-start;
   }
 
+  .voice-summary-status {
+    align-self: center;
+  }
+
   .voice-chart-header {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+  }
+
+  .voice-toggle-group {
+    align-self: flex-end;
   }
 
   .mri-analysis-grid {

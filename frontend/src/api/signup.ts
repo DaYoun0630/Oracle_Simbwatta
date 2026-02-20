@@ -5,6 +5,9 @@ export interface SignupTermsPayload {
   agree_service: boolean;
   agree_privacy: boolean;
   agree_marketing: boolean;
+  agree_health_highway_link: boolean;
+  agree_health_sensitive: boolean;
+  agree_health_transfer: boolean;
 }
 
 export interface SignupApiPayload {
@@ -57,7 +60,13 @@ export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCo
 }
 
 export async function signupWithApi(payload: SignupApiPayload): Promise<SignupApiResponse> {
-  if (!payload.terms.agree_service || !payload.terms.agree_privacy) {
+  if (
+    !payload.terms.agree_service ||
+    !payload.terms.agree_privacy ||
+    !payload.terms.agree_health_highway_link ||
+    !payload.terms.agree_health_sensitive ||
+    !payload.terms.agree_health_transfer
+  ) {
     throw new Error("필수 약관 동의가 필요합니다.");
   }
 

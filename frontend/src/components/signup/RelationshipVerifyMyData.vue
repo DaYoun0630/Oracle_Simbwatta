@@ -182,6 +182,11 @@ const retry = async () => {
 }
 
 .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 6px 10px;
   border-radius: 999px;
   font-weight: 800;
@@ -196,8 +201,8 @@ const retry = async () => {
 }
 
 .badge.pending {
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: #4cb7b7;
+  color: #4cb7b7;
 }
 
 .badge.danger {
@@ -215,7 +220,7 @@ const retry = async () => {
 .primary,
 .secondary {
   min-height: 46px;
-  border: none;
+  border: 1px solid #4cb7b7;
   border-radius: 10px;
   font-size: 16px;
   font-weight: 800;
@@ -223,17 +228,19 @@ const retry = async () => {
 }
 
 .primary {
-  background: #2563eb;
-  color: white;
+  background: #4cb7b7;
+  color: #ffffff;
 }
 
 .primary:disabled {
-  background: #9cb7f0;
+  background: #4cb7b7;
+  color: #ffffff;
+  opacity: 0.62;
 }
 
 .secondary {
-  background: #e2e8f0;
-  color: #1e293b;
+  background: #4cb7b7;
+  color: #ffffff;
 }
 
 .hint {
@@ -266,6 +273,6 @@ const retry = async () => {
 .pending-line {
   margin: 0;
   font-weight: 800;
-  color: #1d4ed8;
+  color: #4cb7b7;
 }
 </style>
