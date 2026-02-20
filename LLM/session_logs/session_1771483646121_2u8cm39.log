@@ -1,0 +1,49 @@
+[2026-02-19T06:47:29.743761+00:00] assistant: 안녕하세요! 오늘 오후에는 어떤 계획이 있으신가요?
+[2026-02-19T06:47:29.744997+00:00] event:session_start {"started_at": "2026-02-19T06:47:29.744957+00:00", "started_at_kst": "2026-02-19T15:47:26.436568+09:00", "timezone": "Asia/Seoul", "conversation_mode": "mixed", "session_slot": "lunch", "next_session_slot": "evening", "policy": {"llm_model": "gpt-4o", "llm_fallback_model": "gpt-4o-mini", "stt_model": "gpt-4o-transcribe", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_style": "친절하고 다정하게, 천천히 또박또박 말해줘", "warmup_turns": 2, "silence_hint_threshold": 1, "silence_switch_threshold": 2, "silence_close_threshold": 3, "stt_confirm_limit": 1, "wait_time_sec": 3, "max_sentences": 2, "max_turn_seconds": 18, "hint_speed": "medium", "switch_sensitivity": "medium"}, "training_type": "semantic_naming"}
+[2026-02-19T06:47:29.758655+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 3629, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:47:35.486953+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 3629, "end_ms": 9362, "dropped_ms": 5733, "dropped_total_ms": 5733, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:47:45.448265+00:00] user: 오늘은 잘 모르겠어
+[2026-02-19T06:47:45.449039+00:00] assistant: 그렇군요, 지금 한국 시간으로 오후 3시 47분이에요. 혹시 오늘 점심은 드셨나요?
+[2026-02-19T06:47:45.456863+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 19333, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:47:53.977392+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 19333, "end_ms": 27853, "dropped_ms": 8520, "dropped_total_ms": 14253, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:00.832874+00:00] user: 어 점심 먹었어
+[2026-02-19T06:48:00.833411+00:00] assistant: 좋아요, 맛있게 드셨나요? 점심 메뉴는 뭐였나요.
+[2026-02-19T06:48:00.840017+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 34717, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:06.587915+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 34717, "end_ms": 40463, "dropped_ms": 5746, "dropped_total_ms": 19999, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:24.322101+00:00] user: 감자탕
+[2026-02-19T06:48:24.322617+00:00] assistant: 좋아요. 이어서 한 가지 더 말씀해 주실래요?
+[2026-02-19T06:48:24.328710+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 58206, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:29.088212+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 58206, "end_ms": 62964, "dropped_ms": 4758, "dropped_total_ms": 24757, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:37.143786+00:00] user: 여러 개 갖고가 잘 못 들었어
+[2026-02-19T06:48:37.144512+00:00] assistant: 괜찮아요, 다시 해볼까요? 국물 요리에 자주 사용되고, 감자탕에도 들어가는 노란색 채소는 무엇일까요.
+[2026-02-19T06:48:37.150148+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 71027, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:47.611508+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 71027, "end_ms": 81174, "dropped_ms": 10147, "dropped_total_ms": 34904, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:54.706957+00:00] user: 감자
+[2026-02-19T06:48:54.707401+00:00] assistant: 좋아요. 이어서 한 가지 더 말씀해 주실래요?
+[2026-02-19T06:48:54.713725+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 88590, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:48:59.457013+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 88590, "end_ms": 93333, "dropped_ms": 4743, "dropped_total_ms": 39647, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:49:10.006205+00:00] user: 잘 모르겠어
+[2026-02-19T06:49:10.006731+00:00] assistant: 괜찮아요. 감자탕에 들어가는 노란색 채소는 무엇일까요?
+[2026-02-19T06:49:10.014410+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 103890, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:49:16.112318+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 103890, "end_ms": 109683, "dropped_ms": 5793, "dropped_total_ms": 45440, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:49:28.384998+00:00] user: 잘 모르겠어
+[2026-02-19T06:49:28.385699+00:00] assistant: 괜찮아요, 다른 질문으로 넘어갈게요. 감자탕이나 다른 국물 요리에 대파를 사용해 본 적이 있나요?
+[2026-02-19T06:49:28.392884+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 122268, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:49:37.678577+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 122268, "end_ms": 131253, "dropped_ms": 8985, "dropped_total_ms": 54425, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:49:54.517617+00:00] user: 응 응
+[2026-02-19T06:49:54.518494+00:00] assistant: 좋아요, 감자탕에 들어간 채소 중 하나인 배추에 대해 생각해 볼까요? 배추의 색깔과 모양을 어떻게 설명할 수 있을까요.
+[2026-02-19T06:49:54.534154+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 148408, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:50:05.503856+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 148408, "end_ms": 159073, "dropped_ms": 10665, "dropped_total_ms": 65090, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:50:21.321236+00:00] user: 파란색 노란색
+[2026-02-19T06:50:21.321743+00:00] assistant: 좋아요, 이번에는 감자탕에 들어간 흰색의 둥글고 단단한 재료에 대해 생각해 볼까요? 무엇인지 기억나시나요.
+[2026-02-19T06:50:21.327488+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 175204, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:50:31.236717+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 175204, "end_ms": 184803, "dropped_ms": 9599, "dropped_total_ms": 74689, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:50:46.730691+00:00] user: 잘 모르겠어
+[2026-02-19T06:50:46.731538+00:00] assistant: 괜찮아요, 감자탕의 맛에 대해 다시 생각해볼까요? 국물이 진한지, 매콤한지 한번 묘사해 주실 수 있을까요.
+[2026-02-19T06:50:46.738519+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 200615, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:50:57.761066+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 200615, "end_ms": 211333, "dropped_ms": 10718, "dropped_total_ms": 85407, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:51:32.960784+00:00] user: [no_speech]
+[2026-02-19T06:51:32.961989+00:00] assistant: 오늘 감자탕을 드셨군요. 맛있게 드셨길 바라요.
+[2026-02-19T06:51:32.971189+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 246846, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:51:38.546387+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 246846, "end_ms": 252113, "dropped_ms": 5267, "dropped_total_ms": 90674, "gate_policy": "drop_during_tts"}}
+[2026-02-19T06:51:38.573783+00:00] event:session_end {"session_id": "session_1771483646121_2u8cm39", "end_reason": "target_reached", "elapsed_sec": 252, "turn_count": 10, "session_mode": "live", "ended_at": "2026-02-19T06:51:38.573750+00:00", "ended_at_kst": "2026-02-19T15:51:38.573766+09:00", "timezone": "Asia/Seoul", "archive": {"ok": true, "patient_id": "profile_1770792017087_sqgps9lw", "session_id": "session_1771483646121_2u8cm39", "text_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771483646121_2u8cm39\\conversation.txt", "audio_path": null, "dialog_line_count": 11, "audio_summary": {"merged_files": 0, "skipped_files": 0, "duration_sec": 0.0, "sample_rate": null}}}

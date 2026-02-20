@@ -1,0 +1,28 @@
+[2026-02-17T10:49:14.744655+00:00] assistant: 안녕하세요! 오늘 저녁에 특별한 계획이 있으신가요?
+[2026-02-17T10:49:14.745359+00:00] event:session_start {"started_at": "2026-02-17T10:49:14.745323+00:00", "started_at_kst": "2026-02-17T19:49:10.566668+09:00", "timezone": "Asia/Seoul", "conversation_mode": "mixed", "session_slot": "evening", "next_session_slot": "morning", "policy": {"llm_model": "gpt-4o", "llm_fallback_model": "gpt-4o-mini", "stt_model": "gpt-4o-transcribe", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_style": "?곕쑜?섍퀬 ?ㅼ젙?섍쾶 泥쒖쿇???먮컯?먮컯", "warmup_turns": 2, "silence_hint_threshold": 1, "silence_switch_threshold": 2, "silence_close_threshold": 3, "stt_confirm_limit": 1, "wait_time_sec": 3, "max_sentences": 2, "max_turn_seconds": 18, "hint_speed": "medium", "switch_sensitivity": "medium"}, "training_type": "semantic_naming"}
+[2026-02-17T10:49:27.042796+00:00] user: 계획 없어
+[2026-02-17T10:49:27.043429+00:00] assistant: 그렇군요. 오늘 저녁에는 어떤 활동을 하고 싶으신가요?
+[2026-02-17T10:49:56.289713+00:00] user: 그 말차 타 먹었어
+[2026-02-17T10:49:56.290376+00:00] assistant: 맛있게 드셨나요? 말차를 마시면서 어떤 기분이 드셨는지 궁금해요.
+[2026-02-17T10:50:18.605059+00:00] user: 혀 앞으로 계속 해 먹어야겠다고 생각했지
+[2026-02-17T10:50:18.605706+00:00] assistant: 정말 맛있었나 봐요! 이번에는 초록색이며 바삭한 과육을 가진 과일을 맞혀볼까요?
+[2026-02-17T10:50:37.450021+00:00] user: 네 초록색인데 바삭해 모르겠는데
+[2026-02-17T10:50:37.450840+00:00] assistant: 좋아요. 이어서 한 가지 더 말씀해 주실래요?
+[2026-02-17T10:50:55.742322+00:00] user: 모르겠어 답이 없네
+[2026-02-17T10:50:55.743036+00:00] assistant: 좋아요. 이어서 한 가지 더 말씀해 주실래요?
+[2026-02-17T10:51:21.964867+00:00] user: 모르겠다고
+[2026-02-17T10:51:21.965572+00:00] assistant: 괜찮아요, 다른 주제로 넘어가 볼게요. 저녁에 가족과 함께 할 수 있는 활동 중 어떤 게 떠오르시나요?
+[2026-02-17T10:51:39.429015+00:00] user: 밥 먹기
+[2026-02-17T10:51:39.429964+00:00] assistant: 밥 먹기 좋죠! 저녁에 가족과 산책은 어떠세요?
+[2026-02-17T10:51:59.632393+00:00] user: 아직 날씨가 추워서 귀찮아
+[2026-02-17T10:51:59.632929+00:00] assistant: 그렇죠, 추운 날씨엔 집에서 따뜻하게 있는 것도 좋죠. 혹시 집에서 할 수 있는 재미있는 활동이 있을까요?
+[2026-02-17T10:52:22.283833+00:00] user: 유튜브 보기
+[2026-02-17T10:52:22.284480+00:00] assistant: 유튜브 보는 건 정말 재미있죠! 최근에 본 유튜브 영상 중에서 가장 기억에 남는 것이 있다면 설명해 주실 수 있나요?
+[2026-02-17T10:52:41.016938+00:00] user: 잘 기억 안 나는데
+[2026-02-17T10:52:41.017519+00:00] assistant: 괜찮아요, 기억이 안 날 수 있어요. 유튜브에서 어떤 주제를 주로 보시나요?
+[2026-02-17T10:53:04.676530+00:00] user: 요리하는 거 그건 아니면은 강아지나 고양이 같은 거 보지
+[2026-02-17T10:53:04.677254+00:00] assistant: 강아지나 고양이 영상도 정말 귀엽죠! 최근에 만들어 본 요리 중 가장 기억에 남는 것이 있나요?
+[2026-02-17T10:53:33.891006+00:00] user: 최근에 요리를 환자가 오래돼서
+[2026-02-17T10:53:33.891522+00:00] assistant: 오늘 저녁에 드신 음식 중 가장 맛있었던 메뉴가 무엇인지 궁금해요. 혹시 특별히 기억나는 음식이 있으신가요.
+[2026-02-17T10:53:46.045370+00:00] event:session_audio_uploaded {"session_id": "session_1771325350114_2f0fo7i", "patient_id": "profile_1770792017087_sqgps9lw", "audio_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771325350114_2f0fo7i\\conversation.user.wav", "audio_format": "wav", "converted_to_wav": false, "conversion_error": null, "uploaded_at": "2026-02-17T10:53:46.045352+00:00"}
+[2026-02-17T10:53:46.069025+00:00] event:session_end {"session_id": "session_1771325350114_2f0fo7i", "end_reason": "target_reached", "elapsed_sec": 274, "turn_count": 12, "session_mode": "live", "ended_at": "2026-02-17T10:53:46.069008+00:00", "ended_at_kst": "2026-02-17T19:53:46.069012+09:00", "timezone": "Asia/Seoul", "archive": {"ok": true, "patient_id": "profile_1770792017087_sqgps9lw", "session_id": "session_1771325350114_2f0fo7i", "text_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771325350114_2f0fo7i\\conversation.txt", "audio_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771325350114_2f0fo7i\\conversation.user.wav", "dialog_line_count": 25, "audio_summary": {"merged_files": 1, "skipped_files": 0, "duration_sec": 0.0, "sample_rate": null, "source": "uploaded_session_audio"}}}

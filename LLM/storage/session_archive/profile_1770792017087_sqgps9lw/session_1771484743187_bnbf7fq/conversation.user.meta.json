@@ -1,0 +1,21 @@
+{
+  "schema_version": "audio_gate_v1",
+  "gate_policy": "drop_during_tts",
+  "dropped_segments": [
+    {
+      "start_ms": 3078,
+      "end_ms": 8645,
+      "dropped_ms": 5567
+    },
+    {
+      "start_ms": 15801,
+      "end_ms": 21250,
+      "dropped_ms": 5449
+    }
+  ],
+  "dropped_total_ms": 11016,
+  "client_clock": {
+    "started_at_ms": 1771484743187,
+    "ended_at_ms": 1771484769624
+  }
+}

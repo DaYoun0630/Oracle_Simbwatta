@@ -1,0 +1,48 @@
+Dummy Login Accounts
+Generated: 2026-02-20 11:59:27 KST
+Default Password: 00000000
+
+Format: user_id | role | email | name
+
+118 | caregiver | dummy.caregiver.20260220114026.01@example.com | 더미보호자01
+120 | caregiver | dummy.caregiver.20260220114026.02@example.com | 더미보호자02
+122 | caregiver | dummy.caregiver.20260220114026.03@example.com | 더미보호자03
+124 | caregiver | dummy.caregiver.20260220114026.04@example.com | 더미보호자04
+126 | caregiver | dummy.caregiver.20260220114026.05@example.com | 더미보호자05
+128 | caregiver | dummy.caregiver.20260220114026.06@example.com | 더미보호자06
+130 | caregiver | dummy.caregiver.20260220114026.07@example.com | 더미보호자07
+132 | caregiver | dummy.caregiver.20260220114026.08@example.com | 더미보호자08
+134 | caregiver | dummy.caregiver.20260220114026.09@example.com | 더미보호자09
+136 | caregiver | dummy.caregiver.20260220114026.10@example.com | 더미보호자10
+138 | caregiver | dummy.caregiver.20260220114026.11@example.com | 더미보호자11
+140 | caregiver | dummy.caregiver.20260220114026.12@example.com | 더미보호자12
+142 | caregiver | dummy.caregiver.20260220114026.13@example.com | 더미보호자13
+144 | caregiver | dummy.caregiver.20260220114026.14@example.com | 더미보호자14
+146 | caregiver | dummy.caregiver.20260220114026.15@example.com | 더미보호자15
+148 | caregiver | dummy.caregiver.20260220114026.16@example.com | 더미보호자16
+150 | caregiver | dummy.caregiver.20260220114026.17@example.com | 더미보호자17
+152 | caregiver | dummy.caregiver.20260220114026.18@example.com | 더미보호자18
+154 | caregiver | dummy.caregiver.20260220114026.19@example.com | 더미보호자19
+156 | caregiver | dummy.caregiver.20260220114026.20@example.com | 더미보호자20
+115 | doctor | dummy.doctor.20260220114026.01@example.com | 더미의사01
+116 | doctor | dummy.doctor.20260220114026.02@example.com | 더미의사02
+117 | patient | dummy.patient.20260220114026.01@example.com | 더미환자01
+119 | patient | dummy.patient.20260220114026.02@example.com | 더미환자02
+121 | patient | dummy.patient.20260220114026.03@example.com | 더미환자03
+123 | patient | dummy.patient.20260220114026.04@example.com | 더미환자04
+125 | patient | dummy.patient.20260220114026.05@example.com | 더미환자05
+127 | patient | dummy.patient.20260220114026.06@example.com | 더미환자06
+129 | patient | dummy.patient.20260220114026.07@example.com | 더미환자07
+131 | patient | dummy.patient.20260220114026.08@example.com | 더미환자08
+133 | patient | dummy.patient.20260220114026.09@example.com | 더미환자09
+135 | patient | dummy.patient.20260220114026.10@example.com | 더미환자10
+137 | patient | dummy.patient.20260220114026.11@example.com | 더미환자11
+139 | patient | dummy.patient.20260220114026.12@example.com | 더미환자12
+141 | patient | dummy.patient.20260220114026.13@example.com | 더미환자13
+143 | patient | dummy.patient.20260220114026.14@example.com | 더미환자14
+145 | patient | dummy.patient.20260220114026.15@example.com | 더미환자15
+147 | patient | dummy.patient.20260220114026.16@example.com | 더미환자16
+149 | patient | dummy.patient.20260220114026.17@example.com | 더미환자17
+151 | patient | dummy.patient.20260220114026.18@example.com | 더미환자18
+153 | patient | dummy.patient.20260220114026.19@example.com | 더미환자19
+155 | patient | dummy.patient.20260220114026.20@example.com | 더미환자20

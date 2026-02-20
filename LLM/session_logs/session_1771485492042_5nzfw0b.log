@@ -1,0 +1,54 @@
+[2026-02-19T07:18:15.037146+00:00] assistant: 안녕하세요! 오늘 기분이 어떠신가요?
+[2026-02-19T07:18:15.037864+00:00] event:session_start {"started_at": "2026-02-19T07:18:15.037831+00:00", "started_at_kst": "2026-02-19T16:18:12.812944+09:00", "timezone": "Asia/Seoul", "conversation_mode": "mixed", "session_slot": "lunch", "next_session_slot": "evening", "policy": {"llm_model": "gpt-4o", "llm_fallback_model": "gpt-4o-mini", "stt_model": "gpt-4o-transcribe", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_style": "친절하고 다정하게, 천천히 또박또박 말해줘", "warmup_turns": 2, "silence_hint_threshold": 1, "silence_switch_threshold": 2, "silence_close_threshold": 3, "stt_confirm_limit": 1, "wait_time_sec": 3, "max_sentences": 2, "max_turn_seconds": 18, "hint_speed": "medium", "switch_sensitivity": "medium"}, "training_type": "semantic_naming"}
+[2026-02-19T07:18:15.057399+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 3009, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:18:19.391682+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 3009, "end_ms": 7346, "dropped_ms": 4337, "dropped_total_ms": 4337, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:18:28.723635+00:00] user: 젤리 먹고 있는데 젤리가 맛있네
+[2026-02-19T07:18:28.724331+00:00] assistant: 젤리가 맛있다니 기분이 좋으신가 봐요! 요즘 좋아하는 다른 간식은 뭐가 있을까요?
+[2026-02-19T07:18:28.731296+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 16686, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:18:36.433363+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 16686, "end_ms": 24082, "dropped_ms": 7396, "dropped_total_ms": 11733, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:18:44.545125+00:00] user: 땅콩버터
+[2026-02-19T07:18:44.545493+00:00] assistant: 땅콩버터를 좋아하시는군요! 땅콩버터는 주로 어떻게 드시나요?
+[2026-02-19T07:18:44.551049+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 32507, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:18:51.482596+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 32507, "end_ms": 39132, "dropped_ms": 6625, "dropped_total_ms": 18358, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:05.060546+00:00] user: 그만하다 발라서 빵에 발라 먹어
+[2026-02-19T07:19:05.061018+00:00] assistant: 땅콩버터를 빵에 발라 드시는군요! 이번에는 과일 중에서 바나나를 설명해 주실 수 있을까요?
+[2026-02-19T07:19:05.066841+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 53022, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:13.746751+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 53022, "end_ms": 61391, "dropped_ms": 8369, "dropped_total_ms": 26727, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:24.267631+00:00] user: 바나나는
+[2026-02-19T07:19:24.268050+00:00] assistant: 바나나는 노란색이고 길쭉한 과일이에요. 좋아하는 과일이 또 있나요?
+[2026-02-19T07:19:24.273055+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 72229, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:30.883470+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 72229, "end_ms": 78531, "dropped_ms": 6302, "dropped_total_ms": 33029, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:39.791994+00:00] user: 감 감 좋아해
+[2026-02-19T07:19:39.792382+00:00] assistant: 감이 맛있죠! 감 말고 다른 과일도 좋아하시나요?
+[2026-02-19T07:19:39.798183+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 87754, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:45.533077+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 87754, "end_ms": 93181, "dropped_ms": 5427, "dropped_total_ms": 38456, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:19:57.350314+00:00] user: 소시지
+[2026-02-19T07:19:57.350810+00:00] assistant: 소시지를 좋아하시네요! 소시지를 떠올리면 어떤 다른 음식들이 생각나시나요?
+[2026-02-19T07:19:57.356399+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 105312, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:20:04.646377+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 105312, "end_ms": 112601, "dropped_ms": 7289, "dropped_total_ms": 45745, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:20:24.197664+00:00] user: 근데 재미없어
+[2026-02-19T07:20:24.198240+00:00] assistant: 아, 그랬군요. 오늘 아침에 드셨던 음식 중 기억나는 것을 세 가지 말씀해 주실 수 있을까요?
+[2026-02-19T07:20:24.204932+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 132160, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:20:32.886286+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 132160, "end_ms": 140841, "dropped_ms": 8681, "dropped_total_ms": 54426, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:20:45.359736+00:00] user: 세 가지 안 먹었는데 두 개밖에 안 먹었는데
+[2026-02-19T07:20:45.360117+00:00] assistant: 아, 두 가지만 드셨군요. 혹시 오늘 드셨던 두 가지 음식이 무엇인지 말씀해 주실 수 있나요?
+[2026-02-19T07:20:45.364919+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 153321, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:20:53.867052+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 153321, "end_ms": 161821, "dropped_ms": 8500, "dropped_total_ms": 62926, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:21:11.618436+00:00] user: 계란 삶은 거 하나랑 샌드위치 반 조각
+[2026-02-19T07:21:11.618837+00:00] assistant: 계란 삶은 거 드셨군요! 계란으로 만들 수 있는 다른 요리 하나를 설명해 주실 수 있나요?
+[2026-02-19T07:21:11.623789+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 179579, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:21:19.567467+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 179579, "end_ms": 187522, "dropped_ms": 7943, "dropped_total_ms": 70869, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:21:37.365286+00:00] user: 계란찜 만들 수 있는데 계란찜은 그냥 물이랑 계란 풀어서 전자레인지에 30초 정도 돌리면 돼
+[2026-02-19T07:21:37.366004+00:00] assistant: 계란찜을 잘 설명해주셨네요! 계란말이도 계란으로 만들 수 있는 요리인데요, 혹시 들어보셨나요?
+[2026-02-19T07:21:37.371271+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 205327, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:21:46.336263+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 205327, "end_ms": 214291, "dropped_ms": 8964, "dropped_total_ms": 79833, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:21:59.069417+00:00] user: 어 계란말이 알아 그냥 계란 물에 조금 풀어 가지고 소금간해서 프라이팬에 만들면 돼
+[2026-02-19T07:21:59.069804+00:00] assistant: 맞아요, 계란말이를 잘 설명해 주셨네요! 혹시 계란말이에 넣어보고 싶은 다른 재료가 있나요?
+[2026-02-19T07:21:59.075692+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 227031, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:22:07.916802+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 227031, "end_ms": 235871, "dropped_ms": 8840, "dropped_total_ms": 88673, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:22:17.845481+00:00] user: 계란말이에 명란 넣어서 만들면 맛있음
+[2026-02-19T07:22:17.845922+00:00] assistant: 명란을 넣은 계란말이, 정말 맛있겠어요. 오늘도 좋은 대화 나눠주셔서 감사합니다.
+[2026-02-19T07:22:17.851665+00:00] event:tts_start {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"elapsed_ms": 245807, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:22:26.187444+00:00] event:tts_end {"event_id": null, "event_seq": null, "event_ts": null, "payload": {"reason": "ended", "start_ms": 245807, "end_ms": 254140, "dropped_ms": 8333, "dropped_total_ms": 97006, "gate_policy": "drop_during_tts"}}
+[2026-02-19T07:22:27.167727+00:00] event:session_audio_uploaded {"session_id": "session_1771485492042_5nzfw0b", "patient_id": "profile_1770792017087_sqgps9lw", "audio_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771485492042_5nzfw0b\\conversation.user.wav", "audio_format": "wav", "converted_to_wav": false, "conversion_error": null, "audio_gate_meta_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771485492042_5nzfw0b\\conversation.user.meta.json", "audio_gate_meta": {"schema_version": "audio_gate_v1", "gate_policy": "drop_during_tts", "dropped_segments": [{"start_ms": 3009, "end_ms": 7346, "dropped_ms": 4337}, {"start_ms": 16686, "end_ms": 24082, "dropped_ms": 7396}, {"start_ms": 32507, "end_ms": 39132, "dropped_ms": 6625}, {"start_ms": 53022, "end_ms": 61391, "dropped_ms": 8369}, {"start_ms": 72229, "end_ms": 78531, "dropped_ms": 6302}, {"start_ms": 87754, "end_ms": 93181, "dropped_ms": 5427}, {"start_ms": 105312, "end_ms": 112601, "dropped_ms": 7289}, {"start_ms": 132160, "end_ms": 140841, "dropped_ms": 8681}, {"start_ms": 153321, "end_ms": 161821, "dropped_ms": 8500}, {"start_ms": 179579, "end_ms": 187522, "dropped_ms": 7943}, {"start_ms": 205327, "end_ms": 214291, "dropped_ms": 8964}, {"start_ms": 227031, "end_ms": 235871, "dropped_ms": 8840}, {"start_ms": 245807, "end_ms": 254140, "dropped_ms": 8333}], "dropped_total_ms": 97006, "client_clock": {"started_at_ms": 1771485492042, "ended_at_ms": 1771485746184}}, "uploaded_at": "2026-02-19T07:22:27.167701+00:00"}
+[2026-02-19T07:22:27.199885+00:00] event:session_end {"session_id": "session_1771485492042_5nzfw0b", "end_reason": "target_reached", "elapsed_sec": 254, "turn_count": 12, "session_mode": "live", "ended_at": "2026-02-19T07:22:27.199860+00:00", "ended_at_kst": "2026-02-19T16:22:27.199865+09:00", "timezone": "Asia/Seoul", "archive": {"ok": true, "patient_id": "profile_1770792017087_sqgps9lw", "session_id": "session_1771485492042_5nzfw0b", "text_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771485492042_5nzfw0b\\conversation.txt", "audio_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771485492042_5nzfw0b\\conversation.user.wav", "dialog_line_count": 12, "audio_summary": {"merged_files": 1, "skipped_files": 0, "duration_sec": 0.0, "sample_rate": null, "source": "uploaded_session_audio"}}}
