@@ -7,8 +7,15 @@ interface DiagnosisOption {
   value: string;
 }
 
+interface StageOption {
+  id: string;
+  label: string;
+  value: string;
+}
+
 interface DiagnosisSubmitData {
   patientId: string;
+  stage: string;
   diagnoses: string[];
   additionalNotes: string;
   timestamp: string;
@@ -19,9 +26,6 @@ const props = defineProps<{
   patientId: string;
   doctorId?: string;
 }>();
-
-const API_BASE_RAW = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
-const API_BASE = /\/api$/i.test(API_BASE_RAW) ? API_BASE_RAW : `${API_BASE_RAW}/api`;
 
 const emit = defineEmits<{
   (e: 'submit', data: DiagnosisSubmitData): void;
@@ -37,13 +41,21 @@ const diagnosisOptions: DiagnosisOption[] = [
   { id: 'parietal', label: '두정엽 위축', value: 'parietal_lobe_atrophy' }
 ];
 
+const stageOptions: StageOption[] = [
+  { id: 'cn', label: 'CN', value: 'cn' },
+  { id: 'smci', label: 'sMCI', value: 'smci' },
+  { id: 'pmci', label: 'pMCI', value: 'pmci' },
+  { id: 'ad', label: 'AD', value: 'ad' }
+];
+
 // 상태 관리
+const selectedStage = ref('');
 const selectedDiagnoses = ref<string[]>([]);
 const additionalNotes = ref('');
 const isSubmitting = ref(false);
 
 // 유효성 검사
-const isValid = computed(() => selectedDiagnoses.value.length > 0);
+const isValid = computed(() => Boolean(selectedStage.value) && selectedDiagnoses.value.length > 0);
 
 // 체크박스 토글
 const handleCheckboxChange = (value: string) => {
@@ -57,9 +69,14 @@ const handleCheckboxChange = (value: string) => {
 
 // 체크 여부 확인
 const isChecked = (value: string) => selectedDiagnoses.value.includes(value);
+const isStageSelected = (value: string) => selectedStage.value === value;
+const handleStageSelect = (value: string) => {
+  selectedStage.value = value;
+};
 
 // 폼 초기화
 const handleReset = () => {
+  selectedStage.value = '';
   selectedDiagnoses.value = [];
   additionalNotes.value = '';
 };
@@ -68,8 +85,13 @@ const handleReset = () => {
 const handleSubmit = async (e: Event) => {
   e.preventDefault();
 
-  if (!isValid.value) {
-    alert('최소 하나 이상의 진단을 선택해주세요.');
+  if (!selectedStage.value) {
+    alert('CN / sMCI / pMCI / AD 중 하나를 선택해주세요.');
+    return;
+  }
+
+  if (selectedDiagnoses.value.length === 0) {
+    alert('최소 하나 이상의 진단 항목을 선택해주세요.');
     return;
   }
 
@@ -78,35 +100,15 @@ const handleSubmit = async (e: Event) => {
   try {
     const submitData: DiagnosisSubmitData = {
       patientId: props.patientId,
+      stage: selectedStage.value,
       diagnoses: [...selectedDiagnoses.value],
       additionalNotes: additionalNotes.value.trim(),
       timestamp: new Date().toISOString(),
       doctorId: props.doctorId || 'doctor_001'
     };
 
-    const response = await fetch(
-      `${API_BASE}/doctor/patients/${encodeURIComponent(String(props.patientId).trim())}/mri/doctor-diagnosis`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(submitData)
-      }
-    );
-
-    if (!response.ok) {
-      let detail = '진단 저장 중 오류가 발생했습니다.';
-      try {
-        const body = await response.json();
-        if (typeof body?.detail === 'string' && body.detail.trim()) {
-          detail = body.detail;
-        }
-      } catch {
-        // ignore parse errors
-      }
-      throw new Error(`${detail} (HTTP ${response.status})`);
-    }
+    // API 호출 시뮬레이션 (실제 구현 시 fetch로 교체)
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // 부모 컴포넌트에 이벤트 전달
     emit('submit', submitData);
@@ -117,7 +119,7 @@ const handleSubmit = async (e: Event) => {
     handleReset();
   } catch (error) {
     console.error('진단 저장 실패:', error);
-    alert(error instanceof Error ? error.message : '진단 저장 중 오류가 발생했습니다.');
+    alert('진단 저장 중 오류가 발생했습니다.');
   } finally {
     isSubmitting.value = false;
   }
@@ -129,11 +131,28 @@ const handleSubmit = async (e: Event) => {
     <div class="form-header">
       <h4>의사 진단 확정</h4>
       <p class="form-description">
-        AI 분석 결과를 참고하여 확정 진단을 선택해주세요. (복수 선택 가능)
+        AI 분석 결과를 참고하여 임상 단계 1개를 선택하고, 영상 소견을 체크해주세요.
       </p>
     </div>
 
     <form @submit="handleSubmit">
+      <div class="stage-group">
+        <p class="stage-title">임상 단계 분류 (필수)</p>
+        <div class="stage-list" role="radiogroup" aria-label="임상 단계 분류">
+          <button
+            v-for="stage in stageOptions"
+            :key="stage.id"
+            type="button"
+            class="stage-item"
+            :class="{ selected: isStageSelected(stage.value) }"
+            :aria-pressed="isStageSelected(stage.value)"
+            @click="handleStageSelect(stage.value)"
+          >
+            {{ stage.label }}
+          </button>
+        </div>
+      </div>
+
       <!-- 체크박스 목록 -->
       <div class="checkbox-list">
         <label
@@ -219,6 +238,49 @@ const handleSubmit = async (e: Event) => {
   line-height: 1.5;
 }
 
+.stage-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+
+.stage-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  color: #4b5563;
+}
+
+.stage-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stage-item {
+  border: 1px solid rgba(196, 205, 216, 0.85);
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 12px 8px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #5f6771;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stage-item:hover {
+  background: #fafbfc;
+}
+
+.stage-item.selected {
+  border-color: rgba(76, 183, 183, 0.5);
+  background: rgba(76, 183, 183, 0.12);
+  color: #2e7d7d;
+  box-shadow: inset 2px 2px 6px rgba(76, 183, 183, 0.08), inset -2px -2px 6px #ffffff;
+}
+
 /* 체크박스 목록 */
 .checkbox-list {
   display: flex;
@@ -295,6 +357,7 @@ const handleSubmit = async (e: Event) => {
   font-size: 16px;
   font-weight: 800;
   color: #555;
+  padding-top: 8px;
 }
 
 .textarea-group textarea {
@@ -327,7 +390,7 @@ const handleSubmit = async (e: Event) => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
 .btn-reset,
@@ -396,6 +459,10 @@ const handleSubmit = async (e: Event) => {
 
 /* 반응형 */
 @media (max-width: 520px) {
+  .stage-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .button-group {
     flex-direction: column;
   }
