@@ -65,6 +65,12 @@ type BiomarkerRatioDisplayItem = BiomarkerItem & {
   scaleMaxLabel: string;
 };
 
+type AttentionMapItem = {
+  plane: 'axial' | 'coronal' | 'sagittal';
+  label: string;
+  url: string;
+};
+
 type DataAvailability = {
   hasCognitiveTests: boolean;
   hasMMSE: boolean;
@@ -478,6 +484,55 @@ const attentionMap = computed(() => {
   }
 
   return endpoint || provided;
+});
+const attentionMaps = computed<AttentionMapItem[]>(() => {
+  const maps = ensureArray(aiAnalysis.value?.attentionMaps as Array<any> | undefined);
+  const normalizePlane = (value: unknown): AttentionMapItem['plane'] => {
+    const text = String(value || '').trim().toLowerCase();
+    if (text.startsWith('cor')) return 'coronal';
+    if (text.startsWith('sag')) return 'sagittal';
+    return 'axial';
+  };
+
+  const labelByPlane: Record<AttentionMapItem['plane'], string> = {
+    axial: 'Axial',
+    coronal: 'Coronal',
+    sagittal: 'Sagittal'
+  };
+  const orderByPlane: Record<AttentionMapItem['plane'], number> = {
+    axial: 0,
+    coronal: 1,
+    sagittal: 2
+  };
+
+  const parsed = maps
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const url = String(item.url || item.path || item.image || '').trim();
+      if (!url) return null;
+      const plane = normalizePlane(item.plane);
+      const label = labelByPlane[plane];
+      return { plane, label, url } as AttentionMapItem;
+    })
+    .filter((item): item is AttentionMapItem => Boolean(item));
+
+  if (parsed.length > 0) {
+    const uniqueByPlane = new Map<AttentionMapItem['plane'], AttentionMapItem>();
+    parsed.forEach((item) => {
+      if (!uniqueByPlane.has(item.plane)) {
+        uniqueByPlane.set(item.plane, item);
+      }
+    });
+    return Array.from(uniqueByPlane.values()).sort(
+      (a, b) => orderByPlane[a.plane] - orderByPlane[b.plane]
+    );
+  }
+
+  if (attentionMap.value) {
+    return [{ plane: 'axial', label: 'Axial', url: attentionMap.value }];
+  }
+
+  return [];
 });
 const regionContributions = computed(() => aiAnalysis.value?.regionContributions || []);
 
@@ -1682,6 +1737,7 @@ watch(
                 <MRIImageDisplay
                   :original-image="originalImage"
                   :attention-map="attentionMap"
+                  :attention-maps="attentionMaps"
                   :loading="isLoading"
                 />
                 <div v-if="visitOptions.length > 0" class="visit-selector-row">
@@ -1772,7 +1828,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 12px 12px 24px;
+  padding: 12px 4px 24px;
 }
 
 .patient-banner {
@@ -2008,7 +2064,7 @@ watch(
 
 .score-bar {
   position: relative;
-  height: 10px;
+  height: 12px;
   border-radius: 999px;
   background: transparent;
   overflow: hidden;
@@ -2056,7 +2112,7 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: #a8adb3;
   margin-top: -2px;
@@ -2075,12 +2131,14 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 4px 2px 2px;
 }
 
 .clinical-extra-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
+  padding-top: 6px;
 }
 
 .clinical-extra-item {
@@ -2121,6 +2179,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 4px 2px 2px;
 }
 
 .biomarker-content {
@@ -2222,7 +2281,7 @@ watch(
 
 .biomarker-ratio-bar {
   position: relative;
-  height: 8px;
+  height: 12px;
   border-radius: 999px;
   background: transparent;
   overflow: hidden;

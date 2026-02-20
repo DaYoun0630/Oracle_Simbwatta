@@ -384,7 +384,7 @@ watch(
 .doctor-shell {
   --shell-max-width: 960px;
   --shell-nav-width: 620px;
-  --shell-gutter: clamp(14px, 4vw, 20px);
+  --shell-gutter: clamp(8px, 2.8vw, 14px);
   min-height: 100vh;
   height: 100vh;
   display: flex;
@@ -395,20 +395,25 @@ watch(
 .tabs-wrapper {
   display: flex;
   justify-content: center;
-  padding: 0 0 12px;
+  padding: 8px 0 16px;
+  border-radius: 24px;
+  overflow: visible;
   z-index: 1100;
+  box-sizing: border-box;
 }
 
 .top-tabs {
   display: flex;
   gap: 10px;
-  padding: 0;
+  padding: 4px 0;
   overflow-x: auto;
+  overflow-y: visible;
   flex-shrink: 0;
   scrollbar-width: none;
   width: 100%;
   max-width: 960px;
   justify-content: flex-start;
+  box-sizing: border-box;
 }
 
 .top-tabs::-webkit-scrollbar {
@@ -467,15 +472,15 @@ watch(
 }
 
 .nav-item {
-  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  justify-self: center;
   gap: 4px;
   background: none;
   border: none;
-  padding: 8px 0;
+  padding: 8px 16px;
   cursor: pointer;
   border-radius: 12px;
   transition: all 0.2s;
@@ -498,6 +503,26 @@ watch(
   font-size: 12px;
   font-weight: 700;
   color: #999;
+}
+
+@media (max-width: 520px) {
+  .tabs-wrapper {
+    padding: 6px 0 12px;
+  }
+
+  .top-tabs {
+    gap: 8px;
+    padding: 2px 0;
+    overflow-x: visible;
+  }
+
+  .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 10px 8px;
+    font-size: clamp(15px, 4.4vw, 17px);
+    border-radius: 16px;
+  }
 }
 
 .nav-item.active .label {
