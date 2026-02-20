@@ -1,0 +1,13 @@
+[2026-02-13T05:36:55.302719+00:00] assistant: 오늘 날씨는 어떤가요? 비 오는 날, 머리 위에 쓸 수 있고 휴대하기 좋은 물건이 하나 생각나는데요.
+[2026-02-13T05:36:55.303256+00:00] event:session_start {"meta": {"session_id": "session_1770961012736_goaq6i9", "profile_id": "profile_1770792017087_sqgps9lw", "session_mode": "live", "conversation_mode": "mixed", "turn_index": 0, "elapsed_sec": 0, "remaining_sec": 300, "target_sec": 300, "hard_limit_sec": 300, "should_wrap_up": false, "source": "session_start", "conversation_phase": "warmup", "request_close": false, "session_event": "session_start", "session_slot": "lunch", "next_session_slot": "evening", "diagnosis_label": "MCI", "neuro_pattern": ["temporal_atrophy"], "training_type": "semantic_naming", "training_level": 1, "training_step": 0}, "started_at": "2026-02-13T05:36:55.303249+00:00"}
+[2026-02-13T05:37:10.891686+00:00] user: 우산
+[2026-02-13T05:37:10.892450+00:00] assistant: 오늘은 과일 3개 중 하나만 말해요. 제가 먼저 사과, 이제 한 개만 말씀해 주세요.
+[2026-02-13T05:37:24.291567+00:00] user: 강아지
+[2026-02-13T05:37:24.292440+00:00] assistant: 강아지도 귀엽죠. 이제 과일 하나만 더 생각해볼까요?
+[2026-02-13T05:37:38.890524+00:00] user: 사과
+[2026-02-13T05:37:38.891338+00:00] assistant: 사과 맛있죠! 이번엔 빨간색 과일을 하나 더 떠올려볼까요?
+[2026-02-13T05:37:53.015405+00:00] user: 딸기
+[2026-02-13T05:37:53.015878+00:00] assistant: 사과와 딸기를 잘 떠올리셨어요! 이제 잠시 쉬면서 오늘 드신 맛있는 음식을 떠올려볼까요?
+[2026-02-13T05:38:06.672730+00:00] user: 자몽베르
+[2026-02-13T05:38:06.673575+00:00] assistant: 오늘은 과일 3개 중 하나만 말해요. 제가 먼저 사과, 이제 한 개만 말씀해 주세요.
+[2026-02-13T05:38:15.622987+00:00] event:session_end {"session_id": "session_1770961012736_goaq6i9", "end_reason": "reset", "elapsed_sec": 82, "turn_count": 5, "session_mode": "live", "ended_at": "2026-02-13T05:38:15.622974+00:00"}

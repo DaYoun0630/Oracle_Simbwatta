@@ -1,0 +1,27 @@
+[2026-02-17T10:26:15.727381+00:00] assistant: 안녕하세요! 오늘 저녁 어떻게 보내고 계신가요?
+[2026-02-17T10:26:15.728154+00:00] event:session_start {"started_at": "2026-02-17T10:26:15.728119+00:00", "started_at_kst": "2026-02-17T19:26:12.946280+09:00", "timezone": "Asia/Seoul", "conversation_mode": "mixed", "session_slot": "evening", "next_session_slot": "morning", "policy": {"llm_model": "gpt-4o", "llm_fallback_model": "gpt-4o-mini", "stt_model": "gpt-4o-transcribe", "tts_model": "gpt-4o-mini-tts", "tts_voice": "alloy", "tts_style": "?곕쑜?섍퀬 ?ㅼ젙?섍쾶 泥쒖쿇???먮컯?먮컯", "warmup_turns": 2, "silence_hint_threshold": 1, "silence_switch_threshold": 2, "silence_close_threshold": 3, "stt_confirm_limit": 1, "wait_time_sec": 3, "max_sentences": 2, "max_turn_seconds": 18, "hint_speed": "medium", "switch_sensitivity": "medium"}, "training_type": "semantic_naming"}
+[2026-02-17T10:26:39.326897+00:00] user: 일 조금 하고 있어 말차 마시면서
+[2026-02-17T10:26:39.327332+00:00] assistant: 말차와 함께라니 좋네요! 어떤 일을 하고 계신가요?
+[2026-02-17T10:26:56.846450+00:00] user: 있어 그냥 깎는 거
+[2026-02-17T10:26:56.846918+00:00] assistant: 깎는 일을 하고 계시군요! 어떤 도구를 사용하고 계세요?
+[2026-02-17T10:27:20.255129+00:00] user: 그 키보드로
+[2026-02-17T10:27:20.255577+00:00] assistant: 키보드로 작업하신다니 흥미롭네요! 키보드로 깎는다는 게 어떤 의미인지 조금 더 설명해 주실 수 있나요?
+[2026-02-17T10:27:47.618681+00:00] user: 그냥 비유적 표현이야 넘어가
+[2026-02-17T10:27:47.619173+00:00] assistant: 알겠어요, 비유적인 표현이었군요. 컴퓨터 입력에 사용하는 기계는 무엇일까요?
+[2026-02-17T10:28:08.439544+00:00] user: 내가 아까 말했잖아 쓴다고 키보드
+[2026-02-17T10:28:08.439955+00:00] assistant: 맞아요, 키보드라고 말씀하셨죠! 오늘 저녁엔 어떤 계획이 있으신가요?
+[2026-02-17T10:28:29.381846+00:00] user: 이런 거 그냥 하던 거 그냥 계속 해야지
+[2026-02-17T10:28:29.382227+00:00] assistant: 계속해서 하시는 일이 많으시군요. 혹시 오늘 저녁에 특별히 하고 싶은 다른 일이 있으신가요?
+[2026-02-17T10:28:54.434797+00:00] user: 아니 이미 했어 그 말차 마시고 싶었는데 마셨어
+[2026-02-17T10:28:54.435223+00:00] assistant: 말차를 마셔서 기분이 좋으셨겠어요. 이제 생각나는 과일 이름을 가능한 많이 말해 보실래요?
+[2026-02-17T10:29:16.784796+00:00] user: 고구마 감자 당근
+[2026-02-17T10:29:16.785235+00:00] assistant: 좋아요, 다양한 채소를 말씀해주셨네요. 감자와 잘 어울리는 요리는 어떤 게 있을까요?
+[2026-02-17T10:29:36.317662+00:00] user: 감자는 케첩
+[2026-02-17T10:29:36.318548+00:00] assistant: 케첩과 감자는 정말 잘 어울리죠! 혹시 감자튀김을 좋아하시나요?
+[2026-02-17T10:29:54.565292+00:00] user: 어떻게 알았어
+[2026-02-17T10:29:54.566053+00:00] assistant: 감자튀김은 많은 분들이 좋아하니까요! 저녁에 따뜻한 차와 잘 어울리는 디저트는 뭐가 있을까요?
+[2026-02-17T10:30:15.116536+00:00] user: 어 잘 못 들었어 다시 말해 줘
+[2026-02-17T10:30:15.117240+00:00] assistant: 감자튀김과 잘 어울리는 디저트는 뭐가 있을까요?
+[2026-02-17T10:30:31.228897+00:00] user: 감자튀김이 디저트지 그거랑 어울리는 디저트가 어디 있어
+[2026-02-17T10:30:31.229502+00:00] assistant: 감자튀김을 디저트로 생각하시다니 재미있네요. 오늘 저녁에 말차를 마셔서 기분이 좋으셨길 바라요.
+[2026-02-17T10:30:40.703818+00:00] event:session_end {"session_id": "session_1771323972629_4assj8h", "end_reason": "target_reached", "elapsed_sec": 268, "turn_count": 12, "session_mode": "live", "ended_at": "2026-02-17T10:30:40.703794+00:00", "ended_at_kst": "2026-02-17T19:30:40.703799+09:00", "timezone": "Asia/Seoul", "archive": {"ok": true, "patient_id": "profile_1770792017087_sqgps9lw", "session_id": "session_1771323972629_4assj8h", "text_path": "C:\\최종프로젝트\\web\\LLM\\storage\\session_archive\\profile_1770792017087_sqgps9lw\\session_1771323972629_4assj8h\\conversation.txt", "audio_path": null, "dialog_line_count": 25, "audio_summary": {"merged_files": 0, "skipped_files": 0, "duration_sec": 0.0, "sample_rate": null}}}

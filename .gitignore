@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Docker env files
+docker/.env
+*.csv
+
+# Local service/runtime state (do not commit)
+postgres-data/
+minio-data/
+models/
+data/
+migrations/
+
+# Local tooling state
+.claude/
+
+# MRI template binaries (local model assets)
+src/claude/worker/templates/mni_icbm152_t1_tal_nlin_sym_09a.nii
+src/claude/worker/templates/mni_icbm152_t1_tal_nlin_sym_09a_mask.nii
+
+# files
+mri_slice_viewer.ipynb

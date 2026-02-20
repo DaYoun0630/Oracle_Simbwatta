@@ -1,0 +1,7 @@
+[2026-02-11T10:20:30.851305+00:00] assistant: 안녕하세요. 오늘 하루는 어땠는지 편하게 이야기해볼까요?
+[2026-02-11T10:20:30.853402+00:00] event:session_start {"meta": {"session_id": "session_1770805230845_2r6kcu5", "profile_id": "profile_1770792017087_sqgps9lw", "session_mode": "live", "turn_index": 0, "elapsed_sec": 0, "remaining_sec": 300, "target_sec": 300, "hard_limit_sec": 300, "should_wrap_up": false, "source": "session_start", "conversation_phase": "dialog", "request_close": false}, "started_at": "2026-02-11T10:20:30.853379+00:00"}
+[2026-02-11T10:20:57.711751+00:00] user: 대답해
+[2026-02-11T10:20:57.712033+00:00] assistant: 안녕하세요. 오늘 하루는 어떻게 보내셨나요? 특별히 기억에 남는 일이 있으셨는지 궁금합니다.
+[2026-02-11T10:21:16.949766+00:00] user: 콩나물국밥이 맛있어
+[2026-02-11T10:21:16.950042+00:00] assistant: 콩나물국밥을 드셨군요. 정말 맛있죠! 따뜻하고 속이 편안해지는 느낌이 들었을 것 같아요. 혹시 콩나물국밥은 자주 드시나요, 아니면 오늘 특별히 드신 건가요?
+[2026-02-11T10:22:51.831320+00:00] event:session_end {"session_id": "session_1770805230845_2r6kcu5", "end_reason": "reset", "elapsed_sec": 140, "turn_count": 2, "session_mode": "live", "ended_at": "2026-02-11T10:22:51.831274+00:00"}
