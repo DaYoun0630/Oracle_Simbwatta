@@ -382,6 +382,9 @@ watch(
 
 <style scoped>
 .doctor-shell {
+  --shell-max-width: 960px;
+  --shell-nav-width: 620px;
+  --shell-gutter: clamp(8px, 2.8vw, 14px);
   min-height: 100vh;
   height: 100vh;
   display: flex;
@@ -392,20 +395,25 @@ watch(
 .tabs-wrapper {
   display: flex;
   justify-content: center;
-  padding: 0 0 12px;
+  padding: 8px 0 16px;
+  border-radius: 24px;
+  overflow: visible;
   z-index: 1100;
+  box-sizing: border-box;
 }
 
 .top-tabs {
   display: flex;
   gap: 10px;
-  padding: 0;
+  padding: 4px 0;
   overflow-x: auto;
+  overflow-y: visible;
   flex-shrink: 0;
   scrollbar-width: none;
   width: 100%;
   max-width: 960px;
   justify-content: flex-start;
+  box-sizing: border-box;
 }
 
 .top-tabs::-webkit-scrollbar {
@@ -434,10 +442,11 @@ watch(
 
 .content {
   flex: 1;
-  padding: 16px 20px 120px;
+  padding: 16px var(--shell-gutter);
+  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   min-height: 0;
-  max-width: 960px;
+  max-width: var(--shell-max-width);
   margin: 0 auto;
   width: 100%;
 }
@@ -445,28 +454,33 @@ watch(
 .bottom-nav {
   position: fixed;
   bottom: 0;
-  left: 0;
-  right: 0;
-  height: 80px;
-  background: #f5f6f7;
-  display: flex;
-  justify-content: space-around;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, var(--shell-nav-width));
+  height: 70px;
+  background: rgba(244, 247, 248, 0.98);
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  border-top: 1px solid rgba(46, 46, 46, 0.05);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
-  padding: 10px 20px 14px;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
-  max-width: 960px;
-  margin: 0 auto;
+  padding: 8px var(--shell-gutter) calc(12px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -2px 8px rgba(46, 46, 46, 0.08);
   z-index: 1100;
+  box-sizing: border-box;
 }
 
 .nav-item {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
+  justify-self: center;
   gap: 4px;
   background: none;
   border: none;
-  padding: 8px 12px;
+  padding: 8px 16px;
   cursor: pointer;
   border-radius: 12px;
   transition: all 0.2s;
@@ -474,17 +488,53 @@ watch(
 
 .nav-item.active {
   background: #fff;
-  box-shadow: 2px 2px 6px #d1d9e6, -2px -2px 6px #ffffff;
+  box-shadow: 0 2px 6px rgba(46, 46, 46, 0.08);
+}
+
+.icon {
+  transition: transform 0.2s;
+}
+
+.nav-item.active .icon {
+  transform: scale(1.1);
 }
 
 .label {
-  font-size: 18px;
+  font-size: 12px;
   font-weight: 700;
   color: #999;
 }
 
+@media (max-width: 520px) {
+  .tabs-wrapper {
+    padding: 6px 0 12px;
+  }
+
+  .top-tabs {
+    gap: 8px;
+    padding: 2px 0;
+    overflow-x: visible;
+  }
+
+  .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 10px 8px;
+    font-size: clamp(15px, 4.4vw, 17px);
+    border-radius: 16px;
+  }
+}
+
 .nav-item.active .label {
   color: #4cb7b7;
+}
+
+@media (min-width: 900px) {
+  .doctor-shell {
+    --shell-max-width: 860px;
+    --shell-nav-width: 620px;
+    --shell-gutter: 24px;
+  }
 }
 
 /* 환자 선택 시트 */
