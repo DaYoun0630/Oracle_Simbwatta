@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'; // 반응형 상태와 라이프사이클을 사용한다
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'; // 반응형 상태와 라이프사이클을 사용한다
 import { useRoute, useRouter } from 'vue-router'; // 라우트 정보와 이동을 처리한다
 import DoctorShell from '@/components/shells/DoctorShell.vue'; // 의료진 전용 셸을 사용한다
 import { useDoctorData } from '@/composables/useDoctorData'; // 의료진 환자 데이터를 불러온다
@@ -14,7 +14,9 @@ const {
   loading: doctorLoading,
   fetchData: fetchDoctorData,
   switchPatient,
-  currentPatientId
+  currentPatientId,
+  startAutoRefresh,
+  stopAutoRefresh,
 } = useDoctorData(); // 환자 데이터와 선택 상태를 관리한다
 
 const searchQuery = ref(''); // 환자 검색어를 저장한다
@@ -32,6 +34,11 @@ const getRoutePatientId = () => {
 onMounted(() => {
   const targetId = getRoutePatientId() || currentPatientId.value; // 초기 선택 환자를 결정한다
   fetchDoctorData(targetId); // 환자 데이터를 로딩한다
+  startAutoRefresh();
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
 });
 
 watch(() => route.query.patientId, (value) => {

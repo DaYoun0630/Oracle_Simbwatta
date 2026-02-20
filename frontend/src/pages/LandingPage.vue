@@ -371,7 +371,7 @@ onUnmounted(() => {
 .hero {
   display: grid;
   gap: clamp(8px, 2vmin, 12px);
-  padding-inline: 4px;
+  padding-inline: 0;
 }
 
 .service-badge {
@@ -382,6 +382,7 @@ onUnmounted(() => {
   font-weight: 700;
   font-size: clamp(0.9rem, 0.85rem + 0.5vmin, 1.05rem);
   align-self: start;
+  justify-self: start;
 }
 
 .hero h1 {
@@ -501,7 +502,7 @@ onUnmounted(() => {
   color: #5f5f5f;
   margin: 0;
   max-width: 48ch;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   white-space: pre-line;
 }
 
@@ -729,10 +730,6 @@ onUnmounted(() => {
     height: calc(100dvh - 24px);
     padding: 16px 14px 18px;
     gap: 12px;
-  }
-
-  .hero {
-    padding-inline: 8px;
   }
 
   .carousel {

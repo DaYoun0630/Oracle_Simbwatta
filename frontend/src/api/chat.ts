@@ -1,6 +1,20 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_RAW = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
+const BASE_URL = API_BASE_RAW || "/api";
 
 console.log("API BASE URL:", BASE_URL);
+
+const buildErrorFromResponse = async (res: Response, fallbackMessage: string) => {
+  try {
+    const body = await res.json();
+    if (typeof body?.detail === "string" && body.detail.trim()) {
+      return new Error(body.detail);
+    }
+  } catch {
+    // Ignore parse errors and use fallback message.
+  }
+
+  return new Error(`${fallbackMessage} (HTTP ${res.status})`);
+};
 
 export type VoiceSessionMode = "live" | "mock";
 export type ConversationMode = "daily" | "therapy" | "mixed";
@@ -55,43 +69,64 @@ export interface StartChatPayload {
   meta?: ChatMetaPayload | null;
 }
 
+export interface UploadSessionAudioResponse {
+  ok: boolean;
+  session_id: string;
+  patient_id: string;
+  audio_path: string;
+  audio_format: string;
+  converted_to_wav: boolean;
+  conversion_error?: string | null;
+  uploaded_at: string;
+}
+
 export async function sendChat(
   userMessage: string,
   modelResult: Record<string, unknown>,
   state?: Record<string, unknown> | null,
   meta?: ChatMetaPayload
 ): Promise<ChatResponse> {
-  const res = await fetch(`${BASE_URL}/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      user_message: userMessage,
-      model_result: modelResult,
-      state: state ?? null,
-      meta: meta ?? null,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_message: userMessage,
+        model_result: modelResult,
+        state: state ?? null,
+        meta: meta ?? null,
+      }),
+    });
+  } catch (error) {
+    throw new Error("Bad connection to Chat API");
+  }
 
   if (!res.ok) {
-    throw new Error("Chat API failed");
+    throw await buildErrorFromResponse(res, "Chat API failed");
   }
 
   return (await res.json()) as ChatResponse;
 }
 
 export async function endChatSession(payload: EndSessionPayload): Promise<void> {
-  const res = await fetch(`${BASE_URL}/session/end`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/session/end`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw new Error("Bad connection to Session End API");
+  }
 
   if (!res.ok) {
-    throw new Error("Session end API failed");
+    throw await buildErrorFromResponse(res, "Session end API failed");
   }
 }
 
@@ -104,17 +139,51 @@ export async function startChatSession(
     meta: meta ?? null,
   };
 
-  const res = await fetch(`${BASE_URL}/start`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/start`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw new Error("Bad connection to Start Chat API");
+  }
 
   if (!res.ok) {
-    throw new Error("Start Chat API failed");
+    throw await buildErrorFromResponse(res, "Start Chat API failed");
   }
 
   return (await res.json()) as ChatResponse;
+}
+
+export async function uploadSessionAudio(
+  sessionId: string,
+  file: File,
+  profileId?: string
+): Promise<UploadSessionAudioResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("session_id", sessionId);
+  if (profileId) {
+    formData.append("profile_id", profileId);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/session/upload-audio`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    throw new Error("Bad connection to Session Audio Upload API");
+  }
+
+  if (!res.ok) {
+    throw await buildErrorFromResponse(res, "Session audio upload failed");
+  }
+
+  return (await res.json()) as UploadSessionAudioResponse;
 }

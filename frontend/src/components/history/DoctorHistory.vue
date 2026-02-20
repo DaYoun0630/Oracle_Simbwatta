@@ -36,6 +36,13 @@ interface BiomarkerResults {
   ratioTtauAb42?: number;
 }
 
+interface VoiceAssessmentPoint {
+  timepoint?: string | null;
+  cognitiveScore?: number | null;
+  mciProbability?: number | null;
+  flag?: string | null;
+}
+
 type BiomarkerItem = {
   id: string;
   label: string;
@@ -67,7 +74,9 @@ type DataAvailability = {
   hasBiomarkers: boolean;
   hasMRI: boolean;
   mriCount: number;
+  hasVoiceUploads: boolean;
   hasVoiceData: boolean;
+  voiceDataStatus: 'none' | 'processing' | 'ready';
   voiceDataDays: number;
   dataCompleteness: 'none' | 'minimal' | 'partial' | 'complete';
   lastUpdateDate: string | null;
@@ -421,6 +430,9 @@ const clinicalTrends = computed<ClinicalTrends | null>(() =>
 );
 const dailyParticipation = computed(() => props.data?.dailyParticipation || null);
 const acousticFeatures = computed(() => props.data?.acousticFeatures || []);
+const voiceAssessments = computed<VoiceAssessmentPoint[]>(
+  () => ensureArray((props.data?.voiceAssessments as VoiceAssessmentPoint[] | undefined) ?? [])
+);
 const mriAnalysis = computed(() => props.data?.mriAnalysis || null);
 
 const aiAnalysis = computed(() => mriAnalysis.value?.aiAnalysis || null);
@@ -477,7 +489,11 @@ const dataAvailability = computed<DataAvailability>(() => {
     Object.values(biomarkerSource).some((value) => value !== null && value !== undefined);
 
   const participationCounts = ensureArray(dailyParticipation.value?.counts);
-  const hasVoiceData = base.hasVoiceData ?? (acousticFeatures.value.length > 0 || participationCounts.length > 0);
+  const hasVoiceUploads = base.hasVoiceUploads ?? (participationCounts.length > 0);
+  const hasVoiceData = base.hasVoiceData ?? (acousticFeatures.value.length > 0);
+  const voiceDataStatus =
+    (base.voiceDataStatus as DataAvailability['voiceDataStatus'] | undefined) ??
+    (hasVoiceData ? 'ready' : hasVoiceUploads ? 'processing' : 'none');
 
   const reportCount = mriAnalysis.value?.reports ? Object.keys(mriAnalysis.value.reports).length : 0;
   const visitImageCount = ensureArray(visits.value).filter((visit) => visit?.imageId).length;
@@ -518,7 +534,9 @@ const dataAvailability = computed<DataAvailability>(() => {
     hasBiomarkers,
     hasMRI,
     mriCount,
+    hasVoiceUploads,
     hasVoiceData,
+    voiceDataStatus,
     voiceDataDays,
     dataCompleteness,
     lastUpdateDate: lastUpdateDate ?? null,
@@ -543,6 +561,9 @@ const hasVoiceData = computed(() => dataAvailability.value.hasVoiceData);
 const hasMRIData = computed(() => dataAvailability.value.hasMRI);
 
 const showClinicalEmpty = computed(() => !hasClinicalData.value);
+const showVoicePending = computed(
+  () => !hasVoiceData.value && dataAvailability.value.voiceDataStatus === 'processing'
+);
 const showVoiceEmpty = computed(() => !hasVoiceData.value);
 const showMriEmpty = computed(() => !hasMRIData.value);
 
@@ -1017,6 +1038,47 @@ const findFeature = (keywords: string[]) =>
     keywords.some((keyword) => String(feature?.label ?? '').includes(keyword))
   );
 
+const latestVoiceAssessment = computed<VoiceAssessmentPoint | null>(() => {
+  const direct = props.data?.latestVoiceAssessment as VoiceAssessmentPoint | undefined;
+  if (direct && (direct.cognitiveScore != null || direct.mciProbability != null || direct.flag)) {
+    return direct;
+  }
+  if (!voiceAssessments.value.length) return null;
+  return voiceAssessments.value.at(-1) ?? null;
+});
+
+const latestVoiceFlagKey = computed(() => {
+  const raw = String(latestVoiceAssessment.value?.flag || '').trim().toLowerCase();
+  if (raw === 'critical') return 'critical';
+  if (raw === 'warning') return 'warning';
+  if (raw === 'normal') return 'normal';
+  return 'unknown';
+});
+
+const latestVoiceFlagLabel = computed(() => {
+  if (latestVoiceFlagKey.value === 'critical') return 'CRITICAL';
+  if (latestVoiceFlagKey.value === 'warning') return 'WARNING';
+  if (latestVoiceFlagKey.value === 'normal') return 'NORMAL';
+  return 'UNKNOWN';
+});
+
+const latestVoiceProbabilityText = computed(() => {
+  const value = asFiniteNumber(latestVoiceAssessment.value?.mciProbability);
+  if (value === null) return '-';
+  const percent = value <= 1 ? value * 100 : value;
+  return `${clamp(percent, 0, 100).toFixed(1)}%`;
+});
+
+const latestVoiceScoreText = computed(() => {
+  const value = asFiniteNumber(latestVoiceAssessment.value?.cognitiveScore);
+  if (value === null) return '-';
+  return value.toFixed(2);
+});
+
+const latestVoiceAssessedAtText = computed(() =>
+  formatDateOnly(latestVoiceAssessment.value?.timepoint ?? null)
+);
+
 const buildSeries = (values: number[] | undefined) =>
   ensureArray(values)
     .map((value) => Number(value))
@@ -1160,7 +1222,6 @@ const mriSubtypeConfidenceText = computed(() => {
 
 const handleDiagnosisSubmit = (data: any) => {
   console.log('진단 데이터 제출:', data);
-  // 실제 구현 시 POST /api/doctor-diagnosis 호출
 };
 
 const handleSendDiagnosis = () => {
@@ -1418,7 +1479,19 @@ watch(
 
         <section v-else-if="currentTab === 'voice'" class="panel voice-panel" aria-label="음성 대화">
           <EmptyState
-            v-if="showVoiceEmpty"
+            v-if="showVoicePending"
+            class="empty-state-slot"
+            type="info"
+            icon="microphone"
+            title="음성 분석 처리 중입니다"
+            description="녹음은 업로드되었습니다. 분석이 완료되면 가장 최근 결과가 자동으로 반영됩니다."
+            :benefits="['분석 완료 전에는 이전 완료 데이터만 표시됩니다.']"
+            note="페이지를 유지하면 자동 갱신으로 결과가 표시됩니다."
+            aria-label="음성 데이터 처리 중"
+          />
+
+          <EmptyState
+            v-else-if="showVoiceEmpty"
             class="empty-state-slot"
             :type="voiceEmptyState.type"
             :icon="voiceEmptyState.icon"
@@ -1431,6 +1504,32 @@ watch(
           />
 
           <template v-else>
+            <div v-if="latestVoiceAssessment" class="card voice-result-card">
+              <div class="voice-result-header">
+                <div>
+                  <h4>최근 모델 분석 결과</h4>
+                  <p>가장 최근 완료된 음성 평가 기준</p>
+                </div>
+                <span class="voice-result-badge" :class="`voice-result-${latestVoiceFlagKey}`">
+                  {{ latestVoiceFlagLabel }}
+                </span>
+              </div>
+              <div class="voice-result-grid">
+                <div class="voice-result-item">
+                  <span>MCI 확률</span>
+                  <strong>{{ latestVoiceProbabilityText }}</strong>
+                </div>
+                <div class="voice-result-item">
+                  <span>인지 점수</span>
+                  <strong>{{ latestVoiceScoreText }}</strong>
+                </div>
+                <div class="voice-result-item">
+                  <span>평가 시각</span>
+                  <strong>{{ latestVoiceAssessedAtText }}</strong>
+                </div>
+              </div>
+            </div>
+
             <div class="card voice-summary-card">
               <div>
                 <h4>최근 4주간 변화 관찰</h4>
@@ -1723,6 +1822,79 @@ watch(
   font-weight: 800;
   margin: 0;
   color: #2e2e2e;
+}
+
+.voice-result-card {
+  gap: 14px;
+}
+
+.voice-result-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.voice-result-header p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #666;
+}
+
+.voice-result-badge {
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
+.voice-result-badge.voice-result-normal {
+  background: rgba(25, 143, 99, 0.16);
+  color: #0f7d56;
+}
+
+.voice-result-badge.voice-result-warning {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+
+.voice-result-badge.voice-result-critical {
+  background: rgba(239, 68, 68, 0.16);
+  color: #b91c1c;
+}
+
+.voice-result-badge.voice-result-unknown {
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+.voice-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.voice-result-item {
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: inset 4px 4px 10px rgba(209, 217, 230, 0.6), inset -4px -4px 10px #ffffff;
+  padding: 14px 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.voice-result-item span {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6b7280;
+}
+
+.voice-result-item strong {
+  font-size: 22px;
+  font-weight: 900;
+  color: #1f2937;
 }
 
 .score-grid {

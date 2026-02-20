@@ -56,7 +56,7 @@ export async function verifySubjectLinkCode(code: string): Promise<SubjectLinkCo
   }
 }
 
-export async function signupWithMockApi(payload: SignupApiPayload): Promise<SignupApiResponse> {
+export async function signupWithApi(payload: SignupApiPayload): Promise<SignupApiResponse> {
   if (!payload.terms.agree_service || !payload.terms.agree_privacy) {
     throw new Error("필수 약관 동의가 필요합니다.");
   }

@@ -1,22 +1,112 @@
 ﻿<script setup>
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import CaregiverShell from '@/components/shells/CaregiverShell.vue';
 import { verifySubjectLinkCode } from '@/api/signup';
+import { useAuthStore } from '@/stores/auth';
 
-const connectedSubjects = ref([
-  {
-    id: 1,
-    name: '김어르신',
-    relation: '부모님',
-    status: 'active',
-    lastActive: '오늘 14:30'
-  }
-]);
+const authStore = useAuthStore();
+const connectedSubjects = ref([]);
+const isLoadingConnections = ref(false);
+const connectionError = ref('');
 
 const memberNumberInput = ref('');
 const inviteMessage = ref('');
 const inviteError = ref(false);
 const isSubmitting = ref(false);
+
+const MEMBER_CODE_MODULUS = 1000000;
+const MEMBER_CODE_MULTIPLIER = 741457;
+const MEMBER_CODE_INCREMENT = 193939;
+
+const toSubjectMemberNumberFromPatientId = (value) => {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  const parsed = Number.parseInt(digits, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '';
+  const encoded = (parsed * MEMBER_CODE_MULTIPLIER + MEMBER_CODE_INCREMENT) % MEMBER_CODE_MODULUS;
+  return `SM-${String(encoded).padStart(6, '0')}`;
+};
+
+const toRelationLabel = (relationship, patientGender) => {
+  const raw = String(relationship || '').trim();
+  const normalized = raw.toLowerCase();
+  const gender = Number(patientGender);
+
+  // 보호자 기준 관계(son/daughter)를 대상자 기준 관계(아버지/어머니)로 변환
+  if (['son', 'daughter', 'child', '아들', '딸', '자녀'].includes(normalized) || ['아들', '딸', '자녀'].includes(raw)) {
+    if (gender === 1) return '아버지';
+    if (gender === 0) return '어머니';
+    return '부모';
+  }
+
+  if (['father', 'mother', 'parent', '아버지', '어머니', '부모'].includes(normalized) || ['아버지', '어머니', '부모'].includes(raw)) {
+    if (gender === 1) return '아들';
+    if (gender === 0) return '딸';
+    return '자녀';
+  }
+
+  if (['spouse', 'husband', 'wife', '배우자'].includes(normalized) || raw === '배우자') return '배우자';
+  if (['sibling', '형제자매'].includes(normalized) || raw === '형제자매') return '형제자매';
+  if (['guardian', '보호자'].includes(normalized) || raw === '보호자') return '보호자';
+  if (!raw) return '가족';
+  return raw;
+};
+
+const formatLastActive = (timestamp) => {
+  if (!timestamp) return '기록 없음';
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return '기록 없음';
+  return parsed.toLocaleDateString('ko-KR').replace(/\.$/, '');
+};
+
+const fetchConnectedSubjects = async () => {
+  const familyId = Number(authStore.user?.entity_id ?? authStore.user?.id);
+  if (!Number.isFinite(familyId) || familyId <= 0) {
+    connectedSubjects.value = [];
+    connectionError.value = '보호자 계정 정보를 확인할 수 없습니다.';
+    return;
+  }
+
+  isLoadingConnections.value = true;
+  connectionError.value = '';
+
+  try {
+    const headers = { Accept: 'application/json' };
+    if (authStore.token) {
+      headers.Authorization = `Bearer ${authStore.token}`;
+    }
+    const query = `family_id=${encodeURIComponent(String(familyId))}`;
+    const [patientRes, profileRes] = await Promise.all([
+      fetch(`/api/family/patient?${query}`, { headers }),
+      fetch(`/api/family/profile?${query}`, { headers }),
+    ]);
+
+    if (!patientRes.ok) {
+      throw new Error('연결된 대상자 정보를 불러오지 못했습니다.');
+    }
+
+    const patient = await patientRes.json();
+    const profile = profileRes.ok ? await profileRes.json() : null;
+    const memberNumber = toSubjectMemberNumberFromPatientId(patient?.user_id);
+
+    connectedSubjects.value = [
+      {
+        id: Number(patient?.user_id) || familyId,
+        name: patient?.name || '대상자',
+        relation: toRelationLabel(profile?.relationship, patient?.gender),
+        status: 'active',
+        lastActive: formatLastActive(patient?.updated_at),
+        memberNumber,
+      },
+    ];
+  } catch (error) {
+    console.error('Failed to fetch caregiver linked subjects:', error);
+    connectedSubjects.value = [];
+    connectionError.value = error instanceof Error ? error.message : '연결 정보를 불러오지 못했습니다.';
+  } finally {
+    isLoadingConnections.value = false;
+  }
+};
 
 const removeConnection = (subjectId) => {
   connectedSubjects.value = connectedSubjects.value.filter((subject) => subject.id !== subjectId);
@@ -58,6 +148,7 @@ const sendInvite = async () => {
     inviteMessage.value = '대상자 회원번호 확인이 완료되어 연결 요청을 보냈습니다.';
     inviteError.value = false;
     memberNumberInput.value = '';
+    await fetchConnectedSubjects();
   } catch (error) {
     console.error('Failed to validate member number:', error);
     inviteMessage.value = '회원번호 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
@@ -66,15 +157,23 @@ const sendInvite = async () => {
     isSubmitting.value = false;
   }
 };
+
+onMounted(() => {
+  void fetchConnectedSubjects();
+});
 </script>
 
 <template>
   <CaregiverShell title="보호자 연결 관리">
     <div class="caregiver-management">
       <section class="section">
-        <h2 class="section-title">연결된 대상자</h2>
+        <h2 class="section-title linked-subject-title">연결된 대상자</h2>
 
-        <div v-if="connectedSubjects.length === 0" class="empty-state">
+        <div v-if="isLoadingConnections" class="empty-state">
+          <p>연결 정보를 불러오는 중입니다.</p>
+        </div>
+
+        <div v-else-if="connectedSubjects.length === 0" class="empty-state">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2">
             <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="8.5" cy="7" r="4"/>
@@ -82,6 +181,7 @@ const sendInvite = async () => {
             <line x1="23" y1="11" x2="17" y2="11"/>
           </svg>
           <p>연결된 대상자가 없습니다</p>
+          <p v-if="connectionError" class="connection-error">{{ connectionError }}</p>
         </div>
 
         <div v-else class="subject-list">
@@ -100,6 +200,7 @@ const sendInvite = async () => {
               <h3>{{ subject.name }}</h3>
               <p>{{ subject.relation }}</p>
               <span class="last-active">최근 활동: {{ subject.lastActive }}</span>
+              <span v-if="subject.memberNumber" class="last-active">회원번호: {{ subject.memberNumber }}</span>
             </div>
             <div class="subject-actions">
               <div class="subject-status" :class="subject.status">
@@ -163,8 +264,25 @@ const sendInvite = async () => {
 .section-title {
   font-size: 20px;
   font-weight: 800;
-  color: #2e2e2e;
+  color: #111111;
+  background: none;
+  -webkit-text-fill-color: #111111;
+  -webkit-background-clip: initial;
+  text-shadow: none;
   margin: 0;
+}
+
+.linked-subject-title {
+  font-weight: 700 !important;
+  color: #111111 !important;
+  background: transparent !important;
+  background-image: none !important;
+  -webkit-text-fill-color: #111111 !important;
+  -webkit-background-clip: border-box !important;
+  text-shadow: none !important;
+  filter: none !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .section-desc {
@@ -191,6 +309,12 @@ const sendInvite = async () => {
   font-weight: 600;
   color: #888;
   margin: 0;
+}
+
+.connection-error {
+  font-size: 13px !important;
+  color: #c24141 !important;
+  text-align: center;
 }
 
 .subject-list {
@@ -240,6 +364,7 @@ const sendInvite = async () => {
 }
 
 .last-active {
+  display: block;
   font-size: 13px;
   font-weight: 600;
   color: #999;

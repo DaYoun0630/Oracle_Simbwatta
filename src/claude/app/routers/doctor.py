@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, Response
 from typing import List, Optional, Dict, Any
 from uuid import UUID
+from pydantic import BaseModel
 import logging
 from datetime import date, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ import gzip
 import struct
 import zlib
 import json
+import re
 
 from .. import db
 from ..schemas.patient import PatientOut, PatientCreate, PatientUpdate, PatientWithUser
@@ -22,6 +24,22 @@ from ..schemas.family import FamilyMemberOut, FamilyMemberCreate
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
 logger = logging.getLogger(__name__)
 MRI_RENDER_VERSION = "20260213-8"
+SUBJECT_ID_PATTERN = re.compile(r"(\d{3}_S_\d{4})", re.IGNORECASE)
+MRI_DIAGNOSIS_COLUMN_MAP: Dict[str, str] = {
+    "hippocampus_atrophy": "hippocampal_atrophy",
+    "temporal_lobe_atrophy": "medial_temporal_atrophy",
+    "total_brain_volume_loss": "global_brain_volume_decrease",
+    "white_matter_lesion": "white_matter_lesions",
+    "frontal_lobe_atrophy": "frontal_atrophy",
+    "parietal_lobe_atrophy": "parietal_atrophy",
+}
+
+
+class MRIDoctorDiagnosisPayload(BaseModel):
+    diagnoses: List[str]
+    additionalNotes: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    doctorId: Optional[str] = None
 
 
 # TODO: Add auth dependency to verify user is a doctor
@@ -147,6 +165,54 @@ def _find_original_dicom_series_dir(subject_id: str) -> Optional[Path]:
     return None
 
 
+def _extract_subject_id_from_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    matched = SUBJECT_ID_PATTERN.search(text)
+    if not matched:
+        return None
+
+    return matched.group(0).upper()
+
+
+async def _resolve_mri_subject_id(patient_id: str) -> str:
+    row = await db.fetchrow(
+        """
+        SELECT
+            p.subject_id,
+            p.user_id,
+            (
+                SELECT ma.file_path
+                FROM mri_assessments ma
+                WHERE ma.patient_id = p.user_id
+                ORDER BY ma.scan_date DESC NULLS LAST, ma.created_at DESC
+                LIMIT 1
+            ) AS latest_mri_file_path
+        FROM patients p
+        WHERE p.subject_id = $1 OR p.user_id::text = $1
+        """,
+        patient_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    row_dict = dict(row)
+    explicit_subject_id = row_dict.get("subject_id")
+    if explicit_subject_id:
+        return str(explicit_subject_id)
+
+    derived_subject_id = _extract_subject_id_from_text(row_dict.get("latest_mri_file_path"))
+    if derived_subject_id:
+        return derived_subject_id
+
+    return str(row_dict.get("user_id"))
+
+
 def _convert_dicom_series_to_nifti(dicom_dir: Path, output_path: Path) -> Path:
     # Lazy import so app can still boot even if SimpleITK is unavailable.
     import SimpleITK as sitk
@@ -192,19 +258,7 @@ def _get_or_build_original_nifti(subject_id: str) -> Optional[Path]:
 
 
 async def _resolve_subject_id(patient_id: str) -> str:
-    row = await db.fetchrow(
-        """
-        SELECT subject_id, user_id
-        FROM patients
-        WHERE subject_id = $1 OR user_id::text = $1
-        """,
-        patient_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    row_dict = dict(row)
-    return str(row_dict.get("subject_id") or row_dict.get("user_id"))
+    return await _resolve_mri_subject_id(patient_id)
 
 
 def _read_nifti_bytes(nii_path: Path) -> bytes:
@@ -799,7 +853,12 @@ async def get_patient(patient_id: str):
     # 5. MRI Analysis
     mri = await db.fetchrow(
         """
-        SELECT scan_date as "scanDate", classification, confidence, ai_analysis as "aiAnalysis"
+        SELECT
+            scan_date as "scanDate",
+            classification,
+            confidence,
+            ai_analysis as "aiAnalysis",
+            file_path as "filePath"
         FROM mri_assessments
         WHERE patient_id = $1
         ORDER BY scan_date DESC NULLS LAST, created_at DESC
@@ -821,7 +880,13 @@ async def get_patient(patient_id: str):
                 {"region": "Temporal", "percentage": 15.0, "severity": "medium"},
             ]
         current_front_patient_id = str(current_patient.get("id") or _to_front_patient_id(patient_dict))
-        if _find_original_dicom_series_dir(current_front_patient_id):
+        mri_subject_id = (
+            str(patient_dict.get("subject_id")).strip()
+            if patient_dict.get("subject_id")
+            else _extract_subject_id_from_text(mri_dict.get("filePath")) or current_front_patient_id
+        )
+
+        if _find_original_dicom_series_dir(mri_subject_id):
             # 원본은 DICOM -> NIfTI 변환본을 사용해서 표시한다.
             ai_analysis["originalImage"] = (
                 f"/api/doctor/patients/{current_front_patient_id}/mri/original-slice.png"
@@ -832,7 +897,7 @@ async def get_patient(patient_id: str):
                 f"?rv={MRI_RENDER_VERSION}"
             )
 
-        if _find_preprocessed_nifti(current_front_patient_id):
+        if _find_preprocessed_nifti(mri_subject_id):
             # 임시 비교용: Attention Map 슬롯에 전처리본 중간 슬라이스를 노출한다.
             ai_analysis["attentionMap"] = (
                 f"/api/doctor/patients/{current_front_patient_id}/mri/preprocessed-slice.png"
@@ -863,11 +928,13 @@ async def get_patient(patient_id: str):
             COALESCE(va.assessed_at, r.recorded_at, va.created_at, r.created_at) AS "timepoint",
             va.cognitive_score AS "cognitiveScore",
             va.mci_probability AS "mciProbability",
+            va.flag AS "flag",
             va.features,
             r.duration_seconds AS "durationSeconds"
         FROM voice_assessments va
         JOIN recordings r ON va.recording_id = r.recording_id
         WHERE r.patient_id = $1
+          AND (r.status IS NULL OR r.status = 'completed')
         ORDER BY COALESCE(va.assessed_at, r.recorded_at, va.created_at, r.created_at) ASC,
                  va.created_at ASC
         LIMIT 120
@@ -875,25 +942,35 @@ async def get_patient(patient_id: str):
         user_id,
     )
 
-    counts_by_day: Dict[str, int] = {}
+    upload_counts_by_day: Dict[str, int] = {}
     for row in recording_rows:
         row_dict = dict(row)
         day_label = _format_mmdd(row_dict.get("recordedAt"))
         if not day_label:
             continue
-        counts_by_day[day_label] = counts_by_day.get(day_label, 0) + 1
-
-    daily_participation = {
-        "labels": list(counts_by_day.keys()),
-        "counts": [counts_by_day[label] for label in counts_by_day.keys()],
-    }
+        upload_counts_by_day[day_label] = upload_counts_by_day.get(day_label, 0) + 1
 
     utterance_trend: List[float] = []
     intensity_trend: List[float] = []
     pause_trend: List[float] = []
+    assessed_counts_by_day: Dict[str, int] = {}
+    voice_assessment_points: List[Dict[str, Any]] = []
 
     for row in voice_rows:
         row_dict = dict(row)
+        assessed_day_label = _format_mmdd(row_dict.get("timepoint"))
+        if assessed_day_label:
+            assessed_counts_by_day[assessed_day_label] = assessed_counts_by_day.get(assessed_day_label, 0) + 1
+
+        voice_assessment_points.append(
+            {
+                "timepoint": row_dict.get("timepoint").isoformat() if row_dict.get("timepoint") else None,
+                "cognitiveScore": _as_float(row_dict.get("cognitiveScore")),
+                "mciProbability": _as_float(row_dict.get("mciProbability")),
+                "flag": (str(row_dict.get("flag") or "").strip().lower() or None),
+            }
+        )
+
         features = _as_dict(row_dict.get("features"))
         linguistic_detail = _as_dict(features.get("linguistic_detail"))
 
@@ -934,8 +1011,19 @@ async def get_patient(patient_id: str):
         if feature:
             acoustic_features.append(feature)
 
-    has_voice_data = bool(recording_rows or voice_rows)
-    voice_data_days = len(daily_participation["labels"])
+    has_voice_uploads = bool(recording_rows)
+    has_voice_data = bool(voice_rows)
+    voice_data_status = "ready" if has_voice_data else ("processing" if has_voice_uploads else "none")
+    voice_data_days = len(assessed_counts_by_day) if has_voice_data else 0
+    latest_voice_assessment = voice_assessment_points[-1] if voice_assessment_points else None
+    daily_participation = {
+        "labels": list(assessed_counts_by_day.keys()),
+        "counts": [assessed_counts_by_day[label] for label in assessed_counts_by_day.keys()],
+    }
+    daily_uploads = {
+        "labels": list(upload_counts_by_day.keys()),
+        "counts": [upload_counts_by_day[label] for label in upload_counts_by_day.keys()],
+    }
 
     # Construct response matching frontend expectations
     response = {
@@ -946,13 +1034,18 @@ async def get_patient(patient_id: str):
         "biomarkerMeta": biomarker_meta,
         "visits": [dict(v) for v in visits],
         "dailyParticipation": daily_participation,
+        "dailyUploads": daily_uploads,
+        "voiceAssessments": voice_assessment_points,
+        "latestVoiceAssessment": latest_voice_assessment,
         "acousticFeatures": acoustic_features,
         "mriAnalysis": mri_analysis,
         "dataAvailability": {
             "hasCognitiveTests": bool(clinical_rows),
             "hasMRI": bool(mri),
             "hasBiomarkers": bool(biomarker),
+            "hasVoiceUploads": has_voice_uploads,
             "hasVoiceData": has_voice_data,
+            "voiceDataStatus": voice_data_status,
             "voiceDataDays": voice_data_days,
         }
     }
@@ -1093,6 +1186,90 @@ async def update_risk_level(
 
     logger.info(f"Risk level updated for patient {patient_id} by doctor {doctor_id}: {risk_level}")
     return {"status": "ok", "risk_level": risk_level}
+
+
+@router.post("/patients/{patient_id}/mri/doctor-diagnosis")
+async def submit_mri_doctor_diagnosis(
+    patient_id: str,
+    payload: MRIDoctorDiagnosisPayload,
+):
+    """Persist doctor-confirmed MRI diagnosis checkboxes as boolean flags."""
+    patient = await db.fetchrow(
+        """
+        SELECT user_id
+        FROM patients
+        WHERE subject_id = $1 OR user_id::text = $1
+        """,
+        patient_id,
+    )
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    user_id = dict(patient).get("user_id")
+    latest_assessment = await db.fetchrow(
+        """
+        SELECT assessment_id
+        FROM mri_assessments
+        WHERE patient_id = $1
+        ORDER BY scan_date DESC NULLS LAST, created_at DESC
+        LIMIT 1
+        """,
+        user_id,
+    )
+    if not latest_assessment:
+        raise HTTPException(status_code=404, detail="MRI assessment not found for patient")
+
+    selected = set(payload.diagnoses or [])
+    flag_values = {
+        db_column: (source_key in selected)
+        for source_key, db_column in MRI_DIAGNOSIS_COLUMN_MAP.items()
+    }
+
+    diagnosis_summary = {
+        "diagnoses": sorted(selected),
+        "additionalNotes": (payload.additionalNotes or "").strip(),
+        "timestamp": (payload.timestamp or datetime.utcnow()).isoformat(),
+        "doctorId": payload.doctorId,
+        "confirmed": True,
+    }
+
+    updated = await db.fetchrow(
+        """
+        UPDATE mri_assessments
+        SET
+            hippocampal_atrophy = $1,
+            medial_temporal_atrophy = $2,
+            global_brain_volume_decrease = $3,
+            white_matter_lesions = $4,
+            frontal_atrophy = $5,
+            parietal_atrophy = $6,
+            doctor_diagnosis = COALESCE(doctor_diagnosis, '{}'::jsonb) || $7::jsonb
+        WHERE assessment_id = $8
+        RETURNING
+            assessment_id,
+            hippocampal_atrophy,
+            medial_temporal_atrophy,
+            global_brain_volume_decrease,
+            white_matter_lesions,
+            frontal_atrophy,
+            parietal_atrophy,
+            doctor_diagnosis
+        """,
+        flag_values["hippocampal_atrophy"],
+        flag_values["medial_temporal_atrophy"],
+        flag_values["global_brain_volume_decrease"],
+        flag_values["white_matter_lesions"],
+        flag_values["frontal_atrophy"],
+        flag_values["parietal_atrophy"],
+        json.dumps(diagnosis_summary),
+        dict(latest_assessment).get("assessment_id"),
+    )
+
+    return {
+        "status": "ok",
+        "patient_id": user_id,
+        "assessment": dict(updated) if updated else None,
+    }
 
 
 @router.get("/patients/{patient_id}/recordings", response_model=List[RecordingOut])

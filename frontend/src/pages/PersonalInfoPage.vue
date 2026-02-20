@@ -12,24 +12,31 @@ const role = computed(() => authStore.role);
 const isSubject = computed(() => role.value === 'subject');
 
 const userName = ref(authStore.userName || '');
-const phoneNumber = ref(localStorage.getItem('user-phone') || '');
+const phoneNumber = ref(
+  authStore.user?.phone_number
+  || authStore.user?.phoneNumber
+  || localStorage.getItem('user-phone')
+  || ''
+);
 const avatarUrl = ref(localStorage.getItem('user-avatar') || null);
 const memberActionMessage = ref('');
-const memberNumberPattern = /^SM-\d{6}$/;
+const MEMBER_CODE_MODULUS = 1000000;
+const MEMBER_CODE_MULTIPLIER = 741457;
+const MEMBER_CODE_INCREMENT = 193939;
 
-const generateSubjectMemberNumber = () => `SM-${Math.floor(100000 + Math.random() * 900000)}`;
+const toSubjectMemberNumberFromPatientId = (value) => {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  const parsed = Number.parseInt(digits, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '';
+  const encoded = (parsed * MEMBER_CODE_MULTIPLIER + MEMBER_CODE_INCREMENT) % MEMBER_CODE_MODULUS;
+  return `SM-${String(encoded).padStart(6, '0')}`;
+};
 
-const subjectMemberNumber = ref('');
-if (isSubject.value) {
-  const saved = localStorage.getItem('subject-member-number');
-  const fromUser = authStore.user?.member_number || authStore.user?.subject_member_number || authStore.user?.id;
-  const normalizedUserValue = typeof fromUser === 'string' && fromUser.trim() ? fromUser.trim().toUpperCase() : '';
-  const usableSaved = saved && memberNumberPattern.test(saved) ? saved : '';
-  const usableUserValue = memberNumberPattern.test(normalizedUserValue) ? normalizedUserValue : '';
-  const nextValue = usableSaved || usableUserValue || generateSubjectMemberNumber();
-  subjectMemberNumber.value = nextValue;
-  localStorage.setItem('subject-member-number', nextValue);
-}
+const subjectMemberNumber = computed(() => {
+  if (!isSubject.value) return '';
+  return toSubjectMemberNumberFromPatientId(authStore.user?.id);
+});
 
 const handleAvatarUpload = (event) => {
   const file = event.target.files[0];
@@ -100,11 +107,20 @@ const saveChanges = () => {
     authStore.setUser({
       ...(authStore.user || {}),
       name: userName.value,
+      phone_number: phoneNumber.value || null,
+      role: role.value || 'subject'
+    });
+  } else if (authStore.user) {
+    authStore.setUser({
+      ...authStore.user,
+      phone_number: phoneNumber.value || null,
       role: role.value || 'subject'
     });
   }
   if (phoneNumber.value) {
     localStorage.setItem('user-phone', phoneNumber.value);
+  } else {
+    localStorage.removeItem('user-phone');
   }
   if (avatarUrl.value) {
     localStorage.setItem('user-avatar', avatarUrl.value);

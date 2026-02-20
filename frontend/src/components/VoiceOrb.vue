@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as THREE from "three";
 
-type VoiceState = "idle" | "listening" | "pause" | "processing" | "speaking";
+type VoiceState = "idle" | "listening" | "pause" | "processing" | "speaking" | "cooldown";
 type NormalizedState = "idle" | "listening" | "processing" | "speaking";
 type OrbQuality = "high" | "medium" | "low" | "auto";
 
@@ -38,7 +38,7 @@ const props = withDefaults(
 );
 
 const normalizedState = computed<NormalizedState>(() =>
-  props.state === "pause" ? "processing" : props.state
+  props.state === "pause" || props.state === "cooldown" ? "processing" : props.state
 );
 
 const orbStyle = computed(() => ({

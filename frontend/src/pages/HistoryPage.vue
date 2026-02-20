@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import SubjectShell from '@/components/shells/SubjectShell.vue';
@@ -22,7 +22,15 @@ const title = computed(() => pageTitles[role.value] || pageTitles.subject);
 const router = useRouter();
 const route = useRoute();
 
-const { data: doctorData, loading: doctorLoading, fetchData: fetchDoctorData, switchPatient, currentPatientId } = useDoctorData();
+const {
+  data: doctorData,
+  loading: doctorLoading,
+  fetchData: fetchDoctorData,
+  switchPatient,
+  currentPatientId,
+  startAutoRefresh,
+  stopAutoRefresh,
+} = useDoctorData();
 
 const getRoutePatientId = () => {
   const paramId = route.params?.patientId;
@@ -35,7 +43,12 @@ onMounted(() => {
   if (role.value === 'doctor') {
     const routePatientId = getRoutePatientId();
     fetchDoctorData(routePatientId || currentPatientId.value);
+    startAutoRefresh();
   }
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
 });
 
 watch(() => route.params?.patientId || route.query.patientId, (value) => {

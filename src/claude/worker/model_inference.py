@@ -29,7 +29,9 @@ _wav2vec2_processor = None
 _wav2vec2_device = None
 
 MODEL_DIR = os.getenv("MODEL_DIR", "/models/audio_processed")
-MRI_MODEL_DIR = os.getenv("MRI_MODEL_DIR", "/models/dig_help")
+MRI_MODEL_DIR = os.getenv("MRI_MODEL_DIR", "/models/mri(cam)")
+MRI_MODEL_CN_FILENAME = os.getenv("MRI_MODEL_CN_FILENAME", "model_cn.pth")
+MRI_MODEL_CI_FILENAME = os.getenv("MRI_MODEL_CI_FILENAME", "model_ci.pth")
 
 
 def _env_float(name: str, default: float) -> float:
@@ -859,10 +861,10 @@ def _predict_mci_subtype(patient_id: str) -> dict:
 def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
     """
     Run Cascaded 3D CNN inference:
-    1. Model 189: CN vs (MCI+AD)
-    2. Model 184: MCI vs AD
+    1. model_cn: CN vs (MCI+AD)
+    2. model_ci: MCI vs AD
     3. CatBoost: sMCI vs pMCI (if MCI, using clinical data)
-    Loads models from MRI_MODEL_DIR (/models/dig_help).
+    Loads models from MRI_MODEL_DIR (/models/mri(cam)).
     """
     import torch
     import random
@@ -872,20 +874,34 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     try:
-        # 1. Find cascade models (189 and 184)
+        # 1. Find cascade models: prefer model_cn/model_ci, keep 189/184 as fallback.
         files = os.listdir(MRI_MODEL_DIR)
-        path_189 = next((f for f in files if "189" in f and f.endswith('.pth')), None)
-        path_184 = next((f for f in files if "184" in f and f.endswith('.pth')), None)
-        # Try to find a subtype model (e.g., containing 'subtype' or '185' etc.)
-        path_subtype = next((f for f in files if "subtype" in f and f.endswith('.pth')), None)
-        
-        if not path_189 or not path_184:
-            logger.warning(f"Cascade models (189/184) not found in {MRI_MODEL_DIR}. Found: {files}")
-            raise FileNotFoundError("Required cascade models (189, 184) not found")
-            
-        full_path_189 = os.path.join(MRI_MODEL_DIR, path_189)
-        full_path_184 = os.path.join(MRI_MODEL_DIR, path_184)
-        logger.info(f"Loading Cascade Models: {path_189} (CN/Imp) -> {path_184} (MCI/AD)")
+        lower_to_original = {f.lower(): f for f in files if f.lower().endswith(".pth")}
+        path_cn = lower_to_original.get(MRI_MODEL_CN_FILENAME.lower())
+        path_ci = lower_to_original.get(MRI_MODEL_CI_FILENAME.lower())
+
+        if not path_cn:
+            path_cn = next((f for f in files if f.lower().endswith(".pth") and "model_cn" in f.lower()), None)
+        if not path_ci:
+            path_ci = next((f for f in files if f.lower().endswith(".pth") and "model_ci" in f.lower()), None)
+
+        # Backward compatibility with legacy naming convention
+        if not path_cn:
+            path_cn = next((f for f in files if f.lower().endswith(".pth") and "189" in f), None)
+        if not path_ci:
+            path_ci = next((f for f in files if f.lower().endswith(".pth") and "184" in f), None)
+
+        if not path_cn or not path_ci:
+            logger.warning(
+                "Cascade models (model_cn/model_ci or 189/184) not found in %s. Found: %s",
+                MRI_MODEL_DIR,
+                files,
+            )
+            raise FileNotFoundError("Required cascade models not found (model_cn/model_ci)")
+
+        full_path_cn = os.path.join(MRI_MODEL_DIR, path_cn)
+        full_path_ci = os.path.join(MRI_MODEL_DIR, path_ci)
+        logger.info("Loading Cascade Models: %s (CN/Imp) -> %s (MCI/AD)", path_cn, path_ci)
         
         # 2. Load NIfTI Image and resize to model input (96, 112, 96)
         img = nib.load(nifti_path)
@@ -902,9 +918,25 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
         # Add Batch and Channel dimensions: (1, 1, 96, 112, 96)
         input_tensor = torch.tensor(img_array, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
 
-        # 3. Stage 1: CN vs Impaired (Model 189) - CNNAttention3D
+        def _load_checkpoint_state(path: str):
+            # MRI checkpoints may be stored as training snapshots with "state_dict".
+            # PyTorch >=2.6 defaults to weights_only=True, so explicitly disable it
+            # for trusted local checkpoints.
+            checkpoint = torch.load(path, map_location=device, weights_only=False)
+            if isinstance(checkpoint, dict):
+                state_dict = checkpoint.get("state_dict")
+                if state_dict is not None:
+                    return state_dict
+
+                # Fallback: allow plain state_dict dict checkpoints.
+                if checkpoint and all(hasattr(v, "shape") for v in checkpoint.values()):
+                    return checkpoint
+
+            raise RuntimeError(f"Unsupported MRI checkpoint format: {path}")
+
+        # 3. Stage 1: CN vs Impaired (model_cn) - CNNAttention3D
         model1 = get_model(model_name="cnn_attention_3d", num_classes=2, device=device)
-        model1.load_state_dict(torch.load(full_path_189, map_location=device), strict=True)
+        model1.load_state_dict(_load_checkpoint_state(full_path_cn), strict=True)
         model1.eval()
         
         with torch.no_grad():
@@ -914,11 +946,24 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
         p_cn = float(probs1[0])
         p_impaired = float(probs1[1])
         
-        logger.info(f"Stage 1 (189): CN={p_cn:.4f}, Impaired={p_impaired:.4f}")
+        logger.info(f"Stage 1 (CN): CN={p_cn:.4f}, Impaired={p_impaired:.4f}")
         
-        # Stage 2: MCI vs AD (Model 184) - CNNEncoder3D
-        model2 = get_model(model_name="cnn_encoder_3d", num_classes=2, device=device)
-        model2.load_state_dict(torch.load(full_path_184, map_location=device), strict=True)
+        # Stage 2: MCI vs AD (model_ci)
+        # Prefer CNNEncoder3D; if checkpoint keys mismatch, fallback to CNNAttention3D.
+        stage2_state = _load_checkpoint_state(full_path_ci)
+        try:
+            model2 = get_model(model_name="cnn_encoder_3d", num_classes=2, device=device)
+            model2.load_state_dict(stage2_state, strict=True)
+            logger.info("Stage 2 model loaded as CNNEncoder3D")
+        except Exception as stage2_exc:
+            logger.warning(
+                "Stage 2 checkpoint is not compatible with CNNEncoder3D (%s). "
+                "Falling back to CNNAttention3D.",
+                stage2_exc,
+            )
+            model2 = get_model(model_name="cnn_attention_3d", num_classes=2, device=device)
+            model2.load_state_dict(stage2_state, strict=True)
+            logger.info("Stage 2 model loaded as CNNAttention3D")
         model2.eval()
         
         # Always run stage 2 regardless of stage 1 result
@@ -929,7 +974,7 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
         p_mci_cond = float(probs2[0])
         p_ad_cond = float(probs2[1])
         
-        logger.info(f"Stage 2 (184): MCI|Imp={p_mci_cond:.4f}, AD|Imp={p_ad_cond:.4f}")
+        logger.info(f"Stage 2 (CI): MCI|Imp={p_mci_cond:.4f}, AD|Imp={p_ad_cond:.4f}")
 
         # Cascaded decision: Stage 1이 CN이면 CN, Impaired면 Stage 2 결과를 따름
         probs_map = {"CN": p_cn, "MCI": p_impaired * p_mci_cond, "AD": p_impaired * p_ad_cond}
@@ -968,7 +1013,7 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
             "label": final_label,
             "confidence": confidence,
             "probabilities": probs_map,
-            "model_version": "cascade_189_184_subtype"
+            "model_version": "cascade_cn_ci_subtype"
         }
         
 

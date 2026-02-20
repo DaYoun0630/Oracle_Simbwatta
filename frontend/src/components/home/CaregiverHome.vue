@@ -1,35 +1,44 @@
 ﻿<script setup>
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useCaregiverData } from '@/composables/useCaregiverData';
 import { useCaregiverSharingSettings } from '@/composables/useCaregiverSharingSettings';
+import { useWeeklyTrend } from '@/composables/useWeeklyTrend';
+import {
+  TREND_RANGE_OPTIONS,
+  buildTrendQueryForRange,
+  getTrendRangeHeading
+} from '@/composables/useTrendRange';
+import { buildTrendBuckets } from '@/composables/useTrendBuckets';
+import {
+  buildCaregiverAlertBundle,
+  getAlertKindLabel,
+  getAlertToneLabel,
+} from '@/composables/useCaregiverAlerts';
 import WeeklyChart from '../WeeklyChart.vue';
 
 const router = useRouter();
 const { data, loading, fetchData } = useCaregiverData();
+const { trend, loading: trendLoading, error: trendError, fetchWeeklyTrend } = useWeeklyTrend();
 const sharing = useCaregiverSharingSettings();
+const rangeOptions = TREND_RANGE_OPTIONS;
+const selectedRange = ref('7d');
+const currentSubjectId = computed(() => String(data.value?.subject?.id || '').trim());
 
-onMounted(() => {
-  fetchData();
-});
+const fetchTrendByRange = async (rangeKey = selectedRange.value) =>
+  fetchWeeklyTrend(
+    buildTrendQueryForRange(rangeKey, currentSubjectId.value ? { subjectId: currentSubjectId.value } : {})
+  );
 
-const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-const lastSevenDays = computed(() => {
-  const result = [];
-  const today = new Date();
-  for (let i = 6; i >= 0; i -= 1) {
-    const d = new Date();
-    d.setDate(today.getDate() - i);
-    result.push(dayNames[d.getDay()]);
-  }
-  return result;
-});
+const handleRangeSelect = (rangeKey) => {
+  if (selectedRange.value === rangeKey && trend.value) return;
+  selectedRange.value = rangeKey;
+  void fetchTrendByRange(rangeKey);
+};
 
-const observationIndices = computed(() => {
-  const observations = data.value?.weeklyObservations ?? [];
-  return observations
-    .map((item) => 6 - item.dayOffset)
-    .filter((index) => index >= 0 && index <= 6);
+onMounted(async () => {
+  await fetchData();
+  await fetchTrendByRange();
 });
 
 const statusTone = computed(() => {
@@ -58,31 +67,42 @@ const lastChatText = computed(() => data.value?.todayStatus?.lastChat ?? '오늘
 
 const trendSummary = computed(() => {
   if (!sharing.dialogSummary.value) {
-    return '대상자가 대화 요약 공유를 철회하여 주간 대화 요약이 숨김 처리되었습니다.';
+    return '대상자가 대화 요약 공유를 철회하여 선택 기간 대화 요약이 숨김 처리되었습니다.';
   }
-  const trend = data.value?.weeklyTrend?.trend ?? 'stable';
-  if (trend === 'down') {
-    return '최근 반응 속도의 변화가 있어 추가 관찰이 필요합니다.';
+  if (trendError.value) {
+    return '선택 기간 추세 데이터를 불러오지 못해 마지막 캐시 없이 표시 중입니다.';
   }
-  if (trend === 'up') {
-    return '최근 반응 속도가 조금 더 부드럽게 유지되고 있습니다.';
-  }
-  return '최근 흐름이 안정적으로 유지되고 있습니다.';
+  return bucketedTrend.value.metrics.summaryText;
 });
 
-const trendBadgeText = computed(() => {
-  const trend = data.value?.weeklyTrend?.trend ?? 'stable';
-  if (trend === 'down') return '관찰 필요';
-  if (trend === 'up') return '안정 흐름';
-  return '유지 중';
-});
+const bucketedTrend = computed(() => buildTrendBuckets(trend.value?.points ?? [], selectedRange.value));
+const trendBadgeText = computed(() => bucketedTrend.value.metrics.statusLabel);
+const trendBadgeTone = computed(() => bucketedTrend.value.metrics.tone);
+const trendValues = computed(() => bucketedTrend.value.values);
+const trendLabels = computed(() => bucketedTrend.value.labels);
+const trendDates = computed(() => bucketedTrend.value.dates);
+const trendHighlights = computed(() => bucketedTrend.value.highlights);
+const trendStates = computed(() => bucketedTrend.value.states);
+const trendMetrics = computed(() => bucketedTrend.value.metrics);
+const trendHeading = computed(() => `${getTrendRangeHeading(selectedRange.value)} 대화 흐름`);
+const trendHint = computed(() => '상태 마커는 각 기간의 관찰 결과를 요약해 보여줍니다.');
+const alertBundle = computed(() => buildCaregiverAlertBundle(selectedRange.value, bucketedTrend.value));
+const primaryAlert = computed(() => alertBundle.value.primaryAlert);
+const secondaryAlerts = computed(() => alertBundle.value.secondaryAlerts);
+const summaryAlerts = computed(() => alertBundle.value.summaryAlerts);
+const monitoringAlerts = computed(() => alertBundle.value.monitoringAlerts);
+const summaryRangeLabel = computed(() => alertBundle.value.rangeLabel);
+const primaryKindLabel = computed(() =>
+  primaryAlert.value ? getAlertKindLabel(primaryAlert.value.kind) : '기간 요약'
+);
+const primaryToneLabel = computed(() =>
+  primaryAlert.value ? getAlertToneLabel(primaryAlert.value.tone) : '정보'
+);
 
-const emotionLabel = computed(() => {
-  if (!sharing.dialogSummary.value) return '대화 요약 공유 비활성화';
-  if (statusTone.value === 'danger') return '주의가 필요한 대화 톤';
-  if (statusTone.value === 'alert') return '관찰이 필요한 대화 톤';
-  return '안정적인 대화 톤';
-});
+const fallbackPrimaryMessage = {
+  title: '최근 흐름을 차분히 확인해보면 좋아요.',
+  action: '컨디션에 따라 변화가 생길 수 있어요. 오늘은 짧은 대화부터 가볍게 이어가보세요. 부담 없이 진행해도 충분합니다.',
+};
 
 const nextMedicationReminder = computed(() => {
   const reminder = data.value?.medicationReminders?.[0];
@@ -129,6 +149,28 @@ const handleAction = (action) => {
   }
 };
 
+const handleOpenHistoryByAlert = (alert = primaryAlert.value) => {
+  if (!alert) return;
+  router.push({
+    name: 'history',
+    query: {
+      tab: alert.kind === 'trigger' ? 'monitoring' : 'summary',
+      axis: alert.axis,
+      period: selectedRange.value,
+    },
+  });
+};
+
+const handleOpenSummaryHistory = () => {
+  router.push({
+    name: 'history',
+    query: {
+      tab: 'summary',
+      period: selectedRange.value,
+    },
+  });
+};
+
 const statusIconPath = computed(() => {
   if (statusTone.value === 'danger') {
     return 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 13h-2v-2h2v2zm0-4h-2V6h2v5z';
@@ -150,8 +192,7 @@ const statusIconPath = computed(() => {
       <section class="hero-card stagger" style="--delay: 0ms">
         <div class="hero-header">
           <div>
-            <p class="hero-caption">{{ relationText }} 보호자 대시보드</p>
-            <h2 class="hero-title">{{ subjectName }} 님</h2>
+            <p class="hero-caption">보호자 대시보드</p>
           </div>
           <div class="status-pill" :class="statusTone">
             <span class="status-dot"></span>
@@ -168,45 +209,83 @@ const statusIconPath = computed(() => {
           <div class="hero-text">
             <p class="hero-message">{{ statusSummary }}</p>
             <p class="hero-detail">{{ statusMessage }}</p>
-            <p class="hero-meta">마지막 대화 {{ lastChatText }}</p>
+            <p class="hero-meta">마지막 대화: {{ lastChatText }}</p>
           </div>
         </div>
 
         <div class="hero-footer">
-          <div class="emotion-chip">
-            <svg viewBox="0 0 48 48" class="emotion-icon" aria-hidden="true">
-              <circle cx="24" cy="24" r="18" />
-              <path d="M16 26c2.5 3 13.5 3 16 0" />
-              <circle cx="18" cy="20" r="2" />
-              <circle cx="30" cy="20" r="2" />
-            </svg>
-            <span>{{ emotionLabel }}</span>
-          </div>
-          <div v-if="sharing.anomalyAlert.value && data.alerts.length" class="alert-chip">
-            알림 {{ data.alerts.length }}건
-          </div>
-          <div v-else-if="!sharing.anomalyAlert.value" class="alert-chip muted">
-            이상 행동 알림 공유 철회
-          </div>
+          <span class="summary-period-chip">{{ summaryRangeLabel }}</span>
         </div>
       </section>
 
       <section v-if="sharing.dialogSummary.value" class="trend-card stagger" style="--delay: 120ms">
         <div class="trend-header">
-          <div>
-            <h3>최근 7일 대화 흐름</h3>
+          <div class="trend-header-main">
+            <h3>{{ trendHeading }}</h3>
             <p class="trend-message">{{ trendSummary }}</p>
+            <div class="trend-range-controls" role="group" aria-label="관찰 기간 선택">
+              <button
+                v-for="option in rangeOptions"
+                :key="option.key"
+                type="button"
+                class="trend-range-button"
+                :class="{ active: selectedRange === option.key }"
+                :aria-pressed="selectedRange === option.key"
+                @click="handleRangeSelect(option.key)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
           </div>
-          <span class="trend-badge" :class="data.weeklyTrend.trend">
+          <span class="trend-badge" :class="trendBadgeTone">
             {{ trendBadgeText }}
           </span>
         </div>
+        <div class="primary-alert" aria-live="polite">
+          <div class="primary-alert-head">
+            <span class="kind-badge" :class="primaryAlert?.kind || 'summary'">{{ primaryKindLabel }}</span>
+            <span v-if="primaryAlert" class="axis-badge">{{ primaryAlert.tagLabel }}</span>
+            <span class="tone-badge">{{ primaryToneLabel }}</span>
+          </div>
+          <p class="primary-alert-title">
+            {{ primaryAlert?.titleLine || fallbackPrimaryMessage.title }}
+          </p>
+          <p class="primary-alert-action">
+            {{ primaryAlert?.actionLine || fallbackPrimaryMessage.action }}
+          </p>
+          <button type="button" class="primary-alert-cta" @click="handleOpenHistoryByAlert()">
+            자세히 보기
+          </button>
+        </div>
+
+        <div class="secondary-alerts">
+          <button
+            v-for="alert in secondaryAlerts"
+            :key="alert.id"
+            type="button"
+            class="secondary-alert-item"
+            @click="handleOpenHistoryByAlert(alert)"
+          >
+            <span class="secondary-alert-tag">{{ alert.tagLabel }}</span>
+            <span class="secondary-alert-title">{{ alert.titleLine }}</span>
+          </button>
+        </div>
+
         <WeeklyChart
-          :data="data.weeklyTrend.scores"
-          :labels="lastSevenDays"
-          :highlights="observationIndices"
+          :data="trendValues"
+          :labels="trendLabels"
+          :dates="trendDates"
+          :states="trendStates"
+          :highlights="trendHighlights"
+          :y-state-labels="['안정', '변화', '저하', '미참여']"
         />
-        <p class="trend-hint">표식된 날은 평소보다 발화 리듬 변화가 관찰된 날입니다.</p>
+        <p v-if="trendLoading" class="trend-hint">{{ trendHeading }} 추세를 계산 중입니다.</p>
+        <p v-else-if="trendError" class="trend-hint">{{ trendError }}</p>
+        <p v-else class="trend-hint">{{ trendHint }}</p>
+        <p v-if="summaryAlerts.length || monitoringAlerts.length" class="trend-link-note">
+          관찰 로그에서 모니터링 알림과 기간 요약을 함께 확인할 수 있어요.
+          <button type="button" class="inline-link" @click="handleOpenSummaryHistory">기록으로 이동</button>
+        </p>
       </section>
 
       <section class="quick-actions">
@@ -406,7 +485,7 @@ const statusIconPath = computed(() => {
 }
 
 .hero-meta {
-  font-size: 18px;
+  font-size: 16px;
   margin: 0;
   color: #8a8a8a;
 }
@@ -443,6 +522,16 @@ const statusIconPath = computed(() => {
   animation: emotionPulse 2.6s ease-in-out infinite;
 }
 
+.summary-period-chip {
+  padding: 9px 14px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #4f6b7a;
+  background: #eef3f5;
+  box-shadow: inset 2px 2px 4px rgba(129, 142, 153, 0.2), inset -2px -2px 4px rgba(255, 255, 255, 0.95);
+}
+
 .alert-chip {
   padding: 10px 14px;
   border-radius: 20px;
@@ -475,6 +564,12 @@ const statusIconPath = computed(() => {
   gap: 12px;
 }
 
+.trend-header-main {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
 .trend-header h3 {
   font-size: 22px;
   font-weight: 900;
@@ -489,6 +584,35 @@ const statusIconPath = computed(() => {
   line-height: 1.5;
 }
 
+.trend-range-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trend-range-button {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #5f6b73;
+  background: #eef3f5;
+  box-shadow: inset 2px 2px 4px rgba(129, 142, 153, 0.2), inset -2px -2px 4px rgba(255, 255, 255, 0.95);
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.trend-range-button:hover {
+  transform: translateY(-1px);
+}
+
+.trend-range-button.active {
+  color: #ffffff;
+  background: #4cb7b7;
+  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.28);
+}
+
 .trend-badge {
   padding: 8px 14px;
   border-radius: 18px;
@@ -497,6 +621,16 @@ const statusIconPath = computed(() => {
   background: #e8f5f5;
   color: #4cb7b7;
   white-space: nowrap;
+}
+
+.trend-badge.stable {
+  background: rgba(130, 130, 130, 0.12);
+  color: #6b6b6b;
+}
+
+.trend-badge.alert {
+  background: rgba(255, 196, 122, 0.22);
+  color: #b57d2d;
 }
 
 .trend-badge.down {
@@ -510,9 +644,149 @@ const statusIconPath = computed(() => {
   margin: 6px 0 0;
 }
 
+.primary-alert {
+  background: #f8fbfb;
+  border-radius: 18px;
+  box-shadow: var(--card-elevation-sub);
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.primary-alert-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.kind-badge,
+.axis-badge,
+.tone-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 10px;
+}
+
+.kind-badge.summary {
+  background: rgba(76, 183, 183, 0.16);
+  color: #2e8f8f;
+}
+
+.kind-badge.trigger {
+  background: rgba(255, 183, 77, 0.2);
+  color: #b57d2d;
+}
+
+.axis-badge {
+  background: #eaf1f4;
+  color: #51616b;
+}
+
+.tone-badge {
+  background: rgba(130, 130, 130, 0.14);
+  color: #626c72;
+}
+
+.primary-alert-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  color: #30363a;
+  line-height: 1.45;
+}
+
+.primary-alert-action {
+  margin: 0;
+  font-size: 16px;
+  color: #4f5d66;
+  line-height: 1.5;
+}
+
+.primary-alert-cta {
+  justify-self: start;
+  border: none;
+  border-radius: 999px;
+  background: #4cb7b7;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 7px 13px;
+  cursor: pointer;
+  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.26);
+}
+
+.secondary-alerts {
+  display: grid;
+  gap: 8px;
+}
+
+.secondary-alert-item {
+  width: 100%;
+  border: none;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #f8fbfb;
+  box-shadow: var(--card-elevation-sub);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.secondary-alert-tag {
+  font-size: 12px;
+  font-weight: 800;
+  color: #5f6b73;
+  background: #eaf1f4;
+  border-radius: 999px;
+  padding: 4px 9px;
+  flex: none;
+}
+
+.secondary-alert-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #4f5d66;
+  line-height: 1.45;
+}
+
+.trend-link-note {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #6c757d;
+}
+
+.inline-link {
+  border: none;
+  background: transparent;
+  color: #2e8f8f;
+  font-size: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0 0 0 6px;
+  text-decoration: underline;
+}
+
+@media (max-width: 680px) {
+  .trend-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .trend-badge {
+    font-size: 18px;
+  }
+}
+
 .quick-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
 }

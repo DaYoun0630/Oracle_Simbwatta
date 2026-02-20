@@ -3,10 +3,12 @@ import {
   endChatSession,
   sendChat,
   startChatSession,
+  uploadSessionAudio,
   type ChatMetaPayload,
 } from "@/api/chat";
+import { useAuthStore } from "@/stores/auth";
 
-type VoiceState = "idle" | "speaking" | "listening" | "processing";
+type VoiceState = "idle" | "speaking" | "listening" | "processing" | "cooldown";
 type SessionEndReason = "manual_stop" | "target_reached" | "reset";
 type DialogStatePayload = Record<string, unknown> | null;
 type ConversationPhase = "opening" | "warmup" | "dialog" | "closing";
@@ -46,6 +48,9 @@ const SOFT_WRAP_START_SEC = 240;
 const LISTEN_RETRY_DELAY_MS = 350;
 const PROFILE_ID_STORAGE_KEY = "voice_profile_id";
 const SPEECH_SILENCE_COMMIT_MS = 1300;
+const INCOMPLETE_SILENCE_EXTRA_MS = 1800;
+const INCOMPLETE_SILENCE_RETRY_LIMIT = 2;
+const POST_SPEAK_INPUT_GRACE_MS = 800;
 const STT_NO_SPEECH_RETRY_LIMIT = 1;
 const NO_SPEECH_GRACE_RETRIES = 1;
 const NO_SPEECH_RETRY_DELAY_MS = 700;
@@ -55,6 +60,7 @@ const MIC_ACTIVE_THRESHOLD = 0.024;
 const SPEAKING_ACTIVE_THRESHOLD = 0.045;
 const SPEAKING_LEVEL_INTERVAL_MS = 50;
 const DEFAULT_CONVERSATION_MODE = "mixed";
+const SESSION_AUDIO_TIMESLICE_MS = 1000;
 const EMERGENCY_RESPONSE_FALLBACK =
   "지금 연결이 잠시 불안정해요. 잠깐 후 다시 시도해 주세요.";
 
@@ -101,6 +107,12 @@ let speakingLevelTimer: number | null = null;
 let speakingLevelPhase = 0;
 let noSpeechRetryCount = 0;
 let sttNoSpeechRetryCount = 0;
+let incompleteCommitRetryCount = 0;
+let sessionRecorder: MediaRecorder | null = null;
+let sessionRecorderStream: MediaStream | null = null;
+let sessionAudioChunks: Blob[] = [];
+let sessionAudioMimeType = "";
+const authStore = useAuthStore();
 
 const generateId = () =>
   `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -117,6 +129,204 @@ const getOrCreateProfileId = () => {
   const next = `profile_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   window.localStorage.setItem(PROFILE_ID_STORAGE_KEY, next);
   return next;
+};
+
+const pickSessionAudioMimeType = () => {
+  if (typeof window === "undefined" || typeof MediaRecorder === "undefined") {
+    return "";
+  }
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+  for (const mimeType of candidates) {
+    if (
+      typeof MediaRecorder.isTypeSupported === "function" &&
+      MediaRecorder.isTypeSupported(mimeType)
+    ) {
+      return mimeType;
+    }
+  }
+  return "";
+};
+
+const extensionFromMimeType = (mimeType: string) => {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes("wav")) return "wav";
+  if (normalized.includes("mp4") || normalized.includes("m4a")) return "m4a";
+  if (normalized.includes("ogg")) return "ogg";
+  if (normalized.includes("mpeg") || normalized.includes("mp3")) return "mp3";
+  return "webm";
+};
+
+const downmixToMono = (audioBuffer: AudioBuffer) => {
+  const channelCount = Math.max(1, audioBuffer.numberOfChannels);
+  const sampleCount = audioBuffer.length;
+  const mono = new Float32Array(sampleCount);
+  for (let channel = 0; channel < channelCount; channel += 1) {
+    const source = audioBuffer.getChannelData(channel);
+    for (let i = 0; i < sampleCount; i += 1) {
+      mono[i] += source[i] / channelCount;
+    }
+  }
+  return mono;
+};
+
+const encodeMonoWav16 = (samples: Float32Array, sampleRate: number) => {
+  const bytesPerSample = 2;
+  const blockAlign = bytesPerSample;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) {
+      view.setUint8(offset + i, text.charCodeAt(i));
+    }
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    const value = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    view.setInt16(offset, Math.round(value), true);
+    offset += 2;
+  }
+  return buffer;
+};
+
+const convertBlobToWavIfPossible = async (source: Blob) => {
+  const sourceType = source.type.toLowerCase();
+  if (sourceType.includes("wav")) return source;
+  if (typeof window === "undefined" || typeof window.AudioContext === "undefined") {
+    return source;
+  }
+
+  const audioContext = new window.AudioContext();
+  try {
+    const sourceBuffer = await source.arrayBuffer();
+    const decoded = await audioContext.decodeAudioData(sourceBuffer.slice(0));
+    const mono = downmixToMono(decoded);
+    const wavBuffer = encodeMonoWav16(mono, decoded.sampleRate);
+    return new Blob([wavBuffer], { type: "audio/wav" });
+  } catch (error) {
+    console.error("Session audio WAV conversion failed", error);
+    return source;
+  } finally {
+    try {
+      await audioContext.close();
+    } catch {
+      // noop
+    }
+  }
+};
+
+const stopSessionRecorderStream = () => {
+  if (!sessionRecorderStream) return;
+  sessionRecorderStream.getTracks().forEach((track) => track.stop());
+  sessionRecorderStream = null;
+};
+
+const startSessionAudioRecorder = async () => {
+  if (typeof window === "undefined") return;
+  if (typeof MediaRecorder === "undefined") return;
+  if (!navigator.mediaDevices?.getUserMedia) return;
+  if (sessionRecorder) return;
+
+  try {
+    sessionRecorderStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    sessionAudioChunks = [];
+    const preferredMimeType = pickSessionAudioMimeType();
+    const recorder = preferredMimeType
+      ? new MediaRecorder(sessionRecorderStream, { mimeType: preferredMimeType })
+      : new MediaRecorder(sessionRecorderStream);
+
+    sessionAudioMimeType = recorder.mimeType || preferredMimeType || "audio/webm";
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        sessionAudioChunks.push(event.data);
+      }
+    };
+    recorder.start(SESSION_AUDIO_TIMESLICE_MS);
+    sessionRecorder = recorder;
+  } catch (error) {
+    console.error("Session audio recorder start failed", error);
+    sessionRecorder = null;
+    sessionAudioChunks = [];
+    sessionAudioMimeType = "";
+    stopSessionRecorderStream();
+  }
+};
+
+const ensureSessionAudioRecorder = () => {
+  if (sessionRecorder) return;
+  void startSessionAudioRecorder();
+};
+
+const stopSessionAudioRecorder = async () => {
+  const fallbackExtension = extensionFromMimeType(sessionAudioMimeType || "audio/webm");
+  if (!sessionRecorder) {
+    stopSessionRecorderStream();
+    return { blob: null as Blob | null, extension: fallbackExtension };
+  }
+
+  const recorder = sessionRecorder;
+  return await new Promise<{ blob: Blob | null; extension: string }>((resolve) => {
+    let settled = false;
+    const finalize = () => {
+      if (settled) return;
+      settled = true;
+
+      const mimeType = recorder.mimeType || sessionAudioMimeType || "audio/webm";
+      const blob =
+        sessionAudioChunks.length > 0
+          ? new Blob(sessionAudioChunks, { type: mimeType })
+          : null;
+      const extension = extensionFromMimeType(mimeType);
+
+      sessionRecorder = null;
+      sessionAudioChunks = [];
+      sessionAudioMimeType = "";
+      stopSessionRecorderStream();
+
+      resolve({ blob, extension });
+    };
+
+    recorder.onstop = () => finalize();
+    recorder.onerror = () => finalize();
+
+    try {
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      } else {
+        finalize();
+      }
+    } catch {
+      finalize();
+    }
+  });
 };
 
 const getElapsedMilliseconds = () => {
@@ -256,6 +466,11 @@ const ensureMicMeter = async () => {
     await micAudioContext.resume();
   }
 
+  if (!micStream && sessionRecorderStream) {
+    // Reuse active recorder stream first to avoid opening another microphone stream.
+    micStream = sessionRecorderStream;
+  }
+
   if (!micStream) {
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -347,6 +562,7 @@ const clearSilenceCommitTimer = () => {
 const clearRecognitionBuffers = () => {
   stableTranscriptBuffer = "";
   interimTranscriptBuffer = "";
+  incompleteCommitRetryCount = 0;
 };
 
 const composeBufferedTranscript = () =>
@@ -357,6 +573,24 @@ const isLikelyFillerUtterance = (text: string) => {
   if (!normalized) return true;
   const fillers = ["음", "어", "응", "아", "그", "저", "그러니까", "그니까", "음음"];
   return fillers.includes(normalized) || normalized.length <= 1;
+};
+
+const isLikelyIncompleteUtterance = (text: string) => {
+  const cleaned = text.trim();
+  if (!cleaned) return false;
+  if (cleaned.endsWith("...") || /[,\-…(（]$/.test(cleaned)) return true;
+  if (/(요|다|죠|네|까|나요|군요|습니다|이에요|예요|였어요|했어요)[.!?]?$/.test(cleaned)) {
+    return false;
+  }
+  if (
+    /(은|는|이|가|을|를|에|에서|와|과|도|만|부터|까지|처럼|인|인데|면|고|서|인지|는지|거나|며)$/.test(
+      cleaned
+    )
+  ) {
+    return true;
+  }
+  if (/(무슨|어떤|왜|언제|어디|누가|뭐|무엇)$/.test(cleaned)) return true;
+  return cleaned.replace(/\s+/g, "").length <= 1;
 };
 
 const stopRecognition = () => {
@@ -447,8 +681,15 @@ const buildMetaPayload = (
   const closingReason =
     overrides.closing_reason ?? (requestClose ? inferClosingReason(elapsedSec) : undefined);
 
+  const parsedUserId = Number(authStore.userId);
+  const resolvedPatientId =
+    Number.isFinite(parsedUserId) && parsedUserId > 0
+      ? Math.trunc(parsedUserId)
+      : undefined;
+
   return {
     session_id: sessionId.value ?? undefined,
+    patient_id: resolvedPatientId,
     profile_id: getOrCreateProfileId(),
     session_mode: "live",
     conversation_mode: DEFAULT_CONVERSATION_MODE,
@@ -507,6 +748,11 @@ const botSpeak = async (text: string, token: number) => {
   stopSpeakingLevelMeter();
   if (!isCurrentSession(token)) return false;
   currentResponse.value = "";
+  state.value = "cooldown";
+  await new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, POST_SPEAK_INPUT_GRACE_MS);
+  });
+  if (!isCurrentSession(token)) return false;
   setAwaitingInputState();
   return true;
 };
@@ -522,7 +768,7 @@ const scheduleRecognitionRetry = (
 ) => {
   window.setTimeout(() => {
     if (!isCurrentSession(token)) return;
-    if (state.value === "processing" || state.value === "speaking") return;
+    if (state.value === "processing" || state.value === "speaking" || state.value === "cooldown") return;
     if (isRecognitionActive()) return;
     startLiveRecognition(token);
   }, delayMs);
@@ -530,7 +776,7 @@ const scheduleRecognitionRetry = (
 
 const handleNoSpeechDetected = async (token: number) => {
   if (!isCurrentSession(token)) return;
-  if (state.value === "processing" || state.value === "speaking") return;
+  if (state.value === "processing" || state.value === "speaking" || state.value === "cooldown") return;
 
   if (noSpeechRetryCount < NO_SPEECH_GRACE_RETRIES) {
     noSpeechRetryCount += 1;
@@ -646,7 +892,7 @@ const startLiveRecognition = (token: number) => {
   localRecognition.continuous = true;
   localRecognition.interimResults = true;
 
-  const scheduleSilenceCommit = () => {
+  const scheduleSilenceCommit = (delayMs = SPEECH_SILENCE_COMMIT_MS) => {
     clearSilenceCommitTimer();
     silenceCommitTimer = window.setTimeout(() => {
       if (!isCurrentSession(token)) return;
@@ -660,15 +906,27 @@ const startLiveRecognition = (token: number) => {
         return;
       }
 
+      if (
+        isLikelyIncompleteUtterance(combined) &&
+        incompleteCommitRetryCount < INCOMPLETE_SILENCE_RETRY_LIMIT
+      ) {
+        incompleteCommitRetryCount += 1;
+        scheduleSilenceCommit(SPEECH_SILENCE_COMMIT_MS + INCOMPLETE_SILENCE_EXTRA_MS);
+        return;
+      }
+
       currentTranscript.value = combined;
       clearRecognitionBuffers();
       stopRecognition();
       void handleUserTurn(combined, token);
-    }, SPEECH_SILENCE_COMMIT_MS);
+    }, delayMs);
   };
 
   localRecognition.onresult = (event) => {
     if (!isCurrentSession(token)) return;
+
+    // Start full-session recording only after STT actually starts receiving audio.
+    ensureSessionAudioRecorder();
 
     const next = extractTranscriptFromResults(event.results);
     stableTranscriptBuffer = next.stable;
@@ -679,6 +937,7 @@ const startLiveRecognition = (token: number) => {
 
     sttNoSpeechRetryCount = 0;
     noSpeechRetryCount = 0;
+    incompleteCommitRetryCount = 0;
     currentTranscript.value = combined;
     scheduleSilenceCommit();
   };
@@ -734,7 +993,7 @@ const startLiveRecognition = (token: number) => {
       void stopSession("target_reached");
       return;
     }
-    if (state.value === "processing" || state.value === "speaking") return;
+    if (state.value === "processing" || state.value === "speaking" || state.value === "cooldown") return;
 
     setAwaitingInputState();
     scheduleRecognitionRetry(token);
@@ -755,6 +1014,7 @@ const handleUserTurn = async (transcript: string, token: number) => {
 
   noSpeechRetryCount = 0;
   sttNoSpeechRetryCount = 0;
+  incompleteCommitRetryCount = 0;
   const elapsedBefore = getElapsedSeconds();
   const requestClose = shouldRequestClose(elapsedBefore);
 
@@ -857,6 +1117,7 @@ const startSession = async () => {
   conversationPhase.value = "opening";
   noSpeechRetryCount = 0;
   sttNoSpeechRetryCount = 0;
+  incompleteCommitRetryCount = 0;
 
   startSessionTimer(token);
   scheduleSoftWrapCue(token);
@@ -873,8 +1134,22 @@ const startSession = async () => {
 
 const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
   const endedSessionId = sessionId.value;
+  const endedProfileId = getOrCreateProfileId();
   const elapsedSec = getElapsedSeconds();
   const completedTurns = turnIndex.value;
+  const recordedAudio = await stopSessionAudioRecorder();
+  let uploadBlob = recordedAudio.blob;
+  let uploadExtension = recordedAudio.extension;
+
+  if (uploadBlob) {
+    const convertedBlob = await convertBlobToWavIfPossible(uploadBlob);
+    if (convertedBlob.type.toLowerCase().includes("wav")) {
+      uploadBlob = convertedBlob;
+      uploadExtension = "wav";
+    } else {
+      uploadBlob = convertedBlob;
+    }
+  }
 
   sessionToken += 1;
   clearSessionTimer();
@@ -894,12 +1169,27 @@ const stopSession = async (reason: SessionEndReason, clearMessages = false) => {
   conversationPhase.value = "opening";
   noSpeechRetryCount = 0;
   sttNoSpeechRetryCount = 0;
+  incompleteCommitRetryCount = 0;
 
   if (clearMessages) {
     messages.value = [];
   }
 
   if (endedSessionId) {
+    if (uploadBlob) {
+      try {
+        const mimeType = uploadBlob.type || `audio/${uploadExtension}`;
+        const uploadFile = new File(
+          [uploadBlob],
+          `conversation.user.${uploadExtension}`,
+          { type: mimeType }
+        );
+        await uploadSessionAudio(endedSessionId, uploadFile, endedProfileId);
+      } catch (error) {
+        console.error("Session audio upload failed", error);
+      }
+    }
+
     try {
       await endChatSession({
         session_id: endedSessionId,
@@ -920,6 +1210,7 @@ const resetSession = () => {
     clearSoftWrapTimer();
     stopRecognition();
     cancelSpeaking();
+    void stopSessionAudioRecorder();
     void releaseMicMeterResources();
     state.value = "idle";
     currentTranscript.value = "";
@@ -931,6 +1222,7 @@ const resetSession = () => {
     conversationPhase.value = "opening";
     noSpeechRetryCount = 0;
     sttNoSpeechRetryCount = 0;
+    incompleteCommitRetryCount = 0;
     messages.value = [];
     return;
   }

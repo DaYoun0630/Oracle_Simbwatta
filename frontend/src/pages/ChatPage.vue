@@ -25,6 +25,14 @@ const {
 // 시각화 컴포넌트에 전달할 상태
 const visualState = computed(() => state.value);
 
+const statusText = computed(() => {
+  if (state.value === "processing") return "AI 생각 중";
+  if (state.value === "speaking") return "AI 말하는 중";
+  if (state.value === "cooldown") return "곧 말할 수 있어요";
+  if (state.value === "listening") return "지금 말씀해 주세요";
+  return "대기 중";
+});
+
 // 마지막 assistant 발화만 추출(없으면 빈 문자열)
 const lastAssistantMessage = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i -= 1) {
@@ -40,11 +48,14 @@ const mainText = computed(() => {
   if (state.value === "speaking" && currentResponse.value) {
     return currentResponse.value;
   }
+  if (state.value === "cooldown") {
+    return "답변이 끝났어요. 곧 마이크가 준비됩니다.";
+  }
   if (state.value === "processing") {
-    return "AI가 답변을 준비하고 있어요.";
+    return "AI가 답변을 정리하고 있어요.";
   }
   if (state.value === "listening") {
-    return "말씀을 듣고 있어요.";
+    return "지금 편하게 말씀해 주세요.";
   }
   if (lastAssistantMessage.value) {
     return lastAssistantMessage.value;
@@ -55,13 +66,16 @@ const mainText = computed(() => {
 // 보조 안내 문구(상태별 톤/가이드 제공)
 const supportiveText = computed(() => {
   if (state.value === "listening") {
-    return "말씀을 참 잘하시네요. 천천히 이어서 말씀해 주세요.";
+    return "천천히 또박또박 말씀해 주시면 더 정확하게 인식돼요.";
   }
   if (state.value === "processing") {
-    return "조금만 기다려 주세요. 생각을 정리하고 있어요.";
+    return "잠시만 기다려 주세요. 대답을 준비하고 있어요.";
   }
   if (state.value === "speaking") {
-    return "차분히 알려드릴게요. 편하게 들어주세요.";
+    return "안내가 끝난 뒤 약 1초 후부터 말씀하시면 인식이 더 안정적이에요.";
+  }
+  if (state.value === "cooldown") {
+    return "곧 마이크가 켜져요. 준비되면 천천히 말씀해 주세요.";
   }
   if (lastAssistantMessage.value) {
     return "궁금한 점이 있으면 언제든 말씀해 주세요.";
@@ -96,6 +110,7 @@ const micLabel = computed(() => {
   }
   if (state.value === "idle" && !isMockMode.value) return "다시 듣기";
   if (state.value === "listening") return "대화 중지";
+  if (state.value === "cooldown") return "곧 말하기 가능";
   if (state.value === "processing") return "처리 중, 중지 가능";
   if (state.value === "speaking") return "답변 중, 중지 가능";
   return "대화 중지";
@@ -143,6 +158,7 @@ const handleEndConversation = () => {
         <!-- AI 안내 카드 -->
         <div class="ai-card" aria-live="polite">
           <span class="ai-label">AI 안내</span>
+          <p class="ai-status">{{ statusText }}</p>
           <p class="ai-message">{{ mainText }}</p>
           <p class="ai-sub">{{ supportiveText }}</p>
         </div>
@@ -274,6 +290,21 @@ const handleEndConversation = () => {
   font-weight: 700;
   color: #4cb7b7;
   letter-spacing: 0.4px;
+}
+
+.ai-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(76, 183, 183, 0.12);
+  color: #2b7f7f;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
 }
 
 /* 메인 메시지 */

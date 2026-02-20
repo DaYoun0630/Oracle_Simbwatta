@@ -9,6 +9,9 @@ const signupStore = useSignupStore();
 const agreeService = ref(false);
 const agreePrivacy = ref(false);
 const agreeMarketing = ref(false);
+const agreeHealthHighwayLink = ref(false);
+const agreeHealthSensitive = ref(false);
+const agreeHealthTransfer = ref(false);
 const submitError = ref("");
 
 const canSubmit = computed(
@@ -18,6 +21,8 @@ const canSubmit = computed(
 const goBack = () => {
   router.push({ name: "signup-form" });
 };
+
+const noop = () => {};
 
 const submitSignup = async () => {
   submitError.value = "";
@@ -82,6 +87,42 @@ onMounted(() => {
           <input v-model="agreeMarketing" type="checkbox" />
           <span>[선택] 혜택 및 공지 알림 수신 동의</span>
         </label>
+
+        <div class="agreement-group">
+          <p class="agreement-title">건강정보 고속도로 연동</p>
+          <p class="agreement-description">
+            연동 시 진료·투약·검사 등 건강정보를 불러와 맞춤 기능을 제공합니다. 언제든 해지할 수
+            있습니다.
+          </p>
+
+          <label class="check-row">
+            <input v-model="agreeHealthHighwayLink" type="checkbox" />
+            <span>[선택] 건강정보 고속도로 연동하기</span>
+          </label>
+          <p class="term-content">가입 후 바로 연동을 진행합니다.</p>
+
+          <div class="check-row required check-row-split">
+            <label class="check-inline">
+              <input v-model="agreeHealthSensitive" type="checkbox" />
+              <span>[필수] 건강정보(민감정보) 수집·이용 동의</span>
+            </label>
+            <button type="button" class="detail-link" @click.prevent="noop">자세히</button>
+          </div>
+          <p class="term-content">건강정보 기반 기능 제공을 위해 필요한 범위 내에서 처리합니다.</p>
+
+          <div class="check-row required check-row-split">
+            <label class="check-inline">
+              <input v-model="agreeHealthTransfer" type="checkbox" />
+              <span>[필수] 건강정보 고속도로를 통한 전송·연계 동의</span>
+            </label>
+            <button type="button" class="detail-link" @click.prevent="noop">자세히</button>
+          </div>
+          <p class="term-content">본인 동의로 건강정보 고속도로에서 데이터를 받아옵니다.</p>
+
+          <div class="agreement-actions">
+            <button type="button" class="range-button" @click="noop">데이터 범위 선택(추후)</button>
+          </div>
+        </div>
       </section>
 
       <p v-if="submitError" class="error">{{ submitError }}</p>
@@ -174,6 +215,79 @@ input[type="checkbox"] {
   line-height: 1.5;
 }
 
+.agreement-group {
+  margin-top: 2px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+  display: grid;
+  gap: 10px;
+}
+
+.agreement-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.agreement-description {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.check-row-split {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.check-inline span {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.detail-link {
+  min-height: auto;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.detail-link:hover {
+  text-decoration: underline;
+}
+
+.agreement-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.range-button {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
 .error {
   margin: 0;
   font-size: 14px;
@@ -182,6 +296,7 @@ input[type="checkbox"] {
 }
 
 .button-row {
+  margin-top: 4px;
   display: flex;
   justify-content: flex-end;
   gap: 8px;

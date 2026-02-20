@@ -34,8 +34,13 @@ KST = timezone(timedelta(hours=9))
 
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 390_000
-SUBJECT_LINK_PATTERN = re.compile(r"^SM-(\d{1,9})$")
+SUBJECT_LINK_PATTERN = re.compile(r"^SM-?(\d{1,6})$")
+NUMERIC_LINK_PATTERN = re.compile(r"^(\d{1,6})$")
 ROLE_CODE_TO_ROLE = {0: "patient", 1: "caregiver", 2: "doctor"}
+MEMBER_CODE_MODULUS = 1_000_000
+MEMBER_CODE_MULTIPLIER = 741_457
+MEMBER_CODE_INCREMENT = 193_939
+MEMBER_CODE_MULTIPLIER_INV = pow(MEMBER_CODE_MULTIPLIER, -1, MEMBER_CODE_MODULUS)
 
 
 def _kst_now_naive() -> datetime:
@@ -48,6 +53,15 @@ def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _decode_member_code_to_user_id(encoded_number: int) -> Optional[int]:
+    if encoded_number < 0:
+        return None
+    decoded = ((encoded_number - MEMBER_CODE_INCREMENT) * MEMBER_CODE_MULTIPLIER_INV) % MEMBER_CODE_MODULUS
+    if decoded <= 0:
+        return None
+    return decoded
 
 
 def _parse_date_of_birth(date_str: str):
@@ -135,31 +149,48 @@ async def _resolve_subject_link_code(
             return await conn.fetchrow(query, *args)
         return await db.fetchrow(query, *args)
 
-    normalized = subject_link_code.strip().upper()
-    if not normalized:
+    raw_code = subject_link_code.strip()
+    if not raw_code:
         raise HTTPException(status_code=400, detail="subject_link_code is required")
 
+    normalized = re.sub(r"\s+", "", raw_code).upper()
     patient = None
+    candidate_patient_ids = []
+
     code_match = SUBJECT_LINK_PATTERN.match(normalized)
     if code_match:
-        candidate_patient_id = int(code_match.group(1))
+        encoded = int(code_match.group(1))
+        decoded_patient_id = _decode_member_code_to_user_id(encoded)
+        if decoded_patient_id is not None:
+            candidate_patient_ids.append(decoded_patient_id)
+        # Backward compatibility: legacy UI used SM-{zero-padded user_id}.
+        if encoded not in candidate_patient_ids:
+            candidate_patient_ids.append(encoded)
+    else:
+        numeric_match = NUMERIC_LINK_PATTERN.match(normalized)
+        if numeric_match:
+            candidate_patient_ids.append(int(numeric_match.group(1)))
+
+    for candidate_patient_id in candidate_patient_ids:
         patient = await fetchrow(
             """
             SELECT p.user_id, COALESCE(u.name, '') AS patient_name
             FROM patients p
-            LEFT JOIN users u ON u.user_id = p.user_id
+            JOIN users u ON u.user_id = p.user_id
             WHERE p.user_id = $1
             """,
             candidate_patient_id,
         )
+        if patient:
+            break
 
     if not patient:
         patient = await fetchrow(
             """
             SELECT p.user_id, COALESCE(u.name, '') AS patient_name
             FROM patients p
-            LEFT JOIN users u ON u.user_id = p.user_id
-            WHERE p.subject_id = $1
+            JOIN users u ON u.user_id = p.user_id
+            WHERE UPPER(COALESCE(p.subject_id, '')) = $1
             """,
             normalized,
         )
@@ -397,10 +428,13 @@ async def register_with_password(payload: PasswordRegisterRequest):
                     doctor_hospital_number = hospital_number
                     entity_id = user_id
     except asyncpg.UndefinedColumnError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="password_hash column is missing. Apply migrations/009_add_password_hash_to_users.sql first.",
-        ) from exc
+        message = str(exc)
+        if "password_hash" in message:
+            raise HTTPException(
+                status_code=500,
+                detail="password_hash column is missing. Apply migrations/009_add_password_hash_to_users.sql first.",
+            ) from exc
+        raise
 
     token_data = {
         "sub": str(user_id),

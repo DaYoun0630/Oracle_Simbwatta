@@ -4,47 +4,107 @@ import SubjectShell from '@/components/shells/SubjectShell.vue';
 import VoiceOrb from '@/components/VoiceOrb.vue';
 import { useVoiceSession } from '@/composables/useVoiceSession';
 
-const { state, isSessionActive, startListening, voiceLevel, isVoiceActive } = useVoiceSession();
+const {
+  state,
+  isSessionActive,
+  startListening,
+  voiceLevel,
+  isVoiceActive,
+  currentTranscript,
+  currentResponse
+} = useVoiceSession();
 
 const showIdleLanding = computed(() => !isSessionActive.value && state.value === 'idle');
 
+const statusText = computed(() => {
+  switch (state.value) {
+    case 'listening':
+      return 'AI 듣는 중';
+    case 'processing':
+      return 'AI 생각 중';
+    case 'speaking':
+      return 'AI 말하는 중';
+    case 'cooldown':
+      return '곧 말하기 가능';
+    default:
+      return isSessionActive.value ? '대화 준비 중' : '대화 대기 중';
+  }
+});
+
+const mainText = computed(() => {
+  if (!isSessionActive.value && state.value === 'idle') {
+    return '안녕하세요!';
+  }
+  if (state.value === 'speaking' && currentResponse.value) {
+    return currentResponse.value;
+  }
+  if (state.value === 'listening') {
+    return '지금 편하게 말씀해 주세요.';
+  }
+  if (state.value === 'processing') {
+    return '답변을 준비하고 있어요.';
+  }
+  if (state.value === 'cooldown') {
+    return '답변이 끝났어요.';
+  }
+  return '대화를 이어가 볼게요.';
+});
+
+const guidanceText = computed(() => {
+  if (!isSessionActive.value && state.value === 'idle') {
+    return '아래 마이크 버튼을 눌러 시작해 주세요.';
+  }
+  if (state.value === 'listening') {
+    return '천천히 또박또박 말씀해 주시면 더 정확하게 인식돼요.';
+  }
+  if (state.value === 'processing') {
+    return '잠시만 기다려 주세요. AI가 생각하고 있어요.';
+  }
+  if (state.value === 'speaking') {
+    return '안내가 끝난 뒤 약 1초 후에 말씀해 주세요.';
+  }
+  if (state.value === 'cooldown') {
+    return '지금은 전환 중이에요. 곧 마이크가 자동으로 켜져요.';
+  }
+  return '원하시는 이야기를 편하게 들려주세요.';
+});
+
+const liveCaption = computed(() => {
+  if (state.value === 'listening' && currentTranscript.value) {
+    return `내 말: ${currentTranscript.value}`;
+  }
+  if (state.value === 'speaking' && currentResponse.value) {
+    return `AI: ${currentResponse.value}`;
+  }
+  if (state.value === 'processing') {
+    return 'AI가 답변 문장을 정리하고 있어요.';
+  }
+  if (state.value === 'cooldown') {
+    return '곧 말씀하실 수 있어요.';
+  }
+  return '';
+});
+
 const statusConfig = computed(() => {
   switch (state.value) {
-    case 'idle':
-      if (isSessionActive.value) {
-        return {
-          text: '',
-          subText: '',
-          bgColor: '#eef4f4'
-        };
-      }
-      return {
-        text: '안녕하세요!',
-        subText: '여기를 눌러주세요',
-        bgColor: '#f5f6f7'
-      };
     case 'listening':
       return {
-        text: '',
-        subText: '',
         bgColor: '#eef4f4'
       };
     case 'processing':
       return {
-        text: '',
-        subText: '',
         bgColor: '#f0f2f5'
       };
     case 'speaking':
       return {
-        text: '',
-        subText: '',
+        bgColor: '#f5f6f7'
+      };
+    case 'cooldown':
+      return {
         bgColor: '#f5f6f7'
       };
     default:
       return {
-        text: '안녕하세요!',
-        subText: '여기를 눌러주세요',
         bgColor: '#f5f6f7'
       };
   }
@@ -54,9 +114,11 @@ const statusConfig = computed(() => {
 <template>
   <SubjectShell :showHomeButton="isSessionActive" :showMenuButton="true">
     <div class="chat-wrapper" :style="{ backgroundColor: statusConfig.bgColor }">
-      <div v-if="showIdleLanding" class="status-area">
-        <h1 class="status-text">{{ statusConfig.text }}</h1>
-        <p v-if="statusConfig.subText" class="sub-text">{{ statusConfig.subText }}</p>
+      <div class="status-area" aria-live="polite">
+        <p class="status-chip">{{ statusText }}</p>
+        <h1 class="status-text">{{ mainText }}</h1>
+        <p class="sub-text">{{ guidanceText }}</p>
+        <p v-if="liveCaption" class="live-caption">{{ liveCaption }}</p>
       </div>
 
       <div class="orb-area">
@@ -77,6 +139,7 @@ const statusConfig = computed(() => {
       <div class="footer-area">
         <div v-if="isSessionActive" class="status-indicator">
           <span class="pulse-dot"></span>
+          <span class="indicator-text">대화 진행 중</span>
         </div>
       </div>
     </div>
@@ -97,26 +160,52 @@ const statusConfig = computed(() => {
 
 .status-area {
   text-align: center;
-  min-height: 120px;
+  min-height: 170px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(76, 183, 183, 0.16);
+  color: #1f6b6b;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
 }
 
 .status-text {
-  font-size: 2rem;
+  font-size: 1.9rem;
   font-weight: 900;
   color: #2e2e2e;
   margin: 0;
-  line-height: 1.3;
+  line-height: 1.4;
 }
 
 .sub-text {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: #4cb7b7;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: #3f7272;
   margin: 0;
+}
+
+.live-caption {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #2e2e2e;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .orb-area {
@@ -176,6 +265,12 @@ const statusConfig = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.indicator-text {
+  color: #4f5c5c;
+  font-size: 0.92rem;
+  font-weight: 700;
 }
 
 .pulse-dot {

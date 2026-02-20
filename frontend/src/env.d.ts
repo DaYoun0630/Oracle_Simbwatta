@@ -2,6 +2,9 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string
+  readonly VITE_DOCTOR_USE_MOCK?: string
+  readonly VITE_DOCTOR_AUTO_REFRESH_MS?: string
+  readonly VITE_TREND_SOURCE?: "dummy" | "http"
   readonly VITE_VOICE_SESSION_MODE?: "live" | "mock"
   readonly VITE_VOICE_TARGET_SEC?: string
   readonly VITE_VOICE_HARD_LIMIT_SEC?: string

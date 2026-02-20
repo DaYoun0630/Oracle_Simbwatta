@@ -20,6 +20,9 @@ const props = defineProps<{
   doctorId?: string;
 }>();
 
+const API_BASE_RAW = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+const API_BASE = /\/api$/i.test(API_BASE_RAW) ? API_BASE_RAW : `${API_BASE_RAW}/api`;
+
 const emit = defineEmits<{
   (e: 'submit', data: DiagnosisSubmitData): void;
 }>();
@@ -81,8 +84,29 @@ const handleSubmit = async (e: Event) => {
       doctorId: props.doctorId || 'doctor_001'
     };
 
-    // API 호출 시뮬레이션 (실제 구현 시 fetch로 교체)
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    const response = await fetch(
+      `${API_BASE}/doctor/patients/${encodeURIComponent(String(props.patientId).trim())}/mri/doctor-diagnosis`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(submitData)
+      }
+    );
+
+    if (!response.ok) {
+      let detail = '진단 저장 중 오류가 발생했습니다.';
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string' && body.detail.trim()) {
+          detail = body.detail;
+        }
+      } catch {
+        // ignore parse errors
+      }
+      throw new Error(`${detail} (HTTP ${response.status})`);
+    }
 
     // 부모 컴포넌트에 이벤트 전달
     emit('submit', submitData);
@@ -93,7 +117,7 @@ const handleSubmit = async (e: Event) => {
     handleReset();
   } catch (error) {
     console.error('진단 저장 실패:', error);
-    alert('진단 저장 중 오류가 발생했습니다.');
+    alert(error instanceof Error ? error.message : '진단 저장 중 오류가 발생했습니다.');
   } finally {
     isSubmitting.value = false;
   }

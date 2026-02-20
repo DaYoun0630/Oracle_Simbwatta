@@ -132,7 +132,7 @@ const handleLogin = async () => {
         ─ inset shadow로 "부드럽게 파인 패널" 느낌을 준다.
         ─ 실제 사용자 입력 UI가 이 안에 위치한다.
       -->
-      <div class="login-card">
+      <form class="login-card" @submit.prevent="handleLogin">
 
         <!-- 페이지 타이틀: 역할에 따라 "대상자 로그인" 등으로 변경 -->
         <h1 class="login-title">{{ roleLabel }} 로그인</h1>
@@ -169,10 +169,10 @@ const handleLogin = async () => {
           ─ 뉴모피즘 양각 금지: CTA는 항상 "떠 있는" 느낌이어야 한다.
           ─ 틸(teal) 계열 배경 + 아래쪽 드롭 쉐도우로 부양감 표현.
         -->
-        <button class="login-button" @click="handleLogin" :disabled="isSubmitting">
+        <button type="submit" class="login-button" :disabled="isSubmitting">
           {{ isSubmitting ? "로그인 중..." : "로그인 완료" }}
         </button>
-      </div>
+      </form>
     </div>
   </div>
 </template>

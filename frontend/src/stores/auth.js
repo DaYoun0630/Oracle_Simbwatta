@@ -30,7 +30,7 @@ export const useAuthStore = defineStore('auth', {
       if (!this.user) {
         this.user = {
           id: 'temp-id',
-          name: '김성신',
+          name: '사용자',
           role: normalizedRole
         };
       } else {

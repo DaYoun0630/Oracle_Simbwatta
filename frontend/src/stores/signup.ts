@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import {
-  signupWithMockApi,
+  signupWithApi,
   verifySubjectLinkCode,
   type SignupApiPayload,
   type SignupApiResponse,
@@ -8,6 +8,7 @@ import {
 } from "@/api/signup";
 
 export type RoleCode = 0 | 1 | 2;
+export type VerifyStatus = "idle" | "pending" | "verified" | "failed" | "expired";
 export type Gender = "male" | "female" | "";
 export type Relationship =
   | "daughter"
@@ -35,6 +36,11 @@ export interface SignupState {
   hospital: string;
   hospital_number: string;
   subjectCodeVerified: boolean;
+  relationshipVerifyStatus: VerifyStatus;
+  relationshipVerifyTxId: string;
+  relationshipVerifiedType: string;
+  relationshipVerifiedAt: string;
+  relationshipVerifyMessage: string;
   subjectCodeMessage: string;
   isCheckingSubjectCode: boolean;
   isSubmitting: boolean;
@@ -60,6 +66,11 @@ const getInitialState = (): SignupState => ({
   hospital: "",
   hospital_number: "",
   subjectCodeVerified: false,
+  relationshipVerifyStatus: "idle",
+  relationshipVerifyTxId: "",
+  relationshipVerifiedType: "",
+  relationshipVerifiedAt: "",
+  relationshipVerifyMessage: "",
   subjectCodeMessage: "",
   isCheckingSubjectCode: false,
   isSubmitting: false,
@@ -85,6 +96,8 @@ export const useSignupStore = defineStore("signup", {
 
     isPasswordValid: (state): boolean => state.password.trim().length >= 8,
 
+    isRelationshipVerified: (state): boolean => state.relationshipVerifyStatus === "verified",
+
     isCommonValid(state): boolean {
       return (
         state.name.trim().length > 0 &&
@@ -107,7 +120,8 @@ export const useSignupStore = defineStore("signup", {
           state.relationship !== "" &&
           (state.relationship !== "other" || state.relationship_detail.trim().length > 0) &&
           state.subject_link_code.trim().length > 0 &&
-          state.subjectCodeVerified
+          state.subjectCodeVerified &&
+          this.isRelationshipVerified
         );
       }
 
@@ -130,6 +144,7 @@ export const useSignupStore = defineStore("signup", {
       this.clearRoleSpecificFields();
       this.subjectCodeVerified = false;
       this.subjectCodeMessage = "";
+      this.resetRelationshipVerification();
     },
 
     clearRoleSpecificFields(): void {
@@ -143,11 +158,35 @@ export const useSignupStore = defineStore("signup", {
       this.hospital_number = "";
       this.subjectCodeVerified = false;
       this.subjectCodeMessage = "";
+      this.resetRelationshipVerification();
     },
 
     resetSubjectCodeVerification(): void {
       this.subjectCodeVerified = false;
       this.subjectCodeMessage = "";
+      this.resetRelationshipVerification();
+    },
+
+    resetRelationshipVerification(): void {
+      this.relationshipVerifyStatus = "idle";
+      this.relationshipVerifyTxId = "";
+      this.relationshipVerifiedType = "";
+      this.relationshipVerifiedAt = "";
+      this.relationshipVerifyMessage = "";
+    },
+
+    setRelationshipVerificationResult(payload: {
+      status: VerifyStatus;
+      txId?: string;
+      verifiedType?: string;
+      verifiedAt?: string;
+      message?: string;
+    }): void {
+      this.relationshipVerifyStatus = payload.status;
+      if (payload.txId !== undefined) this.relationshipVerifyTxId = payload.txId;
+      if (payload.verifiedType !== undefined) this.relationshipVerifiedType = payload.verifiedType;
+      if (payload.verifiedAt !== undefined) this.relationshipVerifiedAt = payload.verifiedAt;
+      if (payload.message !== undefined) this.relationshipVerifyMessage = payload.message;
     },
 
     async validateSubjectLinkCode(): Promise<boolean> {
@@ -205,7 +244,7 @@ export const useSignupStore = defineStore("signup", {
       this.isSubmitting = true;
 
       try {
-        const result = await signupWithMockApi(payload);
+        const result = await signupWithApi(payload);
         this.lastSignupUserId = result.user_id;
         return result;
       } finally {

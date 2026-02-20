@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { computed, onMounted, ref } from 'vue'; // 역할별 상태와 리스트 필터링을 처리한다
+import { computed, onMounted, onUnmounted, ref } from 'vue'; // 역할별 상태와 리스트 필터링을 처리한다
 import { useRouter } from 'vue-router'; // 환자 상세 화면으로 이동한다
 import { useAuthStore } from '@/stores/auth'; // 인증 상태를 가져온다
 import CaregiverShell from '@/components/shells/CaregiverShell.vue';
@@ -18,7 +18,9 @@ const {
   loading: doctorLoading,
   fetchData: fetchDoctorData,
   switchPatient,
-  currentPatientId
+  currentPatientId,
+  startAutoRefresh,
+  stopAutoRefresh,
 } = useDoctorData();
 
 const doctorPatientStore = useDoctorPatientStore(); // 선택 환자 메타를 저장한다
@@ -34,7 +36,12 @@ onMounted(() => {
   if (userRole.value === 'doctor') {
     // 홈에서는 리스트만 사용하므로 상세 데이터가 없는 기본 목록을 불러온다.
     fetchDoctorData(null);
+    startAutoRefresh();
   }
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
 });
 
 const patients = computed(() => doctorData.value?.patients || []); // 환자 목록을 계산한다
@@ -88,7 +95,7 @@ const handleSelectPatient = (patientId) => {
   } else {
     doctorPatientStore.setSelectedPatientId(patientId);
   }
-  router.push({ name: 'doctor-report', params: { patientId } }); // 환자 리포트로 이동한다
+  router.push({ name: 'doctor-patient', params: { patientId } }); // 환자 상세로 이동한다
 };
 </script>
 
@@ -120,7 +127,7 @@ const handleSelectPatient = (patientId) => {
           <input
             v-model="searchQuery"
             type="search"
-            placeholder="이름 / 환자 ID / 병원 검색"
+            placeholder="이름 / 환자 ID / RID / 병원 검색"
             class="search-input"
           />
         </div>
@@ -148,6 +155,8 @@ const handleSelectPatient = (patientId) => {
               </div>
               <div class="patient-sub">
                 <span>{{ patient.id }}</span>
+                <span class="divider">·</span>
+                <span>{{ patient.rid || '-' }}</span>
                 <span class="divider">·</span>
                 <span>{{ patient.hospital || '-' }}</span>
               </div>

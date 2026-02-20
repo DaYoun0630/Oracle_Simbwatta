@@ -29,6 +29,8 @@ const checkCode = async () => {
       <input
         v-model="signupStore.subject_link_code"
         type="text"
+        name="subject_link_code"
+        autocomplete="on"
         placeholder="예: SM-123456"
         @input="onCodeInput"
       />

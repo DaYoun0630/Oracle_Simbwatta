@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import GenderSelect from "@/components/signup/GenderSelect.vue";
 import RelationshipSelect from "@/components/signup/RelationshipSelect.vue";
 import SubjectLinkInput from "@/components/signup/SubjectLinkInput.vue";
+import RelationshipVerifyMyData from "@/components/signup/RelationshipVerifyMyData.vue";
 import DoctorFields from "@/components/signup/DoctorFields.vue";
 import { useSignupStore } from "@/stores/signup";
 
@@ -76,7 +77,11 @@ const dayOptions = computed(() => {
 const isNextEnabled = computed(() => {
   const hasPasswordConfirm = passwordConfirm.value.trim().length > 0;
   const isPasswordMatch = signupStore.password === passwordConfirm.value;
-  return signupStore.canProceedToTerms && hasPasswordConfirm && isPasswordMatch;
+  const needsRelationshipVerify = signupStore.role_code === 1;
+  const relationshipOk =
+    !needsRelationshipVerify || signupStore.relationshipVerifyStatus === "verified";
+
+  return signupStore.canProceedToTerms && hasPasswordConfirm && isPasswordMatch && relationshipOk;
 });
 
 const resetErrors = () => {
@@ -103,25 +108,12 @@ const formatPhoneNumber = (input: string): string => {
 };
 
 const onPhoneFocus = () => {
-  if (!signupStore.phone_number.trim()) {
-    signupStore.phone_number = "010-";
-    return;
-  }
-
+  if (!signupStore.phone_number.trim()) return;
   signupStore.phone_number = formatPhoneNumber(signupStore.phone_number);
 };
 
 const onPhoneInput = () => {
   signupStore.phone_number = formatPhoneNumber(signupStore.phone_number);
-};
-
-const onBirthYearInput = () => {
-  birthYear.value = birthYear.value.replace(/\D/g, "").slice(0, 4);
-
-  if (!isValidBirthYear.value) {
-    birthMonth.value = "";
-    birthDay.value = "";
-  }
 };
 
 const syncBirthDateFromParts = () => {
@@ -133,6 +125,66 @@ const syncBirthDateFromParts = () => {
   signupStore.date_of_birth = "";
 };
 
+const applyBirthDateString = (rawValue: string): boolean => {
+  const value = rawValue.trim();
+  if (!value) return false;
+
+  let year = "";
+  let month = "";
+  let day = "";
+
+  const ymdMatch = value.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$/);
+  if (ymdMatch) {
+    year = ymdMatch[1];
+    month = ymdMatch[2];
+    day = ymdMatch[3];
+  } else {
+    const mdyMatch = value.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
+    if (mdyMatch) {
+      year = mdyMatch[3];
+      month = mdyMatch[1];
+      day = mdyMatch[2];
+    } else if (/^\d{8}$/.test(value)) {
+      year = value.slice(0, 4);
+      month = value.slice(4, 6);
+      day = value.slice(6, 8);
+    } else {
+      return false;
+    }
+  }
+
+  const yearNumber = Number(year);
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  if (yearNumber < 1900 || yearNumber >= currentYear) return false;
+  if (monthNumber < 1 || monthNumber > 12) return false;
+
+  const daysInMonth = new Date(yearNumber, monthNumber, 0).getDate();
+  if (dayNumber < 1 || dayNumber > daysInMonth) return false;
+
+  birthYear.value = String(yearNumber);
+  birthMonth.value = String(monthNumber).padStart(2, "0");
+  birthDay.value = String(dayNumber).padStart(2, "0");
+  syncBirthDateFromParts();
+  return true;
+};
+
+const onBirthYearInput = () => {
+  if (applyBirthDateString(birthYear.value)) return;
+
+  birthYear.value = birthYear.value.replace(/\D/g, "").slice(0, 4);
+
+  if (!isValidBirthYear.value) {
+    birthMonth.value = "";
+    birthDay.value = "";
+  }
+};
+
+const onBirthYearBlur = () => {
+  if (applyBirthDateString(birthYear.value)) return;
+  birthYear.value = birthYear.value.replace(/\D/g, "").slice(0, 4);
+};
+
 watch([birthYear, birthMonth, birthDay], () => {
   if (birthDay.value && !dayOptions.value.includes(birthDay.value)) {
     birthDay.value = "";
@@ -140,6 +192,13 @@ watch([birthYear, birthMonth, birthDay], () => {
 
   syncBirthDateFromParts();
 });
+
+watch(
+  () => signupStore.subject_link_code,
+  () => {
+    signupStore.resetRelationshipVerification();
+  }
+);
 
 const validateCommonFields = (): boolean => {
   let isValid = true;
@@ -215,6 +274,11 @@ const validateRoleSpecificFields = (): boolean => {
       errors.subject_link_code = "회원번호 확인 버튼으로 유효성 검증을 완료해 주세요.";
       isValid = false;
     }
+
+    if (signupStore.relationshipVerifyStatus !== "verified") {
+      errors.relationship = "공공 마이데이터 가족관계 인증을 완료해 주세요.";
+      isValid = false;
+    }
   }
 
   if (signupStore.role_code === 2) {
@@ -280,7 +344,7 @@ onMounted(() => {
 
 <template>
   <main class="signup-page">
-    <section class="signup-card">
+    <form class="signup-card" autocomplete="on" @submit.prevent="goNext">
       <p class="step-label">회원가입 2 / 4</p>
       <h1>{{ roleTitle }} 정보 입력</h1>
       <p class="description">필수 항목을 먼저 입력해 주세요. 입력값은 다음 단계로 이동해도 유지됩니다.</p>
@@ -290,13 +354,25 @@ onMounted(() => {
         <div class="field-grid">
           <label class="field">
             <span>이름</span>
-            <input v-model="signupStore.name" type="text" placeholder="이름 입력" />
+            <input
+              v-model="signupStore.name"
+              type="text"
+              name="name"
+              autocomplete="name"
+              placeholder="이름 입력"
+            />
             <small v-if="errors.name" class="error">{{ errors.name }}</small>
           </label>
 
           <label class="field">
             <span>이메일</span>
-            <input v-model="signupStore.email" type="email" placeholder="example@email.com" />
+            <input
+              v-model="signupStore.email"
+              type="email"
+              name="email"
+              autocomplete="email"
+              placeholder="example@email.com"
+            />
             <small v-if="errors.email" class="error">{{ errors.email }}</small>
           </label>
 
@@ -305,10 +381,13 @@ onMounted(() => {
             <input
               v-model="signupStore.phone_number"
               type="tel"
+              name="tel"
+              autocomplete="tel-national"
               inputmode="numeric"
               placeholder="010-0000-0000"
               @focus="onPhoneFocus"
               @input="onPhoneInput"
+              @change="onPhoneInput"
             />
             <small v-if="errors.phone_number" class="error">{{ errors.phone_number }}</small>
           </label>
@@ -319,20 +398,32 @@ onMounted(() => {
               <input
                 v-model="birthYear"
                 type="text"
+                name="bday"
+                autocomplete="bday"
                 inputmode="numeric"
-                maxlength="4"
                 placeholder="연도(YYYY)"
                 list="birth-year-options"
                 @input="onBirthYearInput"
+                @change="onBirthYearBlur"
               />
               <datalist id="birth-year-options">
                 <option v-for="year in availableYears" :key="year" :value="year"></option>
               </datalist>
-              <select v-model="birthMonth" :disabled="!isValidBirthYear">
+              <select
+                v-model="birthMonth"
+                name="bday-month"
+                autocomplete="bday-month"
+                :disabled="!isValidBirthYear"
+              >
                 <option value="">월</option>
                 <option v-for="month in monthOptions" :key="month" :value="month">{{ month }}</option>
               </select>
-              <select v-model="birthDay" :disabled="!isValidBirthYear || !birthMonth">
+              <select
+                v-model="birthDay"
+                name="bday-day"
+                autocomplete="bday-day"
+                :disabled="!isValidBirthYear || !birthMonth"
+              >
                 <option value="">일</option>
                 <option v-for="day in dayOptions" :key="day" :value="day">{{ day }}</option>
               </select>
@@ -342,13 +433,25 @@ onMounted(() => {
 
           <label class="field">
             <span>비밀번호</span>
-            <input v-model="signupStore.password" type="password" placeholder="8자 이상 입력" />
+            <input
+              v-model="signupStore.password"
+              type="password"
+              name="new-password"
+              autocomplete="new-password"
+              placeholder="8자 이상 입력"
+            />
             <small v-if="errors.password" class="error">{{ errors.password }}</small>
           </label>
 
           <label class="field">
             <span>비밀번호 확인</span>
-            <input v-model="passwordConfirm" type="password" placeholder="비밀번호 재입력" />
+            <input
+              v-model="passwordConfirm"
+              type="password"
+              name="new-password-confirm"
+              autocomplete="new-password"
+              placeholder="비밀번호 재입력"
+            />
             <small v-if="errors.passwordConfirm" class="error">{{ errors.passwordConfirm }}</small>
           </label>
         </div>
@@ -362,6 +465,7 @@ onMounted(() => {
         <template v-else-if="signupStore.role_code === 1">
           <RelationshipSelect />
           <SubjectLinkInput />
+          <RelationshipVerifyMyData />
           <p class="link-code-guide">
             ※ 대상자 회원번호는 어디서 확인하나요?<br />
             대상자의 기기의 설정 -> 프로필에서 대상자의 회원번호를 확인할 수 있습니다.
@@ -386,9 +490,9 @@ onMounted(() => {
             <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor" />
           </svg>
         </button>
-        <button type="button" class="primary" :disabled="!isNextEnabled" @click="goNext">다음</button>
+        <button type="submit" class="primary" :disabled="!isNextEnabled">다음</button>
       </div>
-    </section>
+    </form>
   </main>
 </template>
 
