@@ -80,3 +80,38 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: AuthUserPayload
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    phone_number: Optional[str] = Field(default=None, max_length=30)
+    date_of_birth: Optional[str] = Field(default=None, min_length=10, max_length=10)
+    profile_image_url: Optional[str] = Field(default=None, max_length=500)
+    department: Optional[str] = Field(default=None, max_length=50)
+    license_number: Optional[str] = Field(default=None, max_length=50)
+    hospital: Optional[str] = Field(default=None, max_length=100)
+    hospital_number: Optional[str] = Field(default=None, max_length=30)
+
+
+class UserSettingsPayload(BaseModel):
+    notify_emergency: bool = True
+    notify_weekly: bool = True
+    notify_service: bool = True
+    doctor_notify_risk: bool = True
+    doctor_notify_weekly: bool = True
+    doctor_notify_mri: bool = True
+    share_dialog_summary: bool = True
+    share_anomaly_alert: bool = True
+    share_medication_reminder: bool = True
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    notify_emergency: Optional[bool] = None
+    notify_weekly: Optional[bool] = None
+    notify_service: Optional[bool] = None
+    doctor_notify_risk: Optional[bool] = None
+    doctor_notify_weekly: Optional[bool] = None
+    doctor_notify_mri: Optional[bool] = None
+    share_dialog_summary: Optional[bool] = None
+    share_anomaly_alert: Optional[bool] = None
+    share_medication_reminder: Optional[bool] = None

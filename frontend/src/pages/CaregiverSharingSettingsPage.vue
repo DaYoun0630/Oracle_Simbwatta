@@ -62,6 +62,7 @@ const toggleCategory = (id: (typeof categories)[number]["id"]) => {
       <p class="footer-note" v-if="!sharing.allEnabled">
         일부 항목의 공유가 철회된 상태입니다. 필요할 때 다시 켤 수 있습니다.
       </p>
+      <p class="sync-error" v-if="sharing.syncError">{{ sharing.syncError }}</p>
     </div>
   </SubjectShell>
 </template>
@@ -147,5 +148,12 @@ const toggleCategory = (id: (typeof categories)[number]["id"]) => {
   margin: 2px 2px 0;
   color: #777;
   font-size: 14px;
+}
+
+.sync-error {
+  margin: 2px 2px 0;
+  color: #ff8a80;
+  font-size: 13px;
+  font-weight: 700;
 }
 </style>

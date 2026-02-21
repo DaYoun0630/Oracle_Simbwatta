@@ -1,44 +1,23 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useCaregiverData } from '@/composables/useCaregiverData';
 import { useCaregiverSharingSettings } from '@/composables/useCaregiverSharingSettings';
 import { useWeeklyTrend } from '@/composables/useWeeklyTrend';
-import {
-  TREND_RANGE_OPTIONS,
-  buildTrendQueryForRange,
-  getTrendRangeHeading
-} from '@/composables/useTrendRange';
+import { buildTrendQueryForRange } from '@/composables/useTrendRange';
 import { buildTrendBuckets } from '@/composables/useTrendBuckets';
-import {
-  buildCaregiverAlertBundle,
-  getAlertKindLabel,
-  getAlertToneLabel,
-} from '@/composables/useCaregiverAlerts';
-import WeeklyChart from '../WeeklyChart.vue';
+import { buildCaregiverAlertBundle } from '@/composables/useCaregiverAlerts';
 
 const router = useRouter();
 const { data, loading, fetchData } = useCaregiverData();
-const { trend, loading: trendLoading, error: trendError, fetchWeeklyTrend } = useWeeklyTrend();
+const { trend, error: trendError, fetchWeeklyTrend } = useWeeklyTrend();
 const sharing = useCaregiverSharingSettings();
-const rangeOptions = TREND_RANGE_OPTIONS;
 const selectedRange = ref('7d');
-const currentSubjectId = computed(() => String(data.value?.subject?.id || '').trim());
 
-const fetchTrendByRange = async (rangeKey = selectedRange.value) =>
-  fetchWeeklyTrend(
-    buildTrendQueryForRange(rangeKey, currentSubjectId.value ? { subjectId: currentSubjectId.value } : {})
-  );
+const fetchTrend = async () => fetchWeeklyTrend(buildTrendQueryForRange(selectedRange.value));
 
-const handleRangeSelect = (rangeKey) => {
-  if (selectedRange.value === rangeKey && trend.value) return;
-  selectedRange.value = rangeKey;
-  void fetchTrendByRange(rangeKey);
-};
-
-onMounted(async () => {
-  await fetchData();
-  await fetchTrendByRange();
+onMounted(() => {
+  Promise.all([fetchData(), fetchTrend()]);
 });
 
 const statusTone = computed(() => {
@@ -57,6 +36,9 @@ const statusColor = computed(() => {
 const statusLabel = computed(() => data.value?.todayStatus?.label ?? '안정');
 const subjectName = computed(() => data.value?.subject?.name ?? '대상자');
 const relationText = computed(() => data.value?.subject?.relation ?? '가족');
+const subjectWithRelation = computed(() =>
+  relationText.value ? `${subjectName.value} ${relationText.value}` : subjectName.value
+);
 
 const statusSummary = computed(() => `${subjectName.value} 님은 오늘 ${statusLabel.value} 상태입니다.`);
 const statusMessage = computed(() => {
@@ -65,107 +47,50 @@ const statusMessage = computed(() => {
 });
 const lastChatText = computed(() => data.value?.todayStatus?.lastChat ?? '오늘 기록 없음');
 
-const trendSummary = computed(() => {
-  if (!sharing.dialogSummary.value) {
-    return '대상자가 대화 요약 공유를 철회하여 선택 기간 대화 요약이 숨김 처리되었습니다.';
-  }
-  if (trendError.value) {
-    return '선택 기간 추세 데이터를 불러오지 못해 마지막 캐시 없이 표시 중입니다.';
-  }
-  return bucketedTrend.value.metrics.summaryText;
-});
-
 const bucketedTrend = computed(() => buildTrendBuckets(trend.value?.points ?? [], selectedRange.value));
-const trendBadgeText = computed(() => bucketedTrend.value.metrics.statusLabel);
-const trendBadgeTone = computed(() => bucketedTrend.value.metrics.tone);
-const trendValues = computed(() => bucketedTrend.value.values);
-const trendLabels = computed(() => bucketedTrend.value.labels);
-const trendDates = computed(() => bucketedTrend.value.dates);
-const trendHighlights = computed(() => bucketedTrend.value.highlights);
-const trendStates = computed(() => bucketedTrend.value.states);
-const trendMetrics = computed(() => bucketedTrend.value.metrics);
-const trendHeading = computed(() => `${getTrendRangeHeading(selectedRange.value)} 대화 흐름`);
-const trendHint = computed(() => '상태 마커는 각 기간의 관찰 결과를 요약해 보여줍니다.');
 const alertBundle = computed(() => buildCaregiverAlertBundle(selectedRange.value, bucketedTrend.value));
-const primaryAlert = computed(() => alertBundle.value.primaryAlert);
-const secondaryAlerts = computed(() => alertBundle.value.secondaryAlerts);
-const summaryAlerts = computed(() => alertBundle.value.summaryAlerts);
-const monitoringAlerts = computed(() => alertBundle.value.monitoringAlerts);
-const summaryRangeLabel = computed(() => alertBundle.value.rangeLabel);
-const primaryKindLabel = computed(() =>
-  primaryAlert.value ? getAlertKindLabel(primaryAlert.value.kind) : '기간 요약'
-);
-const primaryToneLabel = computed(() =>
-  primaryAlert.value ? getAlertToneLabel(primaryAlert.value.tone) : '정보'
-);
 
-const fallbackPrimaryMessage = {
-  title: '최근 흐름을 차분히 확인해보면 좋아요.',
-  action: '컨디션에 따라 변화가 생길 수 있어요. 오늘은 짧은 대화부터 가볍게 이어가보세요. 부담 없이 진행해도 충분합니다.',
+const toRelativeDateLabel = (isoDate) => {
+  const target = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(target.getTime())) return isoDate;
+  const today = new Date();
+  const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const compare = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const diffDay = Math.round((base.getTime() - compare.getTime()) / (24 * 60 * 60 * 1000));
+  if (diffDay === 0) return '오늘';
+  if (diffDay === 1) return '어제';
+  return `${target.getMonth() + 1}.${target.getDate()}`;
 };
 
-const nextMedicationReminder = computed(() => {
-  const reminder = data.value?.medicationReminders?.[0];
-  if (!reminder) return '등록된 복약 일정이 없습니다.';
-  return `${reminder.time} ${reminder.name}`;
+const watchAlerts = computed(() =>
+  alertBundle.value.monitoringAlerts.slice(0, 2).map((alert) => ({
+    ...alert,
+    whenLabel: toRelativeDateLabel(alert.endDate),
+  }))
+);
+
+const watchFallbackText = computed(() => {
+  if (!sharing.dialogSummary.value) return '대화 요약 공유가 비활성화되어 변화를 확인할 수 없어요.';
+  if (trendError.value) return '변화 데이터를 불러오지 못했어요. 잠시 후 다시 확인해주세요.';
+  return '지금은 눈여겨볼 변화가 없습니다.';
 });
 
-const quickActions = computed(() => {
-  if (!data.value) return [];
-  return [
-    {
-      id: 'weekly',
-      title: '주간 대화',
-      value: `${data.value.weeklyActivity.completed}/${data.value.weeklyActivity.total}회`,
-      desc: '이번 주 참여',
-      icon: 'mic',
-      tone: 'mint',
-      action: 'history',
-    },
-    {
-      id: 'recent',
-      title: '최근 대화',
-      value: sharing.dialogSummary.value ? lastChatText.value : '공유 비활성화',
-      desc: sharing.dialogSummary.value ? '기록 바로 보기' : '대상자가 공유 철회',
-      icon: 'doc',
-      tone: 'neutral',
-      action: 'history',
-    },
-    {
-      id: 'medication',
-      title: '복약 리마인드',
-      value: sharing.medicationReminder.value ? nextMedicationReminder.value : '공유 비활성화',
-      desc: sharing.medicationReminder.value ? '복약 예정 정보' : '대상자가 공유 철회',
-      icon: 'pill',
-      tone: 'mint',
-      action: null,
-    },
-  ];
-});
-
-const handleAction = (action) => {
-  if (action === 'history') {
-    router.push({ name: 'history' });
-  }
-};
-
-const handleOpenHistoryByAlert = (alert = primaryAlert.value) => {
-  if (!alert) return;
+const handleOpenHistory = () => {
   router.push({
     name: 'history',
     query: {
-      tab: alert.kind === 'trigger' ? 'monitoring' : 'summary',
-      axis: alert.axis,
+      tab: 'summary',
       period: selectedRange.value,
     },
   });
 };
 
-const handleOpenSummaryHistory = () => {
+const handleOpenWatchAlert = (alert) => {
   router.push({
     name: 'history',
     query: {
-      tab: 'summary',
+      tab: 'monitoring',
+      axis: alert.axis,
       period: selectedRange.value,
     },
   });
@@ -189,19 +114,20 @@ const statusIconPath = computed(() => {
     </div>
 
     <template v-else-if="data">
-      <section class="hero-card stagger" style="--delay: 0ms">
-        <div class="hero-header">
-          <div>
-            <p class="hero-caption">보호자 대시보드</p>
-          </div>
-          <div class="status-pill" :class="statusTone">
-            <span class="status-dot"></span>
-            <span>{{ statusLabel }}</span>
-          </div>
+      <header class="page-header stagger" style="--delay: 0ms">
+        <div class="page-header-copy">
+          <p class="hero-caption">보호자 대시보드</p>
+          <h2 class="hero-title">{{ subjectWithRelation }}</h2>
         </div>
+        <div class="status-pill" :class="statusTone">
+          <span class="status-dot"></span>
+          <span>{{ statusLabel }}</span>
+        </div>
+      </header>
 
+      <section class="hero-card stagger" style="--delay: 80ms">
         <div class="hero-body">
-          <div class="status-visual" :class="statusTone">
+          <div class="status-visual">
             <svg viewBox="0 0 24 24" :style="{ color: statusColor }">
               <path :d="statusIconPath" fill="currentColor" />
             </svg>
@@ -209,127 +135,39 @@ const statusIconPath = computed(() => {
           <div class="hero-text">
             <p class="hero-message">{{ statusSummary }}</p>
             <p class="hero-detail">{{ statusMessage }}</p>
-            <p class="hero-meta">마지막 대화: {{ lastChatText }}</p>
+            <p class="hero-meta">
+              <span class="hero-meta-label">마지막 대화</span>
+              <span class="hero-meta-value">{{ lastChatText }}</span>
+            </p>
           </div>
-        </div>
-
-        <div class="hero-footer">
-          <span class="summary-period-chip">{{ summaryRangeLabel }}</span>
         </div>
       </section>
 
-      <section v-if="sharing.dialogSummary.value" class="trend-card stagger" style="--delay: 120ms">
-        <div class="trend-header">
-          <div class="trend-header-main">
-            <h3>{{ trendHeading }}</h3>
-            <p class="trend-message">{{ trendSummary }}</p>
-            <div class="trend-range-controls" role="group" aria-label="관찰 기간 선택">
-              <button
-                v-for="option in rangeOptions"
-                :key="option.key"
-                type="button"
-                class="trend-range-button"
-                :class="{ active: selectedRange === option.key }"
-                :aria-pressed="selectedRange === option.key"
-                @click="handleRangeSelect(option.key)"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-          </div>
-          <span class="trend-badge" :class="trendBadgeTone">
-            {{ trendBadgeText }}
-          </span>
-        </div>
-        <div class="primary-alert" aria-live="polite">
-          <div class="primary-alert-head">
-            <span class="kind-badge" :class="primaryAlert?.kind || 'summary'">{{ primaryKindLabel }}</span>
-            <span v-if="primaryAlert" class="axis-badge">{{ primaryAlert.tagLabel }}</span>
-            <span class="tone-badge">{{ primaryToneLabel }}</span>
-          </div>
-          <p class="primary-alert-title">
-            {{ primaryAlert?.titleLine || fallbackPrimaryMessage.title }}
-          </p>
-          <p class="primary-alert-action">
-            {{ primaryAlert?.actionLine || fallbackPrimaryMessage.action }}
-          </p>
-          <button type="button" class="primary-alert-cta" @click="handleOpenHistoryByAlert()">
-            자세히 보기
-          </button>
-        </div>
+      <section class="watch-section stagger" style="--delay: 160ms">
+        <h3 class="watch-section-title">눈여겨볼 변화</h3>
 
-        <div class="secondary-alerts">
+        <div v-if="watchAlerts.length" class="watch-list">
           <button
-            v-for="alert in secondaryAlerts"
+            v-for="alert in watchAlerts"
             :key="alert.id"
             type="button"
-            class="secondary-alert-item"
-            @click="handleOpenHistoryByAlert(alert)"
+            class="watch-event-card"
+            @click="handleOpenWatchAlert(alert)"
           >
-            <span class="secondary-alert-tag">{{ alert.tagLabel }}</span>
-            <span class="secondary-alert-title">{{ alert.titleLine }}</span>
+            <div class="watch-event-head">
+              <span class="watch-event-tag">{{ alert.tagLabel }}</span>
+              <span class="watch-event-time">{{ alert.whenLabel }}</span>
+            </div>
+            <p class="watch-event-title">{{ alert.titleLine }}</p>
           </button>
         </div>
 
-        <WeeklyChart
-          :data="trendValues"
-          :labels="trendLabels"
-          :dates="trendDates"
-          :states="trendStates"
-          :highlights="trendHighlights"
-          :y-state-labels="['안정', '변화', '저하', '미참여']"
-        />
-        <p v-if="trendLoading" class="trend-hint">{{ trendHeading }} 추세를 계산 중입니다.</p>
-        <p v-else-if="trendError" class="trend-hint">{{ trendError }}</p>
-        <p v-else class="trend-hint">{{ trendHint }}</p>
-        <p v-if="summaryAlerts.length || monitoringAlerts.length" class="trend-link-note">
-          관찰 로그에서 모니터링 알림과 기간 요약을 함께 확인할 수 있어요.
-          <button type="button" class="inline-link" @click="handleOpenSummaryHistory">기록으로 이동</button>
-        </p>
+        <p v-else class="watch-empty">{{ watchFallbackText }}</p>
       </section>
 
-      <section class="quick-actions">
-        <button
-          v-for="(item, index) in quickActions"
-          :key="item.id"
-          class="action-card stagger"
-          :style="{ '--delay': `${240 + index * 120}ms` }"
-          :disabled="!item.action"
-          type="button"
-          @click="handleAction(item.action)"
-        >
-          <div class="action-icon" :class="item.tone">
-            <svg v-if="item.icon === 'mic'" viewBox="0 0 48 48" aria-hidden="true">
-              <path d="M24 30a6 6 0 0 0 6-6V12a6 6 0 0 0-12 0v12a6 6 0 0 0 6 6z" />
-              <path d="M34 22a10 10 0 0 1-20 0H10a14 14 0 0 0 12 13.8V40h4v-4.2A14 14 0 0 0 38 22h-4z" />
-              <circle class="icon-pulse" cx="24" cy="24" r="18" />
-            </svg>
-            <svg v-else-if="item.icon === 'trend'" viewBox="0 0 48 48" aria-hidden="true">
-              <path d="M8 30l10-10 8 8 14-14" />
-              <circle class="icon-dot" cx="18" cy="20" r="3" />
-              <circle class="icon-dot" cx="26" cy="28" r="3" />
-              <circle class="icon-dot" cx="40" cy="14" r="3" />
-            </svg>
-            <svg v-else-if="item.icon === 'pill'" viewBox="0 0 48 48" aria-hidden="true">
-              <rect x="10" y="20" width="28" height="10" rx="5" />
-              <path d="M24 20v10" />
-              <circle class="icon-dot" cx="16" cy="25" r="1.8" />
-              <circle class="icon-dot" cx="32" cy="25" r="1.8" />
-            </svg>
-            <svg v-else viewBox="0 0 48 48" aria-hidden="true">
-              <rect x="12" y="10" width="24" height="28" rx="6" />
-              <path d="M18 20h12M18 26h12M18 32h8" />
-              <circle class="icon-search" cx="36" cy="36" r="6" />
-              <path class="icon-search" d="M41 41l-4-4" />
-            </svg>
-          </div>
-          <div class="action-text">
-            <h4>{{ item.title }}</h4>
-            <p>{{ item.value }}</p>
-            <span>{{ item.desc }}</span>
-          </div>
-        </button>
-      </section>
+      <button type="button" class="primary-cta stagger" style="--delay: 240ms" @click="handleOpenHistory">
+        자세히 확인하기
+      </button>
     </template>
   </div>
 </template>
@@ -348,16 +186,11 @@ const statusIconPath = computed(() => {
     0 10px 18px rgba(126, 140, 154, 0.18),
     0 3px 8px rgba(126, 140, 154, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.62);
-  --card-elevation-hover:
-    0 11px 20px rgba(126, 140, 154, 0.16),
-    0 4px 10px rgba(126, 140, 154, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
   min-height: 100%;
-  overflow: visible;
-  justify-content: flex-start;
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .loading {
@@ -377,35 +210,28 @@ const statusIconPath = computed(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.hero-card {
-  background: var(--card-surface);
-  padding: 20px 20px 18px;
-  border-radius: 24px;
-  box-shadow: var(--card-elevation-main);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.hero-header {
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+  padding: 0 4px;
 }
 
 .hero-caption {
   font-size: 18px;
   font-weight: 700;
   color: #4cb7b7;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 
 .hero-title {
-  font-size: 28px;
+  font-size: 44px;
   font-weight: 900;
   color: #2e2e2e;
   margin: 0;
@@ -414,11 +240,12 @@ const statusIconPath = computed(() => {
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 10px;
+  padding: 10px 18px;
   border-radius: 999px;
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
   background: #e6f3f3;
   color: #1f5f5f;
   white-space: nowrap;
@@ -431,33 +258,40 @@ const statusIconPath = computed(() => {
 }
 
 .status-pill.alert {
-  background: rgba(255, 183, 77, 0.2);
+  background: rgba(255, 183, 77, 0.24);
   color: #c77715;
 }
 
 .status-pill.danger {
-  background: rgba(255, 138, 128, 0.18);
+  background: rgba(255, 138, 128, 0.2);
   color: #d66a61;
 }
 
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: currentColor;
 }
 
+.hero-card {
+  background: var(--card-surface);
+  padding: 24px 20px;
+  border-radius: 24px;
+  box-shadow: var(--card-elevation-main);
+}
+
 .hero-body {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: 56px minmax(0, 1fr);
   gap: 16px;
   align-items: center;
 }
 
 .status-visual {
-  width: 92px;
-  height: 92px;
-  border-radius: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
   background: #f9fbfb;
   display: flex;
   align-items: center;
@@ -466,432 +300,140 @@ const statusIconPath = computed(() => {
 }
 
 .status-visual svg {
-  width: 44px;
-  height: 44px;
+  width: 30px;
+  height: 30px;
 }
 
 .hero-message {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 900;
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   color: #2e2e2e;
 }
 
 .hero-detail {
-  font-size: 20px;
-  margin: 0 0 6px;
+  font-size: 16px;
+  margin: 0 0 12px;
   color: #4d4d4d;
   line-height: 1.5;
 }
 
 .hero-meta {
-  font-size: 16px;
   margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.hero-meta-label {
+  font-size: 17px;
+  font-weight: 700;
   color: #8a8a8a;
 }
 
-.hero-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.emotion-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: #f8fafb;
-  font-size: 18px;
-  font-weight: 700;
-  color: #2e2e2e;
-  box-shadow: var(--card-elevation-sub);
-}
-
-.emotion-icon {
-  width: 32px;
-  height: 32px;
-  fill: none;
-  stroke: #4cb7b7;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  animation: emotionPulse 2.6s ease-in-out infinite;
-}
-
-.summary-period-chip {
-  padding: 9px 14px;
-  border-radius: 999px;
-  font-size: 15px;
-  font-weight: 800;
-  color: #4f6b7a;
-  background: #eef3f5;
-  box-shadow: inset 2px 2px 4px rgba(129, 142, 153, 0.2), inset -2px -2px 4px rgba(255, 255, 255, 0.95);
-}
-
-.alert-chip {
-  padding: 10px 14px;
-  border-radius: 20px;
+.hero-meta-value {
   font-size: 18px;
   font-weight: 800;
-  color: #d66a61;
-  background: rgba(255, 138, 128, 0.15);
+  color: #646b71;
 }
 
-.alert-chip.muted {
-  color: #7a7a7a;
-  background: rgba(130, 130, 130, 0.12);
-}
-
-.trend-card {
+.watch-section {
   background: var(--card-surface);
-  padding: 20px 20px 16px;
+  padding: 20px;
   border-radius: 24px;
   box-shadow: var(--card-elevation-main);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: none;
-}
-
-.trend-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
   gap: 12px;
 }
 
-.trend-header-main {
-  min-width: 0;
+.watch-section-title {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 900;
+  color: #2e2e2e;
+}
+
+.watch-list {
   display: grid;
   gap: 10px;
 }
 
-.trend-header h3 {
-  font-size: 22px;
-  font-weight: 900;
-  margin: 0 0 6px;
-  color: #2e2e2e;
-}
-
-.trend-message {
-  font-size: 20px;
-  margin: 0;
-  color: #4d4d4d;
-  line-height: 1.5;
-}
-
-.trend-range-controls {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.trend-range-button {
-  border: none;
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 14px;
-  font-weight: 800;
-  color: #5f6b73;
-  background: #eef3f5;
-  box-shadow: inset 2px 2px 4px rgba(129, 142, 153, 0.2), inset -2px -2px 4px rgba(255, 255, 255, 0.95);
-  cursor: pointer;
-  transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
-}
-
-.trend-range-button:hover {
-  transform: translateY(-1px);
-}
-
-.trend-range-button.active {
-  color: #ffffff;
-  background: #4cb7b7;
-  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.28);
-}
-
-.trend-badge {
-  padding: 8px 14px;
-  border-radius: 18px;
-  font-size: 20px;
-  font-weight: 900;
-  background: #e8f5f5;
-  color: #4cb7b7;
-  white-space: nowrap;
-}
-
-.trend-badge.stable {
-  background: rgba(130, 130, 130, 0.12);
-  color: #6b6b6b;
-}
-
-.trend-badge.alert {
-  background: rgba(255, 196, 122, 0.22);
-  color: #b57d2d;
-}
-
-.trend-badge.down {
-  background: rgba(255, 138, 128, 0.18);
-  color: #ff8a80;
-}
-
-.trend-hint {
-  font-size: 18px;
-  color: #7a7a7a;
-  margin: 6px 0 0;
-}
-
-.primary-alert {
-  background: #f8fbfb;
-  border-radius: 18px;
-  box-shadow: var(--card-elevation-sub);
-  padding: 14px 16px;
-  display: grid;
-  gap: 8px;
-}
-
-.primary-alert-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.kind-badge,
-.axis-badge,
-.tone-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 4px 10px;
-}
-
-.kind-badge.summary {
-  background: rgba(76, 183, 183, 0.16);
-  color: #2e8f8f;
-}
-
-.kind-badge.trigger {
-  background: rgba(255, 183, 77, 0.2);
-  color: #b57d2d;
-}
-
-.axis-badge {
-  background: #eaf1f4;
-  color: #51616b;
-}
-
-.tone-badge {
-  background: rgba(130, 130, 130, 0.14);
-  color: #626c72;
-}
-
-.primary-alert-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 900;
-  color: #30363a;
-  line-height: 1.45;
-}
-
-.primary-alert-action {
-  margin: 0;
-  font-size: 16px;
-  color: #4f5d66;
-  line-height: 1.5;
-}
-
-.primary-alert-cta {
-  justify-self: start;
-  border: none;
-  border-radius: 999px;
-  background: #4cb7b7;
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 800;
-  padding: 7px 13px;
-  cursor: pointer;
-  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.26);
-}
-
-.secondary-alerts {
-  display: grid;
-  gap: 8px;
-}
-
-.secondary-alert-item {
+.watch-event-card {
   width: 100%;
   border: none;
-  border-radius: 14px;
-  padding: 10px 12px;
+  border-radius: 18px;
   background: #f8fbfb;
   box-shadow: var(--card-elevation-sub);
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  padding: 14px 16px;
   text-align: left;
-  cursor: pointer;
-}
-
-.secondary-alert-tag {
-  font-size: 12px;
-  font-weight: 800;
-  color: #5f6b73;
-  background: #eaf1f4;
-  border-radius: 999px;
-  padding: 4px 9px;
-  flex: none;
-}
-
-.secondary-alert-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #4f5d66;
-  line-height: 1.45;
-}
-
-.trend-link-note {
-  margin: 4px 0 0;
-  font-size: 14px;
-  line-height: 1.45;
-  color: #6c757d;
-}
-
-.inline-link {
-  border: none;
-  background: transparent;
-  color: #2e8f8f;
-  font-size: inherit;
-  font-weight: 800;
-  cursor: pointer;
-  padding: 0 0 0 6px;
-  text-decoration: underline;
-}
-
-@media (max-width: 680px) {
-  .trend-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .trend-badge {
-    font-size: 18px;
-  }
-}
-
-.quick-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;
-}
-
-.action-card {
-  border: none;
-  background: var(--card-surface);
-  padding: 16px 12px;
-  border-radius: 24px;
-  box-shadow: var(--card-elevation-sub);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  text-align: center;
+  gap: 8px;
   cursor: pointer;
-  min-height: 150px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-  overflow: hidden;
-  min-width: 0;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
-.action-card:disabled {
-  cursor: default;
-  opacity: 0.76;
-}
-
-.action-card:active:not(:disabled) {
-  transform: translateY(1px) scale(0.995);
-}
-
-.action-card:hover:not(:disabled) {
+.watch-event-card:hover {
   transform: translateY(-1px);
-  box-shadow: var(--card-elevation-hover);
+  box-shadow: 0 10px 18px rgba(126, 140, 154, 0.14), 0 2px 6px rgba(126, 140, 154, 0.1);
 }
 
-.action-icon {
-  width: 64px;
-  height: 64px;
-  border-radius: 18px;
-  background: #f9fbfb;
-  display: flex;
+.watch-event-head {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  box-shadow: var(--card-elevation-icon);
+  gap: 8px;
 }
 
-.action-icon svg {
-  width: 40px;
-  height: 40px;
-  fill: none;
-  stroke: #4cb7b7;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.action-icon.mint svg {
-  stroke: #4cb7b7;
-}
-
-.action-icon.alert svg {
-  stroke: #ff8a80;
-}
-
-.action-icon.neutral svg {
-  stroke: #4d4d4d;
-}
-
-.action-text h4 {
-  font-size: 20px;
+.watch-event-tag,
+.watch-event-time {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
   font-weight: 800;
-  margin: 0;
-  color: #2e2e2e;
 }
 
-.action-text p {
+.watch-event-tag {
+  background: #eaf1f4;
+  color: #56626b;
+}
+
+.watch-event-time {
+  background: rgba(255, 183, 77, 0.2);
+  color: #9a712f;
+}
+
+.watch-event-title {
+  margin: 0;
   font-size: 20px;
   font-weight: 900;
-  margin: 4px 0 0;
-  color: #4cb7b7;
+  color: #253949;
+  line-height: 1.45;
 }
 
-.action-text span {
+.watch-empty {
+  margin: 0;
+  font-size: 16px;
+  color: #66737c;
+  line-height: 1.5;
+}
+
+.primary-cta {
+  border: none;
+  border-radius: 18px;
+  background: #4cb7b7;
+  color: #ffffff;
   font-size: 18px;
-  color: #777;
+  font-weight: 900;
+  padding: 14px 18px;
+  cursor: pointer;
+  box-shadow: 0 8px 16px rgba(76, 183, 183, 0.3);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
-.icon-pulse {
-  fill: none;
-  stroke: rgba(76, 183, 183, 0.35);
-  stroke-width: 2;
-  animation: iconPulse 2.6s ease-in-out infinite;
-}
-
-.icon-dot {
-  fill: #4cb7b7;
-  animation: dotBounce 2s ease-in-out infinite;
-}
-
-.icon-search {
-  fill: none;
-  stroke: #4cb7b7;
-  stroke-width: 3;
-  stroke-linecap: round;
+.primary-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(76, 183, 183, 0.32);
 }
 
 .stagger {
@@ -908,27 +450,30 @@ const statusIconPath = computed(() => {
   }
 }
 
-@keyframes emotionPulse {
-  0%, 100% { transform: scale(1); opacity: 0.8; }
-  50% { transform: scale(1.1); opacity: 1; }
-}
+@media (max-width: 680px) {
+  .hero-title {
+    font-size: 30px;
+  }
 
-@keyframes iconPulse {
-  0%, 100% { transform: scale(0.9); opacity: 0.4; }
-  50% { transform: scale(1.1); opacity: 0.9; }
-}
+  .status-pill {
+    font-size: 18px;
+    padding: 8px 14px;
+  }
 
-@keyframes dotBounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  .hero-body {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .watch-section-title {
+    font-size: 26px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stagger,
-  .emotion-icon,
-  .icon-pulse,
-  .icon-dot {
+  .stagger {
     animation: none !important;
+    opacity: 1;
+    transform: none;
   }
 }
 </style>

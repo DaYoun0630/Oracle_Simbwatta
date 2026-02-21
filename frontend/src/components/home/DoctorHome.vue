@@ -42,7 +42,6 @@ const latestVisit = computed(() => sortedVisits.value.at(-1) || null);
 const previousVisit = computed(() => (sortedVisits.value.length > 1 ? sortedVisits.value.at(-2) : null));
 
 const clinicalAssessment = computed(() => props.doctorData?.clinicalAssessment || null);
-const dataAvailability = computed(() => props.doctorData?.dataAvailability || null);
 
 const mmseScore = computed(() =>
   clinicalAssessment.value?.mmse?.score
@@ -65,48 +64,19 @@ const cdrScore = computed(() =>
   ?? null
 );
 
-const hasAnyResultData = computed(() => {
-  const source = dataAvailability.value || {};
-  return Boolean(
-    source.hasCognitiveTests ||
-    source.hasVoiceData ||
-    source.hasMRI ||
-    source.hasBiomarkers
-  );
-});
-
-const hasPendingVoiceOnly = computed(() => {
-  const source = dataAvailability.value || {};
-  return Boolean(!source.hasVoiceData && source.hasVoiceUploads);
-});
-
 const lastUpdated = computed(() =>
   latestVisit.value?.examDate
   ?? patientRecord.value?.lastVisit
-  ?? dataAvailability.value?.lastUpdateDate
   ?? '-'
 );
 
-const genderLabel = computed(() => {
-  if (patientRecord.value?.gender === 'F') return '여';
-  if (patientRecord.value?.gender === 'M') return '남';
-  return '-';
-});
+const genderLabel = computed(() => (patientRecord.value?.gender === 'F' ? '여' : '남'));
 
 // 환자 목록 버튼을 노출할 수 있는지 판단한다
 const canOpenPatientSheet = computed(() => typeof props.openPatientSheet === 'function');
 
 const riskLevel = computed(() => {
-  const patientRisk = String(patientRecord.value?.riskLevel || '').toLowerCase();
-  if (patientRisk === 'high' || patientRisk === 'mid' || patientRisk === 'low') {
-    return patientRisk;
-  }
-
-  const score = typeof cdrScore.value === 'number' ? cdrScore.value : null;
-  if (score === null) {
-    if (!hasAnyResultData.value) return 'none';
-    return 'unknown';
-  }
+  const score = typeof cdrScore.value === 'number' ? cdrScore.value : 0;
   if (score >= 2) return 'high';
   if (score > 0.5) return 'mid';
   return 'low';
@@ -115,16 +85,7 @@ const riskLevel = computed(() => {
 const riskLabel = computed(() => {
   if (riskLevel.value === 'high') return 'HIGH';
   if (riskLevel.value === 'mid') return 'MID';
-  if (riskLevel.value === 'none') return 'NO DATA';
-  if (riskLevel.value === 'unknown') return 'PENDING';
   return 'LOW';
-});
-
-const riskSummaryText = computed(() => {
-  if (!hasAnyResultData.value) return '아직 분석 완료 데이터가 없습니다.';
-  if (hasPendingVoiceOnly.value) return '최신 업로드 분석이 처리 중입니다. 완료본 기준으로 표시합니다.';
-  if (riskLevel.value === 'unknown') return '점수 기반 위험도를 계산 중입니다.';
-  return `종합 위험도 ${riskLabel.value}`;
 });
 
 const mmseDelta = computed(() => {
@@ -168,9 +129,6 @@ const goToReport = () => {
           <p class="patient-id">{{ currentPatient?.id }} · {{ currentPatient?.rid || '-' }}</p>
           <p class="patient-sub">
             {{ patientRecord?.age }}세 · {{ genderLabel }} · 최근 검사 {{ lastUpdated }}
-          </p>
-          <p v-if="hasPendingVoiceOnly" class="patient-sub patient-sub--pending">
-            최신 음성은 분석 처리 중이며 완료본이 자동 반영됩니다.
           </p>
         </div>
         <span class="risk-badge" :class="riskLevel">{{ riskLabel }}</span>
@@ -218,7 +176,7 @@ const goToReport = () => {
       <section class="risk-card">
         <span class="risk-label">CDR-SB</span>
         <strong class="risk-score">{{ formatScore(cdrScore) }}</strong>
-        <p class="risk-sub">{{ riskSummaryText }}</p>
+        <p class="risk-sub">종합 위험도 {{ riskLabel }}</p>
       </section>
 
       <button class="detail-button" type="button" @click="goToReport">
@@ -294,11 +252,6 @@ const goToReport = () => {
   color: #777;
 }
 
-.doctor-home .patient-sub--pending {
-  margin-top: 6px;
-  color: #d97706;
-}
-
 .doctor-home .risk-badge {
   min-width: 90px;
   text-align: center;
@@ -322,16 +275,6 @@ const goToReport = () => {
 .doctor-home .risk-badge.high {
   background: rgba(255, 138, 128, 0.2);
   color: #ff8a80;
-}
-
-.doctor-home .risk-badge.none {
-  background: rgba(148, 163, 184, 0.2);
-  color: #64748b;
-}
-
-.doctor-home .risk-badge.unknown {
-  background: rgba(245, 158, 11, 0.2);
-  color: #d97706;
 }
 
 .doctor-home .patient-list-trigger {

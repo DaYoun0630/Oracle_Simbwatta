@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { updateAuthProfile } from '@/api/settings';
 import AppShell from '@/components/AppShell.vue';
 
 const router = useRouter();
@@ -201,36 +202,60 @@ phoneNumber.value = phoneNumber.value ? formatPersonalPhoneNumber(phoneNumber.va
 hospitalNumber.value = hospitalNumber.value ? formatHospitalPhoneNumber(hospitalNumber.value) : '';
 initBirthParts();
 
-const saveSettings = () => {
-  localStorage.setItem('doctor-phone-number', phoneNumber.value.trim());
-  localStorage.setItem('doctor-date-of-birth', dateOfBirth.value);
+const saveSettings = async () => {
+  const phone = phoneNumber.value.trim();
+  const dob = dateOfBirth.value || null;
+  const dept = department.value.trim();
+  const license = isenseNumber.value.trim();
+  const hospitalName = hospital.value.trim();
+  const hospitalPhone = hospitalNumber.value.trim();
 
-  localStorage.setItem('doctor-department', department.value.trim());
-  localStorage.setItem('doctor-isense-number', isenseNumber.value.trim());
-  localStorage.setItem('doctor-hospital', hospital.value.trim());
-  localStorage.setItem('doctor-hospital-number', hospitalNumber.value.trim());
+  localStorage.setItem('doctor-phone-number', phone);
+  localStorage.setItem('doctor-date-of-birth', dob || '');
+  localStorage.setItem('doctor-department', dept);
+  localStorage.setItem('doctor-isense-number', license);
+  localStorage.setItem('doctor-hospital', hospitalName);
+  localStorage.setItem('doctor-hospital-number', hospitalPhone);
+  localStorage.setItem('doctor-specialty', dept);
+  localStorage.setItem('doctor-license', license);
+  localStorage.setItem('doctor-hospital-name', hospitalName);
+  localStorage.setItem('doctor-hospital-phone', hospitalPhone);
 
-  localStorage.setItem('doctor-specialty', department.value.trim());
-  localStorage.setItem('doctor-license', isenseNumber.value.trim());
-  localStorage.setItem('doctor-hospital-name', hospital.value.trim());
-  localStorage.setItem('doctor-hospital-phone', hospitalNumber.value.trim());
+  try {
+    if (authStore.token) {
+      const updatedUser = await updateAuthProfile(authStore.token, {
+        phone_number: phone || null,
+        date_of_birth: dob,
+        department: dept || null,
+        license_number: license || null,
+        hospital: hospitalName || null,
+        hospital_number: hospitalPhone || null,
+      });
+      authStore.setUser({
+        ...(authStore.user || {}),
+        ...updatedUser,
+      });
+    } else if (authStore.user) {
+      authStore.setUser({
+        ...authStore.user,
+        phone_number: phone || null,
+        date_of_birth: dob,
+        department: dept || null,
+        license_number: license || null,
+        hospital: hospitalName || null,
+        hospital_number: hospitalPhone || null,
+      });
+    }
 
-  if (authStore.user) {
-    authStore.setUser({
-      ...authStore.user,
-      phone_number: phoneNumber.value.trim() || null,
-      date_of_birth: dateOfBirth.value || null,
-      department: department.value.trim() || null,
-      license_number: isenseNumber.value.trim() || null,
-      hospital: hospital.value.trim() || null,
-      hospital_number: hospitalNumber.value.trim() || null,
-    });
+    saveMessage.value = '저장되었습니다.';
+  } catch (error) {
+    console.error('Failed to save doctor settings:', error);
+    saveMessage.value = error instanceof Error ? `저장 실패: ${error.message}` : '저장에 실패했습니다.';
   }
 
-  saveMessage.value = '저장되었습니다.';
   setTimeout(() => {
     saveMessage.value = '';
-  }, 2000);
+  }, 2200);
 };
 
 const handleLogout = () => {

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onMounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import { fetchUserSettings, updateUserSettings } from '@/api/settings';
 import CaregiverShell from '@/components/shells/CaregiverShell.vue';
 import DoctorShell from '@/components/shells/DoctorShell.vue';
 
@@ -10,10 +11,52 @@ const role = computed(() => authStore.role);
 const emergencyAlerts = ref(localStorage.getItem('notify-emergency') !== 'off');
 const weeklyReport = ref(localStorage.getItem('notify-weekly') !== 'off');
 const serviceInfo = ref(localStorage.getItem('notify-service') !== 'off');
+const isHydrating = ref(false);
+const syncMessage = ref('');
+let syncMessageTimer = null;
 
-watch(emergencyAlerts, (v) => localStorage.setItem('notify-emergency', v ? 'on' : 'off'));
-watch(weeklyReport, (v) => localStorage.setItem('notify-weekly', v ? 'on' : 'off'));
-watch(serviceInfo, (v) => localStorage.setItem('notify-service', v ? 'on' : 'off'));
+const setSyncMessage = (message) => {
+  syncMessage.value = message;
+  if (syncMessageTimer) {
+    clearTimeout(syncMessageTimer);
+    syncMessageTimer = null;
+  }
+  if (message) {
+    syncMessageTimer = setTimeout(() => {
+      syncMessage.value = '';
+      syncMessageTimer = null;
+    }, 2400);
+  }
+};
+
+const persistSettings = async () => {
+  if (isHydrating.value || !authStore.token) return;
+
+  try {
+    await updateUserSettings(authStore.token, {
+      notify_emergency: emergencyAlerts.value,
+      notify_weekly: weeklyReport.value,
+      notify_service: serviceInfo.value,
+    });
+    setSyncMessage('');
+  } catch (error) {
+    console.error('Failed to sync notification settings:', error);
+    setSyncMessage(error instanceof Error ? `DB 동기화 실패: ${error.message}` : 'DB 동기화에 실패했습니다.');
+  }
+};
+
+watch(emergencyAlerts, (v) => {
+  localStorage.setItem('notify-emergency', v ? 'on' : 'off');
+  void persistSettings();
+});
+watch(weeklyReport, (v) => {
+  localStorage.setItem('notify-weekly', v ? 'on' : 'off');
+  void persistSettings();
+});
+watch(serviceInfo, (v) => {
+  localStorage.setItem('notify-service', v ? 'on' : 'off');
+  void persistSettings();
+});
 
 const notificationCategories = [
   {
@@ -42,6 +85,23 @@ const notificationCategories = [
 const toggleNotification = (category) => {
   category.model.value = !category.model.value;
 };
+
+onMounted(async () => {
+  if (!authStore.token) return;
+
+  isHydrating.value = true;
+  try {
+    const settings = await fetchUserSettings(authStore.token);
+    emergencyAlerts.value = settings.notify_emergency;
+    weeklyReport.value = settings.notify_weekly;
+    serviceInfo.value = settings.notify_service;
+  } catch (error) {
+    console.error('Failed to load notification settings:', error);
+    setSyncMessage(error instanceof Error ? `설정 불러오기 실패: ${error.message}` : '설정 불러오기에 실패했습니다.');
+  } finally {
+    isHydrating.value = false;
+  }
+});
 </script>
 
 <template>
@@ -88,6 +148,7 @@ const toggleNotification = (category) => {
           <span class="toggle-label">{{ category.model.value ? '켬' : '끔' }}</span>
         </div>
       </section>
+      <p v-if="syncMessage" class="sync-message">{{ syncMessage }}</p>
     </div>
   </component>
 </template>
@@ -187,5 +248,12 @@ const toggleNotification = (category) => {
 
 .toggle.on + .toggle-label {
   color: #4cb7b7;
+}
+
+.sync-message {
+  margin: 4px 2px 0;
+  font-size: 13px;
+  color: #ff8a80;
+  font-weight: 700;
 }
 </style>

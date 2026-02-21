@@ -2,240 +2,347 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import WeeklyChart from "../WeeklyChart.vue";
-import { useWeeklyTrend } from "@/composables/useWeeklyTrend";
-import { buildTrendBuckets } from "@/composables/useTrendBuckets";
-import {
-  TREND_RANGE_OPTIONS,
-  buildTrendQueryForRange,
-  getTrendRangeHeading,
-  type TrendRangeKey,
-} from "@/composables/useTrendRange";
-import {
-  buildCaregiverAlertBundle,
-  formatBucketRangeLabel,
-  getAlertKindLabel,
-  getAlertToneLabel,
-  getBucketStateText,
-} from "@/composables/useCaregiverAlerts";
-import type { AlertAxis } from "@/composables/caregiverAlertTypes";
+import { TREND_RANGE_OPTIONS, type TrendRangeKey } from "@/composables/useTrendRange";
+import { createCaregiverRecordProvider } from "./caregiverRecord/createCaregiverRecordProvider";
+import type {
+  CaregiverRecordPageModel,
+  DailyTrendPoint,
+  ObservationDomain,
+  ObservationItem,
+  ObservationSeverity,
+} from "./caregiverRecord/types";
 
-type HistoryTab = "monitoring" | "summary";
-
-const TAB_VALUES: HistoryTab[] = ["monitoring", "summary"];
-const AXIS_VALUES: AlertAxis[] = ["participation", "training", "speech"];
-const AXIS_ORDER: AlertAxis[] = ["participation", "training", "speech"];
-
-const isTrendRangeKey = (value: unknown): value is TrendRangeKey =>
-  typeof value === "string" && TREND_RANGE_OPTIONS.some((option) => option.key === value);
-const isHistoryTab = (value: unknown): value is HistoryTab =>
-  typeof value === "string" && TAB_VALUES.includes(value as HistoryTab);
-const isAlertAxis = (value: unknown): value is AlertAxis =>
-  typeof value === "string" && AXIS_VALUES.includes(value as AlertAxis);
+const DOMAIN_ORDER: ObservationDomain[] = ["training", "speech", "participation"];
+const DOMAIN_LABEL: Record<ObservationDomain, string> = {
+  training: "훈련",
+  speech: "발화",
+  participation: "참여",
+};
+const LEVEL_TEXT: Record<DailyTrendPoint["level"], string> = {
+  stable: "안정",
+  change: "변화",
+  decline: "저하",
+  missing: "미측정",
+};
+const VALUE_BY_LEVEL: Record<Exclude<DailyTrendPoint["level"], "missing">, number> = {
+  stable: 2,
+  change: 1,
+  decline: 0,
+};
+const TREND_RANGE_POLICY: Record<TrendRangeKey, { rangeDays: number; bucketSize: number; pointCount: number }> = {
+  "7d": { rangeDays: 7, bucketSize: 1, pointCount: 7 },
+  "1m": { rangeDays: 30, bucketSize: 5, pointCount: 6 },
+  "3m": { rangeDays: 90, bucketSize: 15, pointCount: 6 },
+  "6m": { rangeDays: 182, bucketSize: 7, pointCount: 6 },
+};
 
 const route = useRoute();
 const router = useRouter();
-const { trend, loading: trendLoading, error: trendError, fetchWeeklyTrend } = useWeeklyTrend();
+const recordProvider = createCaregiverRecordProvider();
 
 const selectedRange = ref<TrendRangeKey>("7d");
-const activeTab = ref<HistoryTab>("summary");
-const focusedAxis = ref<AlertAxis | null>(null);
-const selectedIndex = ref<number | null>(null);
-const isBucketDrawerOpen = ref(false);
+const loading = ref(false);
+const error = ref<string | null>(null);
+const record = ref<CaregiverRecordPageModel | null>(null);
+const selectedPointIndex = ref<number | null>(null);
+const interpretationSheetOpen = ref(false);
+const compareSectionOpen = ref(false);
+const rawLogSectionOpen = ref(false);
 
-const fetchTrendByRange = async (rangeKey: TrendRangeKey = selectedRange.value) =>
-  fetchWeeklyTrend(buildTrendQueryForRange(rangeKey));
+const isTrendRangeKey = (value: unknown): value is TrendRangeKey =>
+  typeof value === "string" && TREND_RANGE_OPTIONS.some((option) => option.key === value);
 
-const syncStateFromRoute = (fetchOnRangeChange: boolean) => {
+const syncRangeFromRoute = () => {
   const periodQuery = route.query.period;
-  const tabQuery = route.query.tab;
-  const axisQuery = route.query.axis;
-
-  const nextRange = isTrendRangeKey(periodQuery) ? periodQuery : "7d";
-  const nextTab = isHistoryTab(tabQuery) ? tabQuery : "summary";
-  const nextAxis = isAlertAxis(axisQuery) ? axisQuery : null;
-
-  const rangeChanged = selectedRange.value !== nextRange;
-  selectedRange.value = nextRange;
-  activeTab.value = nextTab;
-  focusedAxis.value = nextAxis;
-
-  if (fetchOnRangeChange && rangeChanged) {
-    void fetchTrendByRange(nextRange);
-  }
+  selectedRange.value = isTrendRangeKey(periodQuery) ? periodQuery : "7d";
 };
 
-const syncRouteFromState = () => {
-  const nextQuery = {
-    ...route.query,
-    tab: activeTab.value,
-    period: selectedRange.value,
-  } as Record<string, string>;
+const syncRouteFromRange = () => {
+  const nextQuery = { ...route.query, period: selectedRange.value } as Record<string, string>;
+  delete nextQuery.tab;
+  delete nextQuery.axis;
 
-  if (focusedAxis.value) {
-    nextQuery.axis = focusedAxis.value;
-  } else {
-    delete nextQuery.axis;
-  }
-
-  const currentTab = typeof route.query.tab === "string" ? route.query.tab : "";
   const currentPeriod = typeof route.query.period === "string" ? route.query.period : "";
-  const currentAxis = typeof route.query.axis === "string" ? route.query.axis : "";
-  const nextAxis = nextQuery.axis ?? "";
-
-  if (currentTab === nextQuery.tab && currentPeriod === nextQuery.period && currentAxis === nextAxis) {
-    return;
-  }
-
+  if (currentPeriod === nextQuery.period) return;
   router.replace({ query: nextQuery });
 };
 
-onMounted(() => {
-  syncStateFromRoute(false);
-  void fetchTrendByRange(selectedRange.value);
+const fetchRecord = async (range: TrendRangeKey) => {
+  loading.value = true;
+  error.value = null;
+  try {
+    record.value = await recordProvider.getRecord(range);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "기록 데이터를 불러오지 못했습니다.";
+    record.value = null;
+  } finally {
+    loading.value = false;
+  }
+};
+
+onMounted(async () => {
+  syncRangeFromRoute();
+  await fetchRecord(selectedRange.value);
 });
 
 watch(
   () => route.query,
-  () => {
-    syncStateFromRoute(true);
+  async () => {
+    const previous = selectedRange.value;
+    syncRangeFromRoute();
+    if (previous !== selectedRange.value) {
+      selectedPointIndex.value = null;
+      await fetchRecord(selectedRange.value);
+    }
   }
 );
 
-watch([selectedRange, activeTab, focusedAxis], () => {
-  syncRouteFromState();
+watch(selectedRange, () => {
+  syncRouteFromRange();
 });
 
-const handleRangeSelect = (rangeKey: TrendRangeKey) => {
-  if (selectedRange.value === rangeKey && trend.value) return;
-  selectedRange.value = rangeKey;
-  selectedIndex.value = null;
-  void fetchTrendByRange(rangeKey);
+const aggregateTrendPoints = (points: DailyTrendPoint[], range: TrendRangeKey): DailyTrendPoint[] => {
+  const policy = TREND_RANGE_POLICY[range];
+  const scoped = points.slice(-policy.rangeDays);
+  const buckets: DailyTrendPoint[] = [];
+
+  if (range === "6m") {
+    const monthChunks: Array<{ monthKey: string; points: DailyTrendPoint[] }> = [];
+    const monthIndexMap = new Map<string, number>();
+
+    for (const point of scoped) {
+      const monthKey = point.date.slice(0, 7);
+      const index = monthIndexMap.get(monthKey);
+      if (index === undefined) {
+        monthIndexMap.set(monthKey, monthChunks.length);
+        monthChunks.push({ monthKey, points: [point] });
+      } else {
+        monthChunks[index].points.push(point);
+      }
+    }
+
+    for (const chunkInfo of monthChunks.slice(-policy.pointCount)) {
+      const chunk = chunkInfo.points;
+      const numericLevels = chunk
+        .map((point) => (point.level === "missing" ? null : VALUE_BY_LEVEL[point.level]))
+        .filter((value): value is number => value !== null);
+      const averageLevel = numericLevels.length
+        ? numericLevels.reduce((sum, value) => sum + value, 0) / numericLevels.length
+        : null;
+
+      const level: DailyTrendPoint["level"] =
+        averageLevel === null ? "missing" : averageLevel >= 1.5 ? "stable" : averageLevel >= 0.5 ? "change" : "decline";
+
+      buckets.push({
+        date: `${chunkInfo.monthKey}-01`,
+        level,
+        flags: chunk.some((point) => point.flags.includes("ANOMALY")) ? ["ANOMALY"] : [],
+        metrics: {
+          interruptions: Math.round(
+            chunk.reduce((sum, point) => sum + point.metrics.interruptions, 0) / chunk.length
+          ),
+          responseDelayPercent: Math.round(
+            chunk.reduce((sum, point) => sum + point.metrics.responseDelayPercent, 0) / chunk.length
+          ),
+          participationGap: chunk.some((point) => point.metrics.participationGap),
+        },
+      });
+    }
+
+    return buckets;
+  }
+
+  for (let index = 0; index < scoped.length; index += policy.bucketSize) {
+    const chunk = scoped.slice(index, index + policy.bucketSize);
+    if (!chunk.length) continue;
+
+    const numericLevels = chunk
+      .map((point) => (point.level === "missing" ? null : VALUE_BY_LEVEL[point.level]))
+      .filter((value): value is number => value !== null);
+    const averageLevel = numericLevels.length
+      ? numericLevels.reduce((sum, value) => sum + value, 0) / numericLevels.length
+      : null;
+
+    const level: DailyTrendPoint["level"] =
+      averageLevel === null ? "missing" : averageLevel >= 1.5 ? "stable" : averageLevel >= 0.5 ? "change" : "decline";
+
+    buckets.push({
+      date: chunk[chunk.length - 1].date,
+      level,
+      flags: chunk.some((point) => point.flags.includes("ANOMALY")) ? ["ANOMALY"] : [],
+      metrics: {
+        interruptions: Math.round(
+          chunk.reduce((sum, point) => sum + point.metrics.interruptions, 0) / chunk.length
+        ),
+        responseDelayPercent: Math.round(
+          chunk.reduce((sum, point) => sum + point.metrics.responseDelayPercent, 0) / chunk.length
+        ),
+        participationGap: chunk.some((point) => point.metrics.participationGap),
+      },
+    });
+  }
+
+  return buckets.slice(-policy.pointCount);
 };
 
-const handleTabSelect = (tab: HistoryTab) => {
-  if (activeTab.value === tab) return;
-  activeTab.value = tab;
-};
-
-const handleAxisFocus = (axis: AlertAxis) => {
-  focusedAxis.value = focusedAxis.value === axis ? null : axis;
-};
-
-const bucketedTrend = computed(() => buildTrendBuckets(trend.value?.points ?? [], selectedRange.value));
-const alertBundle = computed(() => buildCaregiverAlertBundle(selectedRange.value, bucketedTrend.value));
-
-const summaryAlerts = computed(() => {
-  const map = new Map(alertBundle.value.summaryAlerts.map((alert) => [alert.axis, alert]));
-  return AXIS_ORDER.map((axis) => map.get(axis)).filter((alert) => Boolean(alert));
-});
-
-const monitoringAlerts = computed(() => alertBundle.value.monitoringAlerts);
-const monitoringStatusText = computed(() =>
-  monitoringAlerts.value.length
-    ? "급격한 변화가 감지된 축을 우선으로 보여줍니다."
-    : "현재는 급격한 변화 알림이 감지되지 않았습니다."
+const displayTrendPoints = computed<DailyTrendPoint[]>(() =>
+  aggregateTrendPoints(record.value?.dailyTrendPoints ?? [], selectedRange.value)
 );
 
-const trendHeading = computed(() => `${getTrendRangeHeading(selectedRange.value)} 관찰 흐름`);
-const rangeLabel = computed(() => alertBundle.value.rangeLabel);
-const isInitialLoading = computed(() => trendLoading.value && !trend.value);
-
-const trendValues = computed<Array<number | null>>(() => bucketedTrend.value.values);
-const trendLabels = computed(() => bucketedTrend.value.labels);
-const trendDates = computed(() => bucketedTrend.value.dates);
-const trendStates = computed(() => bucketedTrend.value.states);
-const highlightIndices = computed(() => bucketedTrend.value.highlights);
-
 watch(
-  () => bucketedTrend.value.buckets,
-  (buckets) => {
-    if (!buckets.length) {
-      selectedIndex.value = null;
+  () => displayTrendPoints.value,
+  (points) => {
+    if (!points.length) {
+      selectedPointIndex.value = null;
       return;
     }
-    if (selectedIndex.value === null || selectedIndex.value < 0 || selectedIndex.value >= buckets.length) {
-      selectedIndex.value = buckets[buckets.length - 1].index;
+    if (selectedPointIndex.value === null || selectedPointIndex.value >= points.length) {
+      selectedPointIndex.value = points.length - 1;
     }
   },
   { immediate: true }
 );
 
-const handlePointClick = (index: number) => {
-  selectedIndex.value = index;
+const handleRangeSelect = async (range: TrendRangeKey) => {
+  if (selectedRange.value === range && record.value) return;
+  selectedRange.value = range;
+  selectedPointIndex.value = null;
+  await fetchRecord(range);
 };
 
-const selectedBucket = computed(() =>
-  bucketedTrend.value.buckets.find((bucket) => bucket.index === selectedIndex.value) ?? null
-);
-
-const selectedBucketLabel = computed(() =>
-  selectedBucket.value ? formatBucketRangeLabel(selectedBucket.value) : rangeLabel.value
-);
-
-const selectedBucketStateText = computed(() =>
-  selectedBucket.value ? getBucketStateText(selectedBucket.value.state) : "관찰 구간을 선택해 흐름을 확인해보세요."
-);
-
-const bucketHistoryItems = computed(() =>
-  bucketedTrend.value.buckets.map((bucket) => ({
-    id: `${bucket.index}-${bucket.endDate}`,
-    axisLabel: formatBucketRangeLabel(bucket),
-    stateText: getBucketStateText(bucket.state),
-    hasAnomaly: bucket.hasAnomaly,
-    hasMissing: bucket.missingDays > 0 || bucket.state === "missing",
-  }))
-);
-
-const openBucketDrawer = () => {
-  isBucketDrawerOpen.value = true;
+const handlePointSelect = (index: number) => {
+  selectedPointIndex.value = index;
 };
 
-const closeBucketDrawer = () => {
-  isBucketDrawerOpen.value = false;
+const toMonthDay = (isoDate: string) => {
+  const date = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+};
+
+const statusStrengthMap: Record<string, ObservationSeverity> = {
+  안정: "가벼움",
+  변화: "주의",
+  저하: "뚜렷함",
+  미참여: "뚜렷함",
+};
+
+const trendHeadline = computed(() => {
+  const status = record.value?.periodSummary.status;
+  if (status === "저하") return "이번 기간은 저하 흐름";
+  if (status === "변화") return "이번 기간은 변화 흐름";
+  if (status === "미참여") return "이번 기간은 참여 공백 흐름";
+  return "이번 기간은 안정 흐름";
+});
+
+const trendStrength = computed(
+  () => statusStrengthMap[record.value?.periodSummary.status ?? "안정"] ?? ("가벼움" as ObservationSeverity)
+);
+
+const statusToneClass = computed(() => {
+  const status = record.value?.periodSummary.status;
+  if (status === "저하" || status === "미참여") return "danger";
+  if (status === "변화") return "alert";
+  return "stable";
+});
+
+const trendValues = computed<Array<number | null>>(() => {
+  return displayTrendPoints.value.map((point) =>
+    point.level === "missing" ? null : VALUE_BY_LEVEL[point.level]
+  );
+});
+
+const trendStates = computed(() => displayTrendPoints.value.map((point) => point.level));
+const trendDates = computed(() => displayTrendPoints.value.map((point) => point.date));
+const trendLabels = computed(() => trendDates.value.map((date) => toMonthDay(date)));
+const highlightIndices = computed(() =>
+  displayTrendPoints.value
+    .map((point, index) => (point.flags.includes("ANOMALY") ? index : -1))
+    .filter((index) => index >= 0)
+);
+
+const selectedDay = computed(() => {
+  const points = displayTrendPoints.value;
+  if (selectedPointIndex.value === null) return null;
+  return points[selectedPointIndex.value] ?? null;
+});
+
+const selectedDayDetail = computed(() => {
+  if (!selectedDay.value) return null;
+  const point = selectedDay.value;
+  const evidence = [`중단 ${point.metrics.interruptions}회`, `반응지연 +${point.metrics.responseDelayPercent}%`];
+  if (point.metrics.participationGap) evidence.push("미측정 1일");
+
+  return {
+    dateText: toMonthDay(point.date),
+    levelText: LEVEL_TEXT[point.level],
+    level: point.level,
+    evidenceText: evidence.join(", "),
+    interruptions: point.metrics.interruptions,
+    responseDelayPercent: point.metrics.responseDelayPercent,
+    participationGap: point.metrics.participationGap,
+  };
+});
+
+const quickStats = computed(() => record.value?.periodSummary.quickStats.slice(0, 3) ?? []);
+const dateRangeLabel = computed(() => record.value?.periodSummary.dateRangeLabel ?? "-");
+
+const observationMap = computed(() => {
+  const map = new Map<ObservationDomain, ObservationItem>();
+  for (const item of record.value?.observationItems ?? []) {
+    map.set(item.domain, item);
+  }
+  return map;
+});
+
+const createFallbackObservation = (domain: ObservationDomain): ObservationItem => ({
+  domain,
+  severity: "가벼움",
+  title: `${DOMAIN_LABEL[domain]} 변화 관찰`,
+  deltaMetrics: "지난 7일 0회 (이전 7일 대비 +0)",
+  evidenceLogs: [],
+  actions: [],
+});
+
+const observationCards = computed<ObservationItem[]>(() =>
+  DOMAIN_ORDER.map((domain) => observationMap.value.get(domain) ?? createFallbackObservation(domain))
+);
+
+const notableChanges = computed(() => (record.value?.notableChanges ?? []).slice(0, 2));
+
+const openInterpretationSheet = () => {
+  interpretationSheetOpen.value = true;
+  compareSectionOpen.value = false;
+  rawLogSectionOpen.value = false;
+};
+
+const closeInterpretationSheet = () => {
+  interpretationSheetOpen.value = false;
+};
+
+const toggleCompareSection = () => {
+  compareSectionOpen.value = !compareSectionOpen.value;
+};
+
+const toggleRawLogSection = () => {
+  rawLogSectionOpen.value = !rawLogSectionOpen.value;
 };
 </script>
 
 <template>
   <div class="history-container">
-    <div v-if="isInitialLoading" class="loading">
+    <div v-if="loading && !record" class="loading">
       <div class="spinner"></div>
     </div>
 
-    <template v-else>
-      <section class="tab-card">
-        <button
-          type="button"
-          class="tab-button"
-          :class="{ active: activeTab === 'summary' }"
-          @click="handleTabSelect('summary')"
-        >
-          기간 요약
-        </button>
-        <button
-          type="button"
-          class="tab-button"
-          :class="{ active: activeTab === 'monitoring' }"
-          @click="handleTabSelect('monitoring')"
-        >
-          모니터링
-        </button>
-      </section>
-
-      <section v-if="activeTab === 'summary'" class="panel-card">
-        <div class="panel-header">
-          <div>
-            <h3>{{ trendHeading }}</h3>
-            <p class="panel-sub">기간별 평균 관찰을 기반으로 참여, 훈련, 발화 흐름을 요약합니다.</p>
-          </div>
-          <span class="range-chip">{{ rangeLabel }}</span>
-        </div>
-
-        <div class="range-controls" role="group" aria-label="관찰 기간 선택">
+    <template v-else-if="record">
+      <section class="card period-tabs">
+        <div class="tabs-row" role="group" aria-label="관찰 기간 선택">
           <button
             v-for="option in TREND_RANGE_OPTIONS"
             :key="option.key"
             type="button"
-            class="range-button"
+            class="period-tab"
             :class="{ active: selectedRange === option.key }"
             :aria-pressed="selectedRange === option.key"
             @click="handleRangeSelect(option.key)"
@@ -243,106 +350,174 @@ const closeBucketDrawer = () => {
             {{ option.label }}
           </button>
         </div>
-
-        <WeeklyChart
-          :data="trendValues"
-          :labels="trendLabels"
-          :dates="trendDates"
-          :states="trendStates"
-          :highlights="highlightIndices"
-          :activeIndex="selectedIndex"
-          :y-state-labels="['안정', '변화', '저하', '미참여']"
-          @point-click="handlePointClick"
-        />
-
-        <p class="chart-note">{{ selectedBucketLabel }}</p>
-        <p class="chart-note">{{ selectedBucketStateText }}</p>
-        <p v-if="trendError" class="chart-note error">{{ trendError }}</p>
-
-        <div class="summary-alert-grid">
-          <article
-            v-for="alert in summaryAlerts"
-            :key="alert.id"
-            class="summary-alert-card"
-            :class="{ focused: focusedAxis === alert.axis }"
-            @click="handleAxisFocus(alert.axis)"
-          >
-            <div class="summary-alert-head">
-              <span class="axis-tag">{{ alert.tagLabel }}</span>
-              <span class="tone-tag">{{ getAlertToneLabel(alert.tone) }}</span>
-            </div>
-            <p class="summary-alert-title">{{ alert.titleLine }}</p>
-            <p class="summary-alert-action">{{ alert.actionLine }}</p>
-          </article>
-        </div>
-
-        <button type="button" class="drawer-open-button" @click="openBucketDrawer">
-          지난 기간 흐름 더 보기
-        </button>
+        <p class="date-range-label">{{ dateRangeLabel }}</p>
       </section>
 
-      <section v-else class="panel-card">
-        <div class="panel-header">
-          <div>
-            <h3>급격 변화 모니터링</h3>
-            <p class="panel-sub">{{ monitoringStatusText }}</p>
-          </div>
-          <span class="kind-chip">실시간 감지</span>
+      <section class="card">
+        <header class="trend-head">
+          <h3>기간 추세</h3>
+          <span class="status-badge" :class="statusToneClass">{{ record.periodSummary.status }}</span>
+        </header>
+        <p class="trend-evidence">
+          {{ record.periodSummary.evidenceMetrics }}
+          <span class="strength-chip">{{ trendStrength }}</span>
+        </p>
+        <p class="trend-headline">{{ trendHeadline }}</p>
+
+        <div class="quick-stats">
+          <span v-for="stat in quickStats" :key="stat" class="quick-stat-chip">{{ stat }}</span>
         </div>
 
-        <p class="external-note">외부 발송은 아직 연결하지 않고, 앱 내부 알림만 표시하고 있습니다.</p>
-        <p class="range-note">{{ rangeLabel }}</p>
+        <div class="chart-legend-row" aria-label="차트 범례">
+          <span class="legend-item"><i class="dot"></i>상태점</span>
+          <span class="legend-item"><i class="ring"></i>선택됨</span>
+          <span class="legend-item danger"><i class="square"></i>미측정</span>
+        </div>
 
-        <div v-if="monitoringAlerts.length" class="monitoring-list">
+        <div class="trend-chart-viewport">
+          <div class="trend-chart-canvas">
+            <WeeklyChart
+              :data="trendValues"
+              :states="trendStates"
+              :dates="trendDates"
+              :labels="trendLabels"
+              :highlights="highlightIndices"
+              :active-index="selectedPointIndex"
+              :padding-left-px="66"
+              :padding-right-px="28"
+              :y-state-labels="['안정', '변화', '저하', '미측정']"
+              @point-click="handlePointSelect"
+            />
+          </div>
+        </div>
+
+        <section v-if="selectedDayDetail" class="selected-detail-card">
+          <header class="selected-detail-head">
+            <span class="selected-date-chip">{{ selectedDayDetail.dateText }}</span>
+            <span class="selected-level-chip" :class="selectedDayDetail.level">
+              {{ selectedDayDetail.levelText }}
+            </span>
+          </header>
+          <p class="selected-detail-text">근거: {{ selectedDayDetail.evidenceText }}</p>
+          <div class="selected-detail-metrics">
+            <span class="detail-chip">중단 {{ selectedDayDetail.interruptions }}회</span>
+            <span class="detail-chip">반응지연 +{{ selectedDayDetail.responseDelayPercent }}%</span>
+            <span v-if="selectedDayDetail.participationGap" class="detail-chip danger">미측정</span>
+          </div>
+        </section>
+
+        <button type="button" class="cta-button" @click="openInterpretationSheet">차트 해석 보기</button>
+      </section>
+
+      <section class="card">
+        <h3>관찰 포인트</h3>
+        <div class="observation-grid">
           <article
-            v-for="alert in monitoringAlerts"
-            :key="alert.id"
-            class="monitoring-item"
-            :class="{ focused: focusedAxis === alert.axis }"
-            @click="handleAxisFocus(alert.axis)"
+            v-for="item in observationCards"
+            :key="item.domain"
+            class="observation-card"
           >
-            <div class="monitoring-head">
-              <span class="kind-tag">{{ getAlertKindLabel(alert.kind) }}</span>
-              <span class="axis-tag">{{ alert.tagLabel }}</span>
-              <span class="tone-tag">{{ getAlertToneLabel(alert.tone) }}</span>
+            <header class="observation-head">
+              <span class="domain-tag">{{ DOMAIN_LABEL[item.domain] }}</span>
+              <span class="severity-badge">{{ item.severity }}</span>
+            </header>
+            <p class="observation-title">{{ item.title }}</p>
+            <p class="observation-metrics">{{ item.deltaMetrics }}</p>
+
+            <div class="observation-inline">
+              <p class="inline-title">근거 로그</p>
+              <ul class="inline-list">
+                <li v-for="log in item.evidenceLogs.slice(0, 3)" :key="`${item.domain}-${log.date}-${log.detail}`">
+                  {{ toMonthDay(log.date) }} · {{ log.detail }}
+                </li>
+                <li v-if="!item.evidenceLogs.length" class="inline-empty">기록된 로그가 없습니다.</li>
+              </ul>
             </div>
-            <p class="monitoring-title">{{ alert.titleLine }}</p>
-            <p class="monitoring-action">{{ alert.actionLine }}</p>
+
+            <div class="observation-inline">
+              <p class="inline-title">권장 행동</p>
+              <ul class="inline-list">
+                <li v-for="action in item.actions.slice(0, 2)" :key="`${item.domain}-${action}`">{{ action }}</li>
+                <li v-if="!item.actions.length" class="inline-empty">표시할 권장 행동이 없습니다.</li>
+              </ul>
+            </div>
           </article>
         </div>
-        <p v-else class="monitoring-empty">
-          지금은 급격한 변화가 감지되지 않았습니다. 기간 요약 탭에서 장기 흐름을 함께 확인해보세요.
-        </p>
+      </section>
+
+      <section class="card">
+        <h3>눈여겨볼 변화</h3>
+        <p class="section-desc">최근 24~48시간의 변화</p>
+        <div class="notable-grid">
+          <article v-for="item in notableChanges" :key="`${item.domain}-${item.whenLabel}-${item.title}`" class="notable-card">
+            <header class="notable-head">
+              <span class="domain-tag">{{ DOMAIN_LABEL[item.domain] }}</span>
+              <span class="when-label">{{ item.whenLabel }}</span>
+            </header>
+            <p class="notable-title">{{ item.title }}</p>
+            <p class="notable-action">{{ item.actionTip }}</p>
+          </article>
+        </div>
       </section>
     </template>
 
+    <p v-if="error" class="error-text">{{ error }}</p>
+
     <teleport to="body">
-      <div v-if="isBucketDrawerOpen" class="drawer-overlay" @click.self="closeBucketDrawer">
-        <section class="bucket-drawer" role="dialog" aria-modal="true" aria-label="지난 기간 흐름">
-          <div class="drawer-header">
-            <h4>지난 기간 흐름</h4>
-            <button type="button" class="drawer-close" @click="closeBucketDrawer">닫기</button>
-          </div>
-          <p class="drawer-sub">각 버킷은 기간 평균 관찰을 의미합니다.</p>
-          <div class="bucket-list">
-            <article v-for="item in bucketHistoryItems" :key="item.id" class="bucket-item">
-              <p class="bucket-range">{{ item.axisLabel }}</p>
-              <p class="bucket-state">{{ item.stateText }}</p>
-              <div class="bucket-flags">
-                <span v-if="item.hasAnomaly" class="bucket-flag">변화 감지</span>
-                <span v-if="item.hasMissing" class="bucket-flag">기록 공백</span>
+      <div v-if="interpretationSheetOpen && record" class="sheet-overlay" @click.self="closeInterpretationSheet">
+        <section class="sheet-card" role="dialog" aria-modal="true" aria-label="차트 해석">
+          <header class="sheet-header">
+            <h4>차트 해석</h4>
+            <button type="button" class="sheet-close" @click="closeInterpretationSheet">닫기</button>
+          </header>
+
+          <section class="sheet-section open">
+            <h5>요약</h5>
+            <p><strong>상태:</strong> {{ record.periodSummary.status }}</p>
+            <p><strong>근거:</strong> {{ record.periodSummary.evidenceMetrics }}</p>
+            <p><strong>권장 행동:</strong> {{ record.periodSummary.recommendedAction }}</p>
+          </section>
+
+          <section class="sheet-section">
+            <button type="button" class="section-toggle" @click="toggleCompareSection">
+              기간 비교 수치 {{ compareSectionOpen ? "접기" : "펼치기" }}
+            </button>
+            <div v-if="compareSectionOpen" class="compare-table">
+              <div class="row head">
+                <span>항목</span>
+                <span>이번 기간</span>
+                <span>이전 기간</span>
               </div>
-            </article>
-          </div>
+              <div v-for="row in record.periodSummary.comparisonRows.slice(0, 3)" :key="row.label" class="row">
+                <span>{{ row.label }}</span>
+                <span>{{ row.current }}</span>
+                <span>{{ row.previous }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="sheet-section">
+            <button type="button" class="section-toggle" @click="toggleRawLogSection">
+              원시 로그 {{ rawLogSectionOpen ? "접기" : "펼치기" }}
+            </button>
+            <ul v-if="rawLogSectionOpen" class="raw-log-list">
+              <li v-for="log in record.rawLogs" :key="`${log.date}-${log.detail}`">
+                {{ toMonthDay(log.date) }} · {{ log.detail }}
+              </li>
+            </ul>
+          </section>
         </section>
       </div>
     </teleport>
+
   </div>
 </template>
 
 <style scoped>
 .history-container {
   --card-surface: #f7f9fa;
+  --card-radius: 20px;
+  --card-gap: 16px;
   --card-elevation-main:
     0 10px 22px rgba(126, 140, 154, 0.18),
     0 3px 8px rgba(126, 140, 154, 0.11),
@@ -350,29 +525,34 @@ const closeBucketDrawer = () => {
   --card-elevation-sub:
     0 8px 16px rgba(126, 140, 154, 0.14),
     0 2px 6px rgba(126, 140, 154, 0.1);
-  --card-elevation-hover:
-    0 11px 20px rgba(126, 140, 154, 0.16),
-    0 4px 10px rgba(126, 140, 154, 0.12);
   display: grid;
-  gap: 18px;
+  gap: var(--card-gap);
   width: 100%;
-  max-width: 100%;
-  min-height: 100%;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+}
+
+.card {
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-elevation-main);
+  background: var(--card-surface);
+  padding: 16px 16px 14px;
+  display: grid;
+  gap: 12px;
 }
 
 .loading {
   display: flex;
-  justify-content: center;
   align-items: center;
-  height: 220px;
+  justify-content: center;
+  min-height: 220px;
 }
 
 .spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #d9e0e3;
-  border-top-color: #4cb7b7;
-  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  border: 4px solid #d9e1e6;
+  border-top-color: #4aa9aa;
+  border-radius: 999px;
   animation: spin 1s linear infinite;
 }
 
@@ -382,387 +562,515 @@ const closeBucketDrawer = () => {
   }
 }
 
-.tab-card,
-.panel-card {
-  background: var(--card-surface);
-  border-radius: 22px;
-  box-shadow: var(--card-elevation-main);
-}
-
-.tab-card {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.period-tabs {
   gap: 8px;
-  padding: 10px;
+  padding-top: 10px;
+  padding-bottom: 9px;
 }
 
-.tab-button {
-  border: none;
-  border-radius: 999px;
-  padding: 8px 12px;
-  background: #eef3f5;
-  color: #56636c;
-  font-size: 14px;
+.tabs-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.period-tab {
+  border: 1px solid #cad7e0;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 7px 7px;
+  font-size: clamp(14px, 1.2vw, 17px);
   font-weight: 800;
+  color: #57646d;
   cursor: pointer;
-  box-shadow: inset 2px 2px 4px rgba(129, 142, 153, 0.2), inset -2px -2px 4px rgba(255, 255, 255, 0.95);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+  transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease;
 }
 
-.tab-button:hover {
-  transform: translateY(-1px);
+.period-tab.active {
+  background: #cfecec;
+  color: #1f5a5b;
+  font-weight: 700;
+  border-color: #7ec5c6;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.tab-button.active {
+.date-range-label {
+  margin: 0;
+  font-size: clamp(14px, 1.1vw, 16px);
+  font-weight: 600;
+  color: #5f6f79;
+}
+
+h3 {
+  margin: 0;
+  font-size: clamp(23px, 2.2vw, 30px);
+  font-weight: 900;
+  color: #2e2e2e;
+}
+
+.trend-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-badge {
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: clamp(14px, 1.1vw, 18px);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.status-badge.stable {
+  background: rgba(76, 183, 183, 0.16);
+  color: #1f5f5f;
+}
+
+.status-badge.alert {
+  background: rgba(255, 183, 77, 0.24);
+  color: #c77715;
+}
+
+.status-badge.danger {
+  background: rgba(255, 138, 128, 0.22);
+  color: #b65048;
+}
+
+.trend-evidence {
+  margin: 0;
+  font-size: clamp(17px, 1.7vw, 22px);
+  font-weight: 800;
+  color: #344652;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.strength-chip {
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #fff2d8;
+  color: #9e6824;
+  font-size: clamp(12px, 1vw, 14px);
+  font-weight: 800;
+}
+
+.trend-headline {
+  margin: 0;
+  font-size: clamp(15px, 1.3vw, 18px);
+  font-weight: 800;
+  color: #4a5c68;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-stats {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  row-gap: 8px;
+  margin: 0;
+}
+
+.quick-stat-chip {
+  border-radius: 999px;
+  border: 1px solid #cfdce6;
+  background: #f8fbfb;
+  color: #4e5d67;
+  font-size: clamp(13px, 1.1vw, 15px);
+  font-weight: 800;
+  padding: 5px 10px;
+  min-width: 98px;
+  text-align: center;
+}
+
+.chart-legend-row {
+  display: inline-flex;
+  justify-self: start;
+  flex-wrap: wrap;
+  gap: 9px;
+  border-radius: 999px;
+  background: rgba(247, 249, 250, 0.96);
+  border: 1px solid #d4e2ea;
+  padding: 6px 10px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: clamp(12px, 0.9vw, 14px);
+  font-weight: 700;
+  color: #4e5e68;
+}
+
+.legend-item.danger {
+  color: #b04e47;
+}
+
+.dot,
+.ring,
+.square {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+}
+
+.dot {
+  border-radius: 999px;
+  background: #4cb7b7;
+}
+
+.ring {
+  border-radius: 999px;
+  border: 2.4px solid #35596e;
+}
+
+.square {
+  border: 2px solid #bd554e;
+  background: #ffb8b0;
+}
+
+.trend-chart-viewport {
+  width: 100%;
+  overflow: hidden;
+}
+
+.trend-chart-canvas {
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
+.selected-detail-card {
+  border-radius: 14px;
+  background: #f8fbfb;
+  box-shadow: var(--card-elevation-sub);
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.selected-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.selected-date-chip,
+.selected-level-chip {
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: clamp(12px, 1vw, 14px);
+  font-weight: 800;
+}
+
+.selected-date-chip {
+  background: #eaf1f4;
+  color: #4f5f69;
+}
+
+.selected-level-chip.stable {
+  background: rgba(76, 183, 183, 0.16);
+  color: #1f5f5f;
+}
+
+.selected-level-chip.change {
+  background: rgba(255, 183, 77, 0.24);
+  color: #c77715;
+}
+
+.selected-level-chip.decline {
+  background: rgba(255, 138, 128, 0.24);
+  color: #b65048;
+}
+
+.selected-level-chip.missing {
+  background: rgba(185, 64, 58, 0.2);
+  color: #a43a34;
+}
+
+.selected-detail-text {
+  margin: 0;
+  font-size: clamp(15px, 1.2vw, 18px);
+  font-weight: 800;
+  color: #3f4f59;
+}
+
+.selected-detail-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.detail-chip {
+  border-radius: 999px;
+  border: 1px solid #cad7e0;
+  background: #ffffff;
+  color: #4f5f69;
+  padding: 4px 9px;
+  font-size: clamp(12px, 1vw, 14px);
+  font-weight: 800;
+}
+
+.detail-chip.danger {
+  border-color: #c6635d;
+  background: #ffe8e5;
+  color: #a43a34;
+}
+
+.cta-button {
+  border: none;
+  border-radius: 14px;
   background: #4cb7b7;
   color: #ffffff;
-  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.25);
+  font-size: clamp(16px, 1.4vw, 20px);
+  font-weight: 900;
+  padding: 12px 18px;
+  justify-self: start;
+  cursor: pointer;
+  box-shadow: 0 8px 16px rgba(76, 183, 183, 0.28);
 }
 
-.panel-card {
-  padding: 18px 16px;
+.observation-grid,
+.notable-grid {
   display: grid;
   gap: 12px;
 }
 
-.panel-header {
+.observation-card,
+.notable-card {
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-elevation-sub);
+  background: #f8fbfb;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.observation-head,
+.notable-head {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.panel-header h3 {
-  margin: 0;
-  font-size: 21px;
-  font-weight: 900;
-  color: #2e2e2e;
-}
-
-.panel-sub {
-  margin: 6px 0 0;
-  font-size: 15px;
-  color: #5a666f;
-  line-height: 1.5;
-}
-
-.range-chip,
-.kind-chip {
-  display: inline-flex;
   align-items: center;
-  border-radius: 999px;
-  padding: 7px 11px;
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.range-chip {
-  color: #4f6b7a;
-  background: #eef3f5;
-}
-
-.kind-chip {
-  color: #2e8f8f;
-  background: rgba(76, 183, 183, 0.16);
-}
-
-.range-controls {
-  display: inline-flex;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
-.range-button {
-  border: none;
+.domain-tag,
+.severity-badge,
+.when-label {
   border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 14px;
-  font-weight: 800;
-  color: #5f6b73;
-  background: #eef3f5;
-  box-shadow: inset 2px 2px 4px rgba(129, 142, 153, 0.2), inset -2px -2px 4px rgba(255, 255, 255, 0.95);
-  cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, color 0.18s ease;
-}
-
-.range-button:hover {
-  transform: translateY(-1px);
-}
-
-.range-button.active {
-  color: #ffffff;
-  background: #4cb7b7;
-  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.28);
-}
-
-.chart-note {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.45;
-  color: #66737c;
-}
-
-.chart-note.error {
-  color: #d87a71;
-}
-
-.summary-alert-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.summary-alert-card {
-  border: none;
-  border-radius: 16px;
-  background: #f8fbfb;
-  box-shadow: var(--card-elevation-sub);
-  padding: 12px 13px;
-  display: grid;
-  gap: 8px;
-  cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-}
-
-.summary-alert-card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--card-elevation-hover);
-}
-
-.summary-alert-card.focused {
-  box-shadow:
-    0 0 0 2px rgba(76, 183, 183, 0.2),
-    var(--card-elevation-sub);
-}
-
-.summary-alert-head,
-.monitoring-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  align-items: center;
-}
-
-.axis-tag,
-.tone-tag,
-.kind-tag {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 4px 9px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: clamp(12px, 1vw, 14px);
   font-weight: 800;
 }
 
-.axis-tag {
+.domain-tag {
   background: #eaf1f4;
-  color: #55626b;
+  color: #56626b;
 }
 
-.tone-tag {
-  background: rgba(130, 130, 130, 0.14);
-  color: #616b72;
-}
-
-.kind-tag {
+.severity-badge {
   background: rgba(255, 183, 77, 0.2);
-  color: #b57d2d;
+  color: #a26e24;
 }
 
-.summary-alert-title,
-.monitoring-title {
+.when-label {
+  background: rgba(255, 183, 77, 0.2);
+  color: #9a712f;
+}
+
+.observation-title,
+.notable-title {
   margin: 0;
-  font-size: 16px;
+  font-size: clamp(19px, 1.8vw, 24px);
   font-weight: 900;
-  line-height: 1.45;
-  color: #30363a;
+  color: #253949;
+  line-height: 1.35;
 }
 
-.summary-alert-action,
-.monitoring-action {
+.observation-metrics,
+.section-desc,
+.notable-action {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #4f5d66;
+  font-size: clamp(15px, 1.2vw, 18px);
+  font-weight: 700;
+  color: #4f616c;
+  line-height: 1.45;
 }
 
-.drawer-open-button {
-  border: none;
-  border-radius: 999px;
-  justify-self: start;
-  background: #e6f2f1;
-  color: #2e8f8f;
-  font-size: 13px;
+.observation-inline {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid #dde7ee;
+  padding-top: 6px;
+}
+
+.inline-title {
+  margin: 0;
+  font-size: clamp(13px, 1vw, 15px);
   font-weight: 800;
-  padding: 8px 13px;
-  cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+  color: #4d5d67;
 }
 
-.drawer-open-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 12px rgba(76, 183, 183, 0.2);
-}
-
-.external-note,
-.range-note {
+.inline-list {
   margin: 0;
-  font-size: 14px;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.inline-list li {
+  font-size: clamp(13px, 1vw, 15px);
+  font-weight: 700;
+  color: #5c6b74;
   line-height: 1.45;
-  color: #66737c;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
-.monitoring-list {
-  display: grid;
-  gap: 10px;
+.inline-empty {
+  list-style: none;
+  margin-left: -16px;
+  color: #78868f;
 }
 
-.monitoring-item {
-  border-radius: 16px;
-  padding: 12px 13px;
-  background: #f8fbfb;
-  box-shadow: var(--card-elevation-sub);
-  display: grid;
-  gap: 8px;
-  cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+.notable-action {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.monitoring-item:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--card-elevation-hover);
-}
-
-.monitoring-item.focused {
-  box-shadow:
-    0 0 0 2px rgba(255, 183, 77, 0.25),
-    var(--card-elevation-sub);
-}
-
-.monitoring-empty {
+.error-text {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #66737c;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: clamp(14px, 1.1vw, 16px);
+  font-weight: 600;
+  color: #a94944;
+  background: #ffeceb;
 }
 
-.drawer-overlay {
+.sheet-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(22, 32, 40, 0.45);
+  background: rgba(24, 32, 40, 0.48);
+  z-index: 500;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  z-index: 500;
 }
 
-.bucket-drawer {
-  width: min(560px, 100%);
-  max-height: min(72vh, 620px);
-  background: #f7f9fa;
+.sheet-card {
+  width: min(620px, 100%);
+  max-height: min(78vh, 680px);
+  overflow: auto;
   border-top-left-radius: 20px;
   border-top-right-radius: 20px;
-  box-shadow: 0 -6px 18px rgba(30, 45, 55, 0.22);
-  padding: 14px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -6px 18px rgba(24, 32, 40, 0.2);
+  background: var(--card-surface);
+  padding: 16px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
-.drawer-header {
+.sheet-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.drawer-header h4 {
+.sheet-header h4 {
   margin: 0;
-  font-size: 18px;
+  font-size: clamp(20px, 1.8vw, 26px);
   font-weight: 900;
   color: #2e2e2e;
 }
 
-.drawer-close {
-  border: none;
-  border-radius: 999px;
-  background: #eaf1f4;
-  color: #55626b;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 6px 10px;
+.sheet-close,
+.section-toggle {
+  border: 1px solid #d7e3ea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334954;
+  font-size: clamp(13px, 1vw, 15px);
+  font-weight: 700;
+  padding: 8px 12px;
   cursor: pointer;
-  transition: transform 0.18s ease, background-color 0.18s ease;
 }
 
-.drawer-close:hover {
-  transform: translateY(-1px);
-  background: #e3ecef;
-}
-
-.drawer-sub {
-  margin: 0;
-  font-size: 13px;
-  color: #66737c;
-}
-
-.bucket-list {
-  max-height: min(58vh, 500px);
-  overflow: auto;
+.sheet-section {
+  border: 1px solid #e0e8ee;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
   display: grid;
-  gap: 9px;
-  padding-right: 4px;
+  gap: 8px;
 }
 
-.bucket-item {
-  border-radius: 14px;
-  background: #f8fbfb;
-  box-shadow: var(--card-elevation-sub);
-  padding: 11px 12px;
+.sheet-section h5 {
+  margin: 0;
+  font-size: clamp(17px, 1.4vw, 20px);
+  font-weight: 800;
+  color: #2d3f49;
+}
+
+.sheet-section p {
+  margin: 0;
+  font-size: clamp(14px, 1.1vw, 16px);
+  font-weight: 600;
+  color: #4d5e68;
+}
+
+.compare-table {
   display: grid;
   gap: 6px;
 }
 
-.bucket-range {
+.row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  gap: 8px;
+  font-size: clamp(14px, 1.1vw, 16px);
+  font-weight: 600;
+  color: #4d5e68;
+}
+
+.row.head {
+  font-weight: 700;
+  color: #334954;
+}
+
+.raw-log-list {
   margin: 0;
-  font-size: 13px;
-  font-weight: 800;
-  color: #5c6972;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
 }
 
-.bucket-state {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.45;
-  color: #45525b;
-}
-
-.bucket-flags {
-  display: flex;
-  gap: 7px;
-  flex-wrap: wrap;
-}
-
-.bucket-flag {
-  border-radius: 999px;
-  background: rgba(255, 183, 77, 0.2);
-  color: #b57d2d;
-  padding: 4px 9px;
-  font-size: 11px;
-  font-weight: 800;
+.raw-log-list li {
+  font-size: clamp(14px, 1.1vw, 16px);
+  font-weight: 600;
+  color: #4f5f69;
 }
 
 @media (max-width: 560px) {
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
+  .tabs-row {
+    gap: 6px;
   }
 
-  .panel-card {
-    padding: 16px 14px;
-  }
-
-  .summary-alert-title,
-  .monitoring-title {
-    font-size: 15px;
+  .period-tab {
+    font-size: 14px;
+    padding: 7px 4px;
   }
 }
 </style>

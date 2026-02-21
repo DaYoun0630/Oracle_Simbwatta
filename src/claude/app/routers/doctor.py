@@ -20,10 +20,11 @@ from ..schemas.recording import RecordingOut
 from ..schemas.assessment import VoiceAssessmentOut, MRIAssessmentOut
 from ..schemas.diagnosis import DiagnosisOut, DiagnosisCreate, DiagnosisUpdate
 from ..schemas.family import FamilyMemberOut, FamilyMemberCreate
+from ..storage import storage
 
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
 logger = logging.getLogger(__name__)
-MRI_RENDER_VERSION = "20260213-8"
+MRI_RENDER_VERSION = "20260220-1"
 SUBJECT_ID_PATTERN = re.compile(r"(\d{3}_S_\d{4})", re.IGNORECASE)
 MRI_DIAGNOSIS_COLUMN_MAP: Dict[str, str] = {
     "hippocampus_atrophy": "hippocampal_atrophy",
@@ -33,10 +34,20 @@ MRI_DIAGNOSIS_COLUMN_MAP: Dict[str, str] = {
     "frontal_lobe_atrophy": "frontal_atrophy",
     "parietal_lobe_atrophy": "parietal_atrophy",
 }
+MRI_STAGE_NORMALIZATION_MAP: Dict[str, str] = {
+    "CN": "CN",
+    "SMCI": "sMCI",
+    "EMCI": "sMCI",
+    "PMCI": "pMCI",
+    "LMCI": "pMCI",
+    "MCI": "MCI",
+    "AD": "AD",
+}
 
 
 class MRIDoctorDiagnosisPayload(BaseModel):
     diagnoses: List[str]
+    stage: Optional[str] = None
     additionalNotes: Optional[str] = None
     timestamp: Optional[datetime] = None
     doctorId: Optional[str] = None
@@ -178,6 +189,146 @@ def _extract_subject_id_from_text(value: Optional[str]) -> Optional[str]:
         return None
 
     return matched.group(0).upper()
+
+
+def _resolve_bucket_and_key(path: str, default_bucket: str = "mri-xai"):
+    raw = str(path or "").strip().replace("s3://", "")
+    if not raw:
+        raise ValueError("Object path is empty")
+    if "/" not in raw:
+        return default_bucket, raw
+
+    bucket, key = raw.split("/", 1)
+    known_buckets = {
+        "voice-recordings",
+        "voice-transcript",
+        "processed",
+        "mri-scans",
+        "exports",
+        "mri-preprocessed",
+        "mri-xai",
+        default_bucket,
+    }
+    if bucket in known_buckets:
+        return bucket, key
+    return default_bucket, raw
+
+
+def _normalize_plane_name(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("axi"):
+        return "axial"
+    if text.startswith("cor"):
+        return "coronal"
+    if text.startswith("sag"):
+        return "sagittal"
+    return "axial"
+
+
+def _resolve_attention_map_candidate(candidate: Any) -> Optional[tuple[str, str]]:
+    if isinstance(candidate, str) and candidate.strip():
+        try:
+            return _resolve_bucket_and_key(candidate.strip(), default_bucket="mri-xai")
+        except Exception:
+            return None
+
+    if isinstance(candidate, dict):
+        object_path = (
+            candidate.get("object")
+            or candidate.get("objectPath")
+            or candidate.get("attentionMapObject")
+        )
+        if isinstance(object_path, str) and object_path.strip():
+            try:
+                return _resolve_bucket_and_key(object_path.strip(), default_bucket="mri-xai")
+            except Exception:
+                return None
+
+        object_key = candidate.get("key") or candidate.get("attentionMapKey")
+        if isinstance(object_key, str) and object_key.strip():
+            bucket = candidate.get("bucket") or candidate.get("attentionMapBucket")
+            bucket_name = str(bucket).strip() if isinstance(bucket, str) and bucket.strip() else "mri-xai"
+            return bucket_name, object_key.strip()
+
+    return None
+
+
+def _resolve_attention_map_object(
+    ai_analysis: Dict[str, Any],
+    plane: str = "axial",
+    slide_index: int = 1,
+) -> Optional[tuple[str, str]]:
+    if not isinstance(ai_analysis, dict):
+        return None
+
+    target_plane = _normalize_plane_name(plane)
+    target_slide = max(1, int(slide_index))
+
+    attention_slides = ai_analysis.get("attentionSlides")
+    if isinstance(attention_slides, list) and attention_slides:
+        slide_idx = min(target_slide - 1, len(attention_slides) - 1)
+        slide_entry = attention_slides[slide_idx]
+        if isinstance(slide_entry, dict):
+            slide_views = slide_entry.get("views")
+
+            if isinstance(slide_views, dict):
+                candidate = (
+                    slide_views.get(target_plane)
+                    or slide_views.get(target_plane.capitalize())
+                    or slide_views.get(target_plane.upper())
+                )
+                resolved = _resolve_attention_map_candidate(candidate)
+                if resolved:
+                    return resolved
+
+            if isinstance(slide_views, list):
+                for entry in slide_views:
+                    if not isinstance(entry, dict):
+                        continue
+                    entry_plane = _normalize_plane_name(entry.get("plane"))
+                    if entry_plane != target_plane:
+                        continue
+                    resolved = _resolve_attention_map_candidate(entry)
+                    if resolved:
+                        return resolved
+
+    attention_maps = ai_analysis.get("attentionMaps")
+
+    if isinstance(attention_maps, dict):
+        candidate = (
+            attention_maps.get(target_plane)
+            or attention_maps.get(target_plane.capitalize())
+            or attention_maps.get(target_plane.upper())
+        )
+        resolved = _resolve_attention_map_candidate(candidate)
+        if resolved:
+            return resolved
+
+    if isinstance(attention_maps, list):
+        for entry in attention_maps:
+            if not isinstance(entry, dict):
+                continue
+            entry_plane = _normalize_plane_name(entry.get("plane"))
+            if entry_plane != target_plane:
+                continue
+            resolved = _resolve_attention_map_candidate(entry)
+            if resolved:
+                return resolved
+
+    object_path = ai_analysis.get("attentionMapObject")
+    if isinstance(object_path, str) and object_path.strip():
+        try:
+            return _resolve_bucket_and_key(object_path.strip(), default_bucket="mri-xai")
+        except Exception:
+            return None
+
+    object_key = ai_analysis.get("attentionMapKey")
+    if isinstance(object_key, str) and object_key.strip():
+        bucket = ai_analysis.get("attentionMapBucket")
+        bucket_name = str(bucket).strip() if isinstance(bucket, str) and bucket.strip() else "mri-xai"
+        return bucket_name, object_key.strip()
+
+    return None
 
 
 async def _resolve_mri_subject_id(patient_id: str) -> str:
@@ -352,6 +503,60 @@ def _extract_middle_slice_uint8(nifti_bytes: bytes):
     return _normalize_slice_uint8(volume[volume.shape[0] // 2])
 
 
+def _apply_axial_slice_shift(index: int, depth: int) -> int:
+    if depth <= 0:
+        return index
+    shift = int(os.getenv("MRI_AXIAL_SLICE_SHIFT", "0"))
+    shifted = index + shift
+    if shifted < 0:
+        return 0
+    if shifted >= depth:
+        return depth - 1
+    return shifted
+
+
+def _extract_plane_slice_uint8(nifti_bytes: bytes, plane: str = "axial"):
+    volume = _parse_nifti_volume_float32(nifti_bytes)
+    target_plane = _normalize_plane_name(plane)
+
+    if target_plane == "coronal":
+        idx = volume.shape[1] // 2
+        return _normalize_slice_uint8(volume[:, idx, :])
+    if target_plane == "sagittal":
+        idx = volume.shape[2] // 2
+        return _normalize_slice_uint8(volume[:, :, idx])
+
+    idx = volume.shape[0] // 2
+    return _normalize_slice_uint8(volume[idx, :, :])
+
+
+def _extract_representative_axial_slice_uint8(nifti_bytes: bytes):
+    """
+    Fallback slice selector when preprocessed reference is unavailable.
+    Pick a superior-biased representative axial slice instead of strict middle.
+    """
+    import numpy as np
+
+    volume = _parse_nifti_volume_float32(nifti_bytes)
+    profile = _foreground_profile(volume)
+    start, end = _profile_bounds(profile)
+    span = max(1, end - start)
+
+    rel_pos = float(os.getenv("MCI_ORIGINAL_SLICE_FALLBACK_REL_POS", "0.62"))
+    rel_pos = float(np.clip(rel_pos, 0.0, 1.0))
+    idx = int(round(start + (rel_pos * span)))
+    idx = _apply_axial_slice_shift(idx, volume.shape[0])
+
+    logger.info(
+        "Fallback original axial slice selected: idx=%s (bounds=%s..%s, rel=%.3f)",
+        idx,
+        start,
+        end,
+        rel_pos,
+    )
+    return _normalize_slice_uint8(volume[idx])
+
+
 def _resize_nearest(image_2d, out_h: int, out_w: int):
     import numpy as np
 
@@ -460,6 +665,7 @@ def _find_aligned_original_slice_uint8(original_nifti_bytes: bytes, preprocessed
         superior_bias_ratio,
         best_score,
     )
+    best_idx = _apply_axial_slice_shift(best_idx, original_vol.shape[0])
     return _normalize_slice_uint8(original_vol[best_idx])
 
 
@@ -858,6 +1064,7 @@ async def get_patient(patient_id: str):
             classification,
             confidence,
             ai_analysis as "aiAnalysis",
+            region_contributions as "regionContributions",
             file_path as "filePath"
         FROM mri_assessments
         WHERE patient_id = $1
@@ -870,9 +1077,14 @@ async def get_patient(patient_id: str):
     mri_analysis = None
     if mri:
         mri_dict = dict(mri)
-        ai_analysis = mri_dict.get("aiAnalysis")
-        if not isinstance(ai_analysis, dict):
-            ai_analysis = {}
+        ai_analysis = _as_dict(mri_dict.get("aiAnalysis"))
+        db_region_contributions = mri_dict.get("regionContributions")
+        if (
+            "regionContributions" not in ai_analysis
+            and isinstance(db_region_contributions, list)
+            and db_region_contributions
+        ):
+            ai_analysis["regionContributions"] = db_region_contributions
         if "regionContributions" not in ai_analysis:
             ai_analysis["regionContributions"] = [
                 {"region": "Hippocampus", "percentage": 35.0, "severity": "high"},
@@ -890,19 +1102,126 @@ async def get_patient(patient_id: str):
             # 원본은 DICOM -> NIfTI 변환본을 사용해서 표시한다.
             ai_analysis["originalImage"] = (
                 f"/api/doctor/patients/{current_front_patient_id}/mri/original-slice.png"
-                f"?rv={MRI_RENDER_VERSION}"
+                f"?plane=axial&rv={MRI_RENDER_VERSION}"
             )
+            ai_analysis["originalMaps"] = [
+                {
+                    "plane": "axial",
+                    "label": "Axial",
+                    "url": (
+                        f"/api/doctor/patients/{current_front_patient_id}/mri/original-slice.png"
+                        f"?plane=axial&rv={MRI_RENDER_VERSION}"
+                    ),
+                },
+                {
+                    "plane": "coronal",
+                    "label": "Coronal",
+                    "url": (
+                        f"/api/doctor/patients/{current_front_patient_id}/mri/original-slice.png"
+                        f"?plane=coronal&rv={MRI_RENDER_VERSION}"
+                    ),
+                },
+                {
+                    "plane": "sagittal",
+                    "label": "Sagittal",
+                    "url": (
+                        f"/api/doctor/patients/{current_front_patient_id}/mri/original-slice.png"
+                        f"?plane=sagittal&rv={MRI_RENDER_VERSION}"
+                    ),
+                },
+            ]
             ai_analysis["originalNifti"] = (
                 f"/api/doctor/patients/{current_front_patient_id}/mri/original-nii"
                 f"?rv={MRI_RENDER_VERSION}"
             )
 
-        if _find_preprocessed_nifti(mri_subject_id):
-            # 임시 비교용: Attention Map 슬롯에 전처리본 중간 슬라이스를 노출한다.
-            ai_analysis["attentionMap"] = (
+        attention_slides = []
+        raw_attention_slides = ai_analysis.get("attentionSlides")
+        if isinstance(raw_attention_slides, list):
+            for slide_pos, slide in enumerate(raw_attention_slides, start=1):
+                if not isinstance(slide, dict):
+                    continue
+
+                slide_views = []
+                for plane, label in (
+                    ("axial", "Axial"),
+                    ("coronal", "Coronal"),
+                    ("sagittal", "Sagittal"),
+                ):
+                    if _resolve_attention_map_object(ai_analysis, plane=plane, slide_index=slide_pos):
+                        slide_views.append(
+                            {
+                                "plane": plane,
+                                "label": label,
+                                "url": (
+                                    f"/api/doctor/patients/{current_front_patient_id}/mri/attention-map.png"
+                                    f"?plane={plane}&slide={slide_pos}&rv={MRI_RENDER_VERSION}"
+                                ),
+                            }
+                        )
+
+                if not slide_views:
+                    continue
+
+                attention_slides.append(
+                    {
+                        "rank": int(slide.get("rank") or slide_pos),
+                        "roi": slide.get("roi"),
+                        "description": slide.get("description"),
+                        "score": slide.get("score"),
+                        "percentage": slide.get("percentage"),
+                        "severity": slide.get("severity"),
+                        "views": slide_views,
+                    }
+                )
+
+        if attention_slides:
+            ai_analysis["attentionSlides"] = attention_slides
+            first_slide_views = attention_slides[0].get("views")
+            if isinstance(first_slide_views, list) and first_slide_views:
+                ai_analysis["attentionMaps"] = first_slide_views
+                axial_view = next(
+                    (entry for entry in first_slide_views if entry.get("plane") == "axial"),
+                    first_slide_views[0],
+                )
+                ai_analysis["attentionMap"] = axial_view.get("url")
+        else:
+            attention_maps = []
+            for plane, label in (
+                ("axial", "Axial"),
+                ("coronal", "Coronal"),
+                ("sagittal", "Sagittal"),
+            ):
+                if _resolve_attention_map_object(ai_analysis, plane=plane):
+                    attention_maps.append(
+                        {
+                            "plane": plane,
+                            "label": label,
+                            "url": (
+                                f"/api/doctor/patients/{current_front_patient_id}/mri/attention-map.png"
+                                f"?plane={plane}&rv={MRI_RENDER_VERSION}"
+                            ),
+                        }
+                    )
+
+            if attention_maps:
+                ai_analysis["attentionMaps"] = attention_maps
+                ai_analysis["attentionMap"] = attention_maps[0]["url"]
+
+        if not attention_slides and "attentionMaps" not in ai_analysis and _find_preprocessed_nifti(mri_subject_id):
+            # CAM이 없을 때 fallback: 전처리본 중간 슬라이스를 노출한다.
+            fallback_attention = (
                 f"/api/doctor/patients/{current_front_patient_id}/mri/preprocessed-slice.png"
                 f"?rv={MRI_RENDER_VERSION}"
             )
+            ai_analysis["attentionMap"] = fallback_attention
+            ai_analysis["attentionMaps"] = [
+                {
+                    "plane": "axial",
+                    "label": "Axial",
+                    "url": fallback_attention,
+                }
+            ]
 
         mri_analysis = {
             "scanDate": mri_dict.get("scanDate"),
@@ -1087,25 +1406,80 @@ async def get_original_nifti(patient_id: str):
     )
 
 
+@router.get("/patients/{patient_id}/mri/attention-map.png")
+async def get_attention_map_png(
+    patient_id: str,
+    plane: str = Query("axial", description="axial | coronal | sagittal"),
+    slide: int = Query(1, ge=1, le=50, description="ROI slide index (1-based)"),
+):
+    """Return latest CAM attention map image from ai_analysis, with preprocessed-slice fallback."""
+    row = await db.fetchrow(
+        """
+        SELECT ma.ai_analysis AS "aiAnalysis"
+        FROM mri_assessments ma
+        JOIN patients p ON p.user_id = ma.patient_id
+        WHERE p.subject_id = $1 OR p.user_id::text = $1
+        ORDER BY ma.scan_date DESC NULLS LAST, ma.created_at DESC
+        LIMIT 1
+        """,
+        patient_id,
+    )
+
+    ai_analysis = _as_dict(dict(row).get("aiAnalysis")) if row else {}
+    if ai_analysis:
+        requested_plane = _normalize_plane_name(plane)
+        resolved = _resolve_attention_map_object(ai_analysis, plane=requested_plane, slide_index=slide)
+        if not resolved and requested_plane != "axial":
+            resolved = _resolve_attention_map_object(ai_analysis, plane="axial", slide_index=slide)
+        if resolved:
+            bucket, key = resolved
+            response = None
+            try:
+                response = storage.client.get_object(bucket, key)
+                payload = response.read()
+            except Exception as exc:
+                logger.warning("Failed to read attention map from MinIO (%s/%s): %s", bucket, key, exc)
+            else:
+                if payload:
+                    return Response(
+                        content=payload,
+                        media_type="image/png",
+                        headers={"Cache-Control": "no-store"},
+                    )
+            finally:
+                if response is not None:
+                    response.close()
+                    response.release_conn()
+
+    # Fallback for rows without CAM artifacts.
+    return await get_preprocessed_nifti_slice_png(patient_id)
+
+
 @router.get("/patients/{patient_id}/mri/original-slice.png")
-async def get_original_nifti_slice_png(patient_id: str):
-    """Render a middle axial slice from original MRI (DICOM -> NIfTI) and return PNG bytes."""
+async def get_original_nifti_slice_png(
+    patient_id: str,
+    plane: str = Query("axial", description="axial | coronal | sagittal"),
+):
+    """Render representative original MRI slice for the requested plane and return PNG bytes."""
     subject_id = await _resolve_subject_id(patient_id)
     nii_path = _get_or_build_original_nifti(subject_id)
     if not nii_path:
         raise HTTPException(status_code=404, detail=f"Original MRI (DICOM) not found for subject_id={subject_id}")
 
     try:
+        target_plane = _normalize_plane_name(plane)
         raw_original_nifti = _read_nifti_bytes(nii_path)
         preprocessed_path = _find_preprocessed_nifti(subject_id)
-        if preprocessed_path:
+        if preprocessed_path and target_plane == "axial":
             raw_preprocessed_nifti = _read_nifti_bytes(preprocessed_path)
             image_2d = _find_aligned_original_slice_uint8(
                 raw_original_nifti,
                 raw_preprocessed_nifti,
             )
+        elif target_plane == "axial":
+            image_2d = _extract_representative_axial_slice_uint8(raw_original_nifti)
         else:
-            image_2d = _extract_middle_slice_uint8(raw_original_nifti)
+            image_2d = _extract_plane_slice_uint8(raw_original_nifti, target_plane)
         png_bytes = _encode_png_gray8(image_2d)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to render NIfTI slice: {exc}") from exc
@@ -1194,6 +1568,13 @@ async def submit_mri_doctor_diagnosis(
     payload: MRIDoctorDiagnosisPayload,
 ):
     """Persist doctor-confirmed MRI diagnosis checkboxes as boolean flags."""
+    normalized_stage = None
+    if payload.stage is not None:
+        stage_token = re.sub(r"[\s_-]+", "", str(payload.stage).strip()).upper()
+        normalized_stage = MRI_STAGE_NORMALIZATION_MAP.get(stage_token)
+        if not normalized_stage:
+            raise HTTPException(status_code=400, detail="Invalid MRI stage. Use CN/sMCI/pMCI/AD.")
+
     patient = await db.fetchrow(
         """
         SELECT user_id
@@ -1226,6 +1607,7 @@ async def submit_mri_doctor_diagnosis(
     }
 
     diagnosis_summary = {
+        "stage": normalized_stage,
         "diagnoses": sorted(selected),
         "additionalNotes": (payload.additionalNotes or "").strip(),
         "timestamp": (payload.timestamp or datetime.utcnow()).isoformat(),
@@ -1265,9 +1647,25 @@ async def submit_mri_doctor_diagnosis(
         dict(latest_assessment).get("assessment_id"),
     )
 
+    patient_update = None
+    if normalized_stage:
+        patient_update = await db.fetchrow(
+            """
+            UPDATE patients
+            SET mci_subtype = $1,
+                updated_at = NOW()
+            WHERE user_id = $2
+            RETURNING user_id, mci_subtype, updated_at
+            """,
+            normalized_stage,
+            user_id,
+        )
+
     return {
         "status": "ok",
         "patient_id": user_id,
+        "mci_subtype": normalized_stage,
+        "patient": dict(patient_update) if patient_update else None,
         "assessment": dict(updated) if updated else None,
     }
 

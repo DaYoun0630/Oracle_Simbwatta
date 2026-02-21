@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { updateAuthProfile } from '@/api/settings';
 import CaregiverShell from '@/components/shells/CaregiverShell.vue';
 import DoctorShell from '@/components/shells/DoctorShell.vue';
 import SubjectShell from '@/components/shells/SubjectShell.vue';
@@ -18,8 +19,14 @@ const phoneNumber = ref(
   || localStorage.getItem('user-phone')
   || ''
 );
-const avatarUrl = ref(localStorage.getItem('user-avatar') || null);
+const avatarUrl = ref(
+  authStore.user?.profile_image_url
+  || authStore.user?.profileImageUrl
+  || localStorage.getItem('user-avatar')
+  || null
+);
 const memberActionMessage = ref('');
+const saveMessage = ref('');
 const MEMBER_CODE_MODULUS = 1000000;
 const MEMBER_CODE_MULTIPLIER = 741457;
 const MEMBER_CODE_INCREMENT = 193939;
@@ -102,30 +109,54 @@ const shareMemberNumber = async () => {
   }
 };
 
-const saveChanges = () => {
-  if (userName.value) {
-    authStore.setUser({
-      ...(authStore.user || {}),
-      name: userName.value,
-      phone_number: phoneNumber.value || null,
-      role: role.value || 'subject'
-    });
-  } else if (authStore.user) {
-    authStore.setUser({
-      ...authStore.user,
-      phone_number: phoneNumber.value || null,
-      role: role.value || 'subject'
-    });
-  }
-  if (phoneNumber.value) {
-    localStorage.setItem('user-phone', phoneNumber.value);
+const saveChanges = async () => {
+  const trimmedName = userName.value.trim();
+  const phone = phoneNumber.value.trim();
+
+  if (phone) {
+    localStorage.setItem('user-phone', phone);
   } else {
     localStorage.removeItem('user-phone');
   }
   if (avatarUrl.value) {
     localStorage.setItem('user-avatar', avatarUrl.value);
   }
-  router.back();
+
+  try {
+    if (authStore.token) {
+      const payload = {
+        phone_number: phone || null,
+      };
+      if (trimmedName) {
+        payload.name = trimmedName;
+      }
+      if (typeof avatarUrl.value === 'string') {
+        const avatarCandidate = avatarUrl.value.trim();
+        if (avatarCandidate && !avatarCandidate.startsWith('data:') && avatarCandidate.length <= 500) {
+          payload.profile_image_url = avatarCandidate;
+        }
+      }
+
+      const updatedUser = await updateAuthProfile(authStore.token, payload);
+      authStore.setUser({
+        ...(authStore.user || {}),
+        ...updatedUser,
+      });
+    } else if (authStore.user) {
+      authStore.setUser({
+        ...authStore.user,
+        ...(trimmedName ? { name: trimmedName } : {}),
+        phone_number: phone || null,
+        role: role.value || 'subject'
+      });
+    }
+
+    saveMessage.value = '';
+    router.back();
+  } catch (error) {
+    console.error('Failed to save personal profile:', error);
+    saveMessage.value = error instanceof Error ? `저장 실패: ${error.message}` : '저장에 실패했습니다.';
+  }
 };
 </script>
 
@@ -191,6 +222,8 @@ const saveChanges = () => {
         </div>
         <p v-if="memberActionMessage" class="member-message">{{ memberActionMessage }}</p>
       </section>
+
+      <p v-if="saveMessage" class="save-message">{{ saveMessage }}</p>
 
       <button class="save-button" @click="saveChanges">
         저장하기
@@ -347,6 +380,14 @@ const saveChanges = () => {
   font-size: 13px;
   color: #4c7d7d;
   font-weight: 700;
+}
+
+.save-message {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ff7b7b;
+  text-align: center;
 }
 
 .save-button {

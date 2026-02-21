@@ -71,6 +71,15 @@ type AttentionMapItem = {
   url: string;
 };
 
+type AttentionSlideItem = {
+  rank: number;
+  roi?: string;
+  description?: string;
+  score?: number | null;
+  percentage?: number | null;
+  views: AttentionMapItem[];
+};
+
 type DataAvailability = {
   hasCognitiveTests: boolean;
   hasMMSE: boolean;
@@ -529,7 +538,10 @@ const voiceChartDailyParticipation = computed(() => {
 const mriAnalysis = computed(() => props.data?.mriAnalysis || null);
 
 const aiAnalysis = computed(() => mriAnalysis.value?.aiAnalysis || null);
-const buildMriSliceEndpoint = (sliceType: 'original-slice' | 'preprocessed-slice') => {
+const buildMriSliceEndpoint = (
+  sliceType: 'original-slice' | 'preprocessed-slice',
+  plane?: AttentionMapItem['plane']
+) => {
   const patientId =
     currentPatient.value?.id ??
     props.data?.currentPatient?.id ??
@@ -546,14 +558,16 @@ const buildMriSliceEndpoint = (sliceType: 'original-slice' | 'preprocessed-slice
     aiAnalysis.value?.generatedAt ??
     props.data?.lastUpdateDate ??
     '';
-  const rv = rvCandidate ? `?rv=${encodeURIComponent(String(rvCandidate))}` : '';
-
-  return `/api/doctor/patients/${encodeURIComponent(String(patientId))}/mri/${sliceType}.png${rv}`;
+  const query = new URLSearchParams();
+  if (plane) query.set('plane', plane);
+  if (rvCandidate) query.set('rv', String(rvCandidate));
+  const queryString = query.toString();
+  return `/api/doctor/patients/${encodeURIComponent(String(patientId))}/mri/${sliceType}.png${queryString ? `?${queryString}` : ''}`;
 };
 
 const originalImage = computed(() => {
   const provided = String(aiAnalysis.value?.originalImage || '').trim();
-  const endpoint = buildMriSliceEndpoint('original-slice');
+  const endpoint = buildMriSliceEndpoint('original-slice', 'axial');
 
   if (provided.includes('/api/doctor/patients/')) {
     return provided;
@@ -573,51 +587,116 @@ const attentionMap = computed(() => {
   return endpoint || provided;
 });
 
-const attentionMaps = computed<AttentionMapItem[]>(() => {
-  const maps = ensureArray(aiAnalysis.value?.attentionMaps as Array<any> | undefined);
-  const normalizePlane = (value: unknown): AttentionMapItem['plane'] => {
-    const text = String(value || '').trim().toLowerCase();
-    if (text.startsWith('cor')) return 'coronal';
-    if (text.startsWith('sag')) return 'sagittal';
-    return 'axial';
-  };
+const normalizeAttentionPlane = (value: unknown): AttentionMapItem['plane'] => {
+  const text = String(value || '').trim().toLowerCase();
+  if (text.startsWith('cor')) return 'coronal';
+  if (text.startsWith('sag')) return 'sagittal';
+  return 'axial';
+};
 
-  const labelByPlane: Record<AttentionMapItem['plane'], string> = {
-    axial: 'Axial',
-    coronal: 'Coronal',
-    sagittal: 'Sagittal'
-  };
-  const orderByPlane: Record<AttentionMapItem['plane'], number> = {
-    axial: 0,
-    coronal: 1,
-    sagittal: 2
-  };
+const labelByAttentionPlane: Record<AttentionMapItem['plane'], string> = {
+  axial: 'Axial',
+  coronal: 'Coronal',
+  sagittal: 'Sagittal'
+};
 
+const orderByAttentionPlane: Record<AttentionMapItem['plane'], number> = {
+  axial: 0,
+  coronal: 1,
+  sagittal: 2
+};
+
+const appendCacheVersion = (url: string) => {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  const version = String(aiAnalysis.value?.generatedAt || mriAnalysis.value?.scanDate || '').trim();
+  if (!version) return raw;
+  return `${raw}${raw.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
+};
+
+const parseAttentionMapItems = (maps: Array<any>): AttentionMapItem[] => {
   const parsed = maps
     .map((item) => {
       if (!item || typeof item !== 'object') return null;
-      const url = String(item.url || item.path || item.image || '').trim();
+      const url = appendCacheVersion(String(item.url || item.path || item.image || '').trim());
       if (!url) return null;
-      const plane = normalizePlane(item.plane);
-      const label = labelByPlane[plane];
+      const plane = normalizeAttentionPlane(item.plane);
+      const label = labelByAttentionPlane[plane];
       return { plane, label, url } as AttentionMapItem;
     })
     .filter((item): item is AttentionMapItem => Boolean(item));
 
-  if (parsed.length > 0) {
-    const uniqueByPlane = new Map<AttentionMapItem['plane'], AttentionMapItem>();
-    parsed.forEach((item) => {
-      if (!uniqueByPlane.has(item.plane)) {
-        uniqueByPlane.set(item.plane, item);
-      }
-    });
-    return Array.from(uniqueByPlane.values()).sort(
-      (a, b) => orderByPlane[a.plane] - orderByPlane[b.plane]
-    );
+  const uniqueByPlane = new Map<AttentionMapItem['plane'], AttentionMapItem>();
+  parsed.forEach((item) => {
+    if (!uniqueByPlane.has(item.plane)) {
+      uniqueByPlane.set(item.plane, item);
+    }
+  });
+
+  return Array.from(uniqueByPlane.values()).sort(
+    (a, b) => orderByAttentionPlane[a.plane] - orderByAttentionPlane[b.plane]
+  );
+};
+
+const originalMaps = computed<AttentionMapItem[]>(() => {
+  const maps = ensureArray(aiAnalysis.value?.originalMaps as Array<any> | undefined);
+  if (maps.length > 0) {
+    return parseAttentionMapItems(maps);
+  }
+
+  if (originalImage.value) {
+    return [
+      { plane: 'axial', label: 'Axial', url: buildMriSliceEndpoint('original-slice', 'axial') || originalImage.value },
+      { plane: 'coronal', label: 'Coronal', url: buildMriSliceEndpoint('original-slice', 'coronal') || originalImage.value },
+      { plane: 'sagittal', label: 'Sagittal', url: buildMriSliceEndpoint('original-slice', 'sagittal') || originalImage.value }
+    ];
+  }
+
+  return [];
+});
+
+const attentionMaps = computed<AttentionMapItem[]>(() => {
+  const maps = ensureArray(aiAnalysis.value?.attentionMaps as Array<any> | undefined);
+  if (maps.length > 0) {
+    return parseAttentionMapItems(maps);
   }
 
   if (attentionMap.value) {
     return [{ plane: 'axial', label: 'Axial', url: attentionMap.value }];
+  }
+
+  return [];
+});
+
+const attentionSlides = computed<AttentionSlideItem[]>(() => {
+  const slides = ensureArray(aiAnalysis.value?.attentionSlides as Array<any> | undefined);
+  const parsedSlides = slides
+    .map((slide, index) => {
+      if (!slide || typeof slide !== 'object') return null;
+      const views = parseAttentionMapItems(ensureArray(slide.views as Array<any> | undefined));
+      if (views.length === 0) return null;
+      return {
+        rank: Number(slide.rank) || index + 1,
+        roi: typeof slide.roi === 'string' ? slide.roi : undefined,
+        description: typeof slide.description === 'string' ? slide.description : undefined,
+        score: Number.isFinite(Number(slide.score)) ? Number(slide.score) : null,
+        percentage: Number.isFinite(Number(slide.percentage)) ? Number(slide.percentage) : null,
+        views
+      } as AttentionSlideItem;
+    })
+    .filter((item): item is AttentionSlideItem => Boolean(item));
+
+  if (parsedSlides.length > 0) {
+    return parsedSlides.sort((a, b) => a.rank - b.rank);
+  }
+
+  if (attentionMaps.value.length > 0) {
+    return [
+      {
+        rank: 1,
+        views: attentionMaps.value
+      }
+    ];
   }
 
   return [];
@@ -1389,33 +1468,65 @@ const voiceSummary = computed(() => {
 const mriScanDate = computed(() => formatDateOnly(mriAnalysis.value?.scanDate || dataAvailability.value.lastUpdateDate));
 const mriScanCount = computed(() => (dataAvailability.value.mriCount ? `${dataAvailability.value.mriCount}건` : '-'));
 const mriClassificationRaw = computed(() => String(mriAnalysis.value?.classification || '').trim());
-const mriClassificationToken = computed(() =>
-  mriClassificationRaw.value.toUpperCase().replace(/[\s_-]/g, '')
-);
-const mriSubtypeDisplay = computed(() => {
-  const token = mriClassificationToken.value;
-  if (!token) return '-';
+const normalizeMriToken = (value: unknown) => String(value || '').toUpperCase().replace(/[\s_-]/g, '');
+const mriClassificationToken = computed(() => normalizeMriToken(mriClassificationRaw.value));
+const mriXaiTargetToken = computed(() => normalizeMriToken(aiAnalysis.value?.xai?.targetLabel));
+
+const resolveMriMajorClass = (token: string) => {
   if (token === 'CN') return 'CN';
+  if (token === 'AD') return 'AD';
+  if (token === 'MCI' || token === 'SMCI' || token === 'PMCI' || token === 'EMCI' || token === 'LMCI') {
+    return 'MCI';
+  }
+  return '';
+};
+
+const resolveMciSubtypeClass = (token: string) => {
   if (token === 'SMCI' || token === 'EMCI') return 'sMCI';
   if (token === 'PMCI' || token === 'LMCI') return 'pMCI';
-  if (token === 'AD') return 'AD';
-  if (token === 'MCI') return 'MCI';
-  return mriClassificationRaw.value || '-';
+  return '';
+};
+
+const mriMajorDisplay = computed(() => {
+  const fromXai = resolveMriMajorClass(mriXaiTargetToken.value);
+  if (fromXai) return fromXai;
+  const fromClassification = resolveMriMajorClass(mriClassificationToken.value);
+  if (fromClassification) return fromClassification;
+  return '-';
 });
-const mriSubtypeBadgeKey = computed(() => {
-  const label = mriSubtypeDisplay.value;
+
+const mriSubtypeDisplay = computed(() => {
+  const subtype = resolveMciSubtypeClass(mriClassificationToken.value);
+  if (subtype) return subtype;
+  if (mriMajorDisplay.value === 'MCI') return '-';
+  return '-';
+});
+
+const mriMajorBadgeKey = computed(() => {
+  const label = mriMajorDisplay.value;
   if (label === 'CN') return 'cn';
-  if (label === 'sMCI') return 'smci';
-  if (label === 'pMCI') return 'pmci';
   if (label === 'AD') return 'ad';
   if (label === 'MCI') return 'mci';
   return 'unknown';
 });
-const mriSubtypeConfidenceText = computed(() => {
+
+const mriSubtypeBadgeKey = computed(() => {
+  const label = mriSubtypeDisplay.value;
+  if (label === 'sMCI') return 'smci';
+  if (label === 'pMCI') return 'pmci';
+  return 'unknown';
+});
+
+const showMciSubtypeRow = computed(() => mriMajorDisplay.value === 'MCI' || mriSubtypeDisplay.value !== '-');
+
+const mriClassificationConfidenceLabel = computed(() => {
   const confidence = asFiniteNumber(mriAnalysis.value?.confidence);
-  if (confidence === null || mriSubtypeDisplay.value === '-') return '';
+  if (confidence === null) return '';
   const percent = confidence <= 1 ? confidence * 100 : confidence;
-  return `신뢰도 ${Math.round(clamp(percent, 0, 100))}%`;
+  const rounded = Math.round(clamp(percent, 0, 100));
+  if (mriSubtypeDisplay.value !== '-') return `세부분류 신뢰도: ${rounded}%`;
+  if (mriMajorDisplay.value !== '-') return `MRI 분류 신뢰도: ${rounded}%`;
+  return '';
 });
 
 const handleDiagnosisSubmit = (data: any) => {
@@ -1818,13 +1929,24 @@ watch(
               <div>
                 <h4>공간적 해석 요약</h4>
                 <p>관심 영역 하이라이트와 기여도 분석을 중심으로 구조적 원인을 해석합니다.</p>
-                <div class="mri-subtype-row">
-                  <span class="mri-subtype-label">MRI 기반 인지 분류(참고)</span>
-                  <span class="mri-subtype-badge" :class="`mri-subtype-${mriSubtypeBadgeKey}`">
-                    {{ mriSubtypeDisplay }}
-                  </span>
+                <div class="mri-summary-lines">
+                  <div class="mri-summary-row">
+                    <span class="mri-summary-text">MRI 기반 분류:</span>
+                    <span class="mri-summary-badge" :class="`mri-summary-badge-${mriMajorBadgeKey}`">
+                      {{ mriMajorDisplay }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="showMciSubtypeRow"
+                    class="mri-summary-row"
+                  >
+                    <span class="mri-summary-text">인지검사·바이오마커 기반 분류:</span>
+                    <span class="mri-summary-badge" :class="`mri-summary-badge-${mriSubtypeBadgeKey}`">
+                      {{ mriSubtypeDisplay }}
+                    </span>
+                  </div>
+                  <p v-if="mriClassificationConfidenceLabel" class="mri-summary-confidence">{{ mriClassificationConfidenceLabel }}</p>
                 </div>
-                <p v-if="mriSubtypeConfidenceText" class="mri-subtype-confidence">{{ mriSubtypeConfidenceText }}</p>
               </div>
               <div class="mri-context-meta">
                 <div class="mri-meta-item">
@@ -1843,8 +1965,10 @@ watch(
                 <h4>MRI 이미지</h4>
                 <MRIImageDisplay
                   :original-image="originalImage"
+                  :original-maps="originalMaps"
                   :attention-map="attentionMap"
                   :attention-maps="attentionMaps"
+                  :attention-slides="attentionSlides"
                   :loading="isLoading"
                 />
                 <div v-if="visitOptions.length > 0" class="visit-selector-row">
@@ -2639,66 +2763,87 @@ watch(
   color: #777;
 }
 
-.mri-subtype-row {
+.mri-summary-lines {
   margin-top: 10px;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mri-summary-row {
+  display: inline-flex;
+  justify-content: flex-start;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
-.mri-subtype-label {
-  font-size: 12px;
-  font-weight: 800;
-  color: #7a838d;
+.mri-summary-text {
+  font-size: 13px;
+  font-weight: 900;
+  color: #656b74;
+  letter-spacing: -0.01em;
 }
 
-.mri-subtype-badge {
-  padding: 4px 10px;
+.mri-summary-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 12px;
   border-radius: 999px;
+  border: 1px solid rgba(178, 186, 196, 0.45);
+  background: #eef2f6;
+  color: #5f6670;
   font-size: 12px;
   font-weight: 900;
-  border: 1px solid rgba(178, 186, 196, 0.55);
-  background: #eef1f4;
-  color: #5f6670;
-  line-height: 1.2;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  flex: 0 0 auto;
 }
 
-.mri-subtype-confidence {
-  margin: 6px 0 0;
-  font-size: 12px;
-  font-weight: 800;
-  color: #8a9199;
+.mri-summary-badge-cn {
+  border-color: rgba(76, 183, 183, 0.38);
+  background: rgba(76, 183, 183, 0.12);
+  color: #1f7d7d;
 }
 
-.mri-subtype-cn {
-  border-color: rgba(76, 183, 183, 0.36);
-  background: rgba(76, 183, 183, 0.14);
-  color: #237c7c;
-}
-
-.mri-subtype-smci {
-  border-color: rgba(100, 181, 246, 0.42);
+.mri-summary-badge-smci {
+  border-color: rgba(100, 181, 246, 0.44);
   background: rgba(100, 181, 246, 0.14);
   color: #2a6ea0;
 }
 
-.mri-subtype-pmci {
-  border-color: rgba(245, 158, 11, 0.48);
-  background: rgba(245, 158, 11, 0.14);
+.mri-summary-badge-pmci {
+  border-color: rgba(245, 158, 11, 0.46);
+  background: rgba(245, 158, 11, 0.18);
   color: #9a6210;
 }
 
-.mri-subtype-ad {
+.mri-summary-badge-ad {
   border-color: rgba(239, 68, 68, 0.5);
   background: rgba(239, 68, 68, 0.14);
   color: #a43131;
 }
 
-.mri-subtype-mci {
-  border-color: rgba(255, 183, 77, 0.48);
-  background: rgba(255, 183, 77, 0.14);
+.mri-summary-badge-mci {
+  border-color: rgba(255, 183, 77, 0.52);
+  background: rgba(255, 183, 77, 0.16);
   color: #9a6616;
+}
+
+.mri-summary-badge-unknown {
+  border-color: rgba(178, 186, 196, 0.45);
+  background: #eef2f6;
+  color: #6f7781;
+}
+
+.mri-summary-confidence {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 900;
+  color: #656b74;
+  letter-spacing: -0.01em;
 }
 
 .mri-context-meta {

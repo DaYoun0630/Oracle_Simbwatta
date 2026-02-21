@@ -1,9 +1,12 @@
 <script setup>
 // Vue의 반응형 상태와 감시 기능 import
-import { ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
+import { useAuthStore } from '@/stores/auth';
+import { fetchUserSettings, updateUserSettings } from '@/api/settings';
 
 // 공통 레이아웃 컴포넌트 import
 import AppShell from '@/components/AppShell.vue';
+const authStore = useAuthStore();
 
 // 위험 환자 실시간 알림 상태
 // localStorage 값이 'off'가 아니면 기본 활성화
@@ -14,20 +17,56 @@ const weeklyReport = ref(localStorage.getItem('doctor-notify-weekly') !== 'off')
 
 // MRI 분석 완료 알림 상태
 const mriReport = ref(localStorage.getItem('doctor-notify-mri') !== 'off');
+const isHydrating = ref(false);
+const syncMessage = ref('');
+let syncMessageTimer = null;
+
+const setSyncMessage = (message) => {
+  syncMessage.value = message;
+  if (syncMessageTimer) {
+    clearTimeout(syncMessageTimer);
+    syncMessageTimer = null;
+  }
+  if (message) {
+    syncMessageTimer = setTimeout(() => {
+      syncMessage.value = '';
+      syncMessageTimer = null;
+    }, 2400);
+  }
+};
+
+const persistSettings = async () => {
+  if (isHydrating.value || !authStore.token) return;
+
+  try {
+    await updateUserSettings(authStore.token, {
+      doctor_notify_risk: riskAlert.value,
+      doctor_notify_weekly: weeklyReport.value,
+      doctor_notify_mri: mriReport.value,
+    });
+    setSyncMessage('');
+  } catch (error) {
+    console.error('Failed to sync doctor notification settings:', error);
+    setSyncMessage(error instanceof Error ? `DB 동기화 실패: ${error.message}` : 'DB 동기화에 실패했습니다.');
+  }
+};
 
 // 위험 환자 알림 상태 변경 시 localStorage에 즉시 반영
 watch(riskAlert, (value) => {
   localStorage.setItem('doctor-notify-risk', value ? 'on' : 'off');
+  void persistSettings();
 });
 
 // 주간 리포트 알림 상태 변경 시 localStorage에 즉시 반영
 watch(weeklyReport, (value) => {
   localStorage.setItem('doctor-notify-weekly', value ? 'on' : 'off');
+  void persistSettings();
 });
 
 // MRI 알림 상태 변경 시 localStorage에 즉시 반영
 watch(mriReport, (value) => {
   localStorage.setItem('doctor-notify-mri', value ? 'on' : 'off');
+  void persistSettings();
 });
 
 // 알림 설정 화면에 표시할 카테고리 정의
@@ -58,6 +97,23 @@ const notificationCategories = [
 const toggleNotification = (category) => {
   category.model.value = !category.model.value;
 };
+
+onMounted(async () => {
+  if (!authStore.token) return;
+
+  isHydrating.value = true;
+  try {
+    const settings = await fetchUserSettings(authStore.token);
+    riskAlert.value = settings.doctor_notify_risk;
+    weeklyReport.value = settings.doctor_notify_weekly;
+    mriReport.value = settings.doctor_notify_mri;
+  } catch (error) {
+    console.error('Failed to load doctor notification settings:', error);
+    setSyncMessage(error instanceof Error ? `설정 불러오기 실패: ${error.message}` : '설정 불러오기에 실패했습니다.');
+  } finally {
+    isHydrating.value = false;
+  }
+});
 </script>
 
 <template>
@@ -96,6 +152,8 @@ const toggleNotification = (category) => {
           </span>
         </div>
       </section>
+
+      <p v-if="syncMessage" class="sync-message">{{ syncMessage }}</p>
 
     </div>
   </AppShell>
@@ -197,5 +255,12 @@ const toggleNotification = (category) => {
 /* 토글이 켜진 상태에서 텍스트 강조 */
 .toggle.on + .toggle-label {
   color: #4cb7b7;
+}
+
+.sync-message {
+  margin: 4px 2px 0;
+  font-size: 13px;
+  color: #ff8a80;
+  font-weight: 700;
 }
 </style>

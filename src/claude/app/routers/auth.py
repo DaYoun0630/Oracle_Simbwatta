@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 from uuid import uuid4
 
 import asyncpg
@@ -19,11 +19,15 @@ from .. import db
 from ..config import settings
 from ..schemas.auth import (
     AuthResponse,
+    AuthUserPayload,
     PasswordLoginRequest,
     PasswordRegisterRequest,
+    ProfileUpdateRequest,
     SubjectLinkVerifyRequest,
     SubjectLinkVerifyResponse,
     TokenData,
+    UserSettingsPayload,
+    UserSettingsUpdateRequest,
 )
 from ..schemas.user import UserOut
 
@@ -41,6 +45,19 @@ MEMBER_CODE_MODULUS = 1_000_000
 MEMBER_CODE_MULTIPLIER = 741_457
 MEMBER_CODE_INCREMENT = 193_939
 MEMBER_CODE_MULTIPLIER_INV = pow(MEMBER_CODE_MULTIPLIER, -1, MEMBER_CODE_MODULUS)
+USER_SETTINGS_DEFAULTS: Dict[str, bool] = {
+    "notify_emergency": True,
+    "notify_weekly": True,
+    "notify_service": True,
+    "doctor_notify_risk": True,
+    "doctor_notify_weekly": True,
+    "doctor_notify_mri": True,
+    "share_dialog_summary": True,
+    "share_anomaly_alert": True,
+    "share_medication_reminder": True,
+}
+USER_SETTINGS_COLUMNS = tuple(USER_SETTINGS_DEFAULTS.keys())
+_user_settings_table_ready = False
 
 
 def _kst_now_naive() -> datetime:
@@ -236,6 +253,130 @@ def _build_auth_response(
             "hospital_number": hospital_number,
         },
     }
+
+
+async def _fetch_auth_user_payload(user_id: int) -> dict:
+    user = await db.fetchrow(
+        """
+        SELECT
+            u.user_id,
+            u.email,
+            u.name,
+            u.profile_image_url,
+            u.phone_number,
+            u.date_of_birth,
+            d.department,
+            d.license_number,
+            d.hospital,
+            d.hospital_number
+        FROM users u
+        LEFT JOIN doctor d ON d.user_id = u.user_id
+        WHERE u.user_id = $1
+        LIMIT 1
+        """,
+        user_id,
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    role, entity_id = await _resolve_role_for_user(user_id)
+    return {
+        "id": int(user["user_id"]),
+        "email": user.get("email"),
+        "name": user.get("name"),
+        "role": role,
+        "entity_id": entity_id,
+        "profile_image_url": user.get("profile_image_url"),
+        "phone_number": user.get("phone_number"),
+        "date_of_birth": _format_date_iso(user.get("date_of_birth")),
+        "department": user.get("department"),
+        "license_number": user.get("license_number"),
+        "hospital": user.get("hospital"),
+        "hospital_number": user.get("hospital_number"),
+    }
+
+
+async def _ensure_user_settings_table() -> None:
+    global _user_settings_table_ready
+    if _user_settings_table_ready:
+        return
+
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+            notify_emergency BOOLEAN NOT NULL DEFAULT TRUE,
+            notify_weekly BOOLEAN NOT NULL DEFAULT TRUE,
+            notify_service BOOLEAN NOT NULL DEFAULT TRUE,
+            doctor_notify_risk BOOLEAN NOT NULL DEFAULT TRUE,
+            doctor_notify_weekly BOOLEAN NOT NULL DEFAULT TRUE,
+            doctor_notify_mri BOOLEAN NOT NULL DEFAULT TRUE,
+            share_dialog_summary BOOLEAN NOT NULL DEFAULT TRUE,
+            share_anomaly_alert BOOLEAN NOT NULL DEFAULT TRUE,
+            share_medication_reminder BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    _user_settings_table_ready = True
+
+
+def _settings_row_to_payload(row) -> dict:
+    payload = {}
+    for column in USER_SETTINGS_COLUMNS:
+        if row:
+            payload[column] = bool(row.get(column))
+        else:
+            payload[column] = bool(USER_SETTINGS_DEFAULTS[column])
+    return payload
+
+
+async def _get_or_create_user_settings(user_id: int):
+    await _ensure_user_settings_table()
+
+    row = await db.fetchrow(
+        f"""
+        SELECT {", ".join(USER_SETTINGS_COLUMNS)}
+        FROM user_settings
+        WHERE user_id = $1
+        """,
+        user_id,
+    )
+    if row:
+        return row
+
+    now = _kst_now_naive()
+    row = await db.fetchrow(
+        f"""
+        INSERT INTO user_settings (
+            user_id,
+            {", ".join(USER_SETTINGS_COLUMNS)},
+            created_at,
+            updated_at
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12
+        )
+        ON CONFLICT (user_id) DO UPDATE
+        SET updated_at = EXCLUDED.updated_at
+        RETURNING {", ".join(USER_SETTINGS_COLUMNS)}
+        """,
+        user_id,
+        USER_SETTINGS_DEFAULTS["notify_emergency"],
+        USER_SETTINGS_DEFAULTS["notify_weekly"],
+        USER_SETTINGS_DEFAULTS["notify_service"],
+        USER_SETTINGS_DEFAULTS["doctor_notify_risk"],
+        USER_SETTINGS_DEFAULTS["doctor_notify_weekly"],
+        USER_SETTINGS_DEFAULTS["doctor_notify_mri"],
+        USER_SETTINGS_DEFAULTS["share_dialog_summary"],
+        USER_SETTINGS_DEFAULTS["share_anomaly_alert"],
+        USER_SETTINGS_DEFAULTS["share_medication_reminder"],
+        now,
+        now,
+    )
+    return row
 
 
 # ============================================================================
@@ -707,6 +848,152 @@ async def google_oauth_callback(code: str = Query(...), state: str = Query(None)
         hospital_number=None,
         access_token=jwt_token,
     )
+
+
+# ============================================================================
+# Profile & Settings
+# ============================================================================
+@router.get("/profile", response_model=AuthUserPayload)
+async def get_auth_profile(current_user: TokenData = Depends(get_current_user)):
+    return await _fetch_auth_user_payload(int(current_user.user_id))
+
+
+@router.put("/profile", response_model=AuthUserPayload)
+async def update_auth_profile(
+    payload: ProfileUpdateRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
+    user_id = int(current_user.user_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return await _fetch_auth_user_payload(user_id)
+
+    now = _kst_now_naive()
+    role, _ = await _resolve_role_for_user(user_id)
+
+    user_updates = {}
+    if "name" in updates:
+        user_updates["name"] = _normalize_optional_text(updates["name"])
+    if "phone_number" in updates:
+        user_updates["phone_number"] = _normalize_optional_text(updates["phone_number"])
+    if "profile_image_url" in updates:
+        user_updates["profile_image_url"] = _normalize_optional_text(updates["profile_image_url"])
+    if "date_of_birth" in updates:
+        date_of_birth_raw = updates["date_of_birth"]
+        if date_of_birth_raw is None:
+            user_updates["date_of_birth"] = None
+        else:
+            normalized_dob = str(date_of_birth_raw).strip()
+            user_updates["date_of_birth"] = _parse_date_of_birth(normalized_dob) if normalized_dob else None
+
+    if user_updates:
+        columns = tuple(user_updates.keys())
+        values = [user_updates[column] for column in columns]
+        set_parts = [f"{column} = ${index + 1}" for index, column in enumerate(columns)]
+        values.append(now)
+        set_parts.append(f"updated_at = ${len(values)}")
+        values.append(user_id)
+        await db.execute(
+            f"""
+            UPDATE users
+            SET {", ".join(set_parts)}
+            WHERE user_id = ${len(values)}
+            """,
+            *values,
+        )
+
+    doctor_update_fields = ("department", "license_number", "hospital", "hospital_number")
+    doctor_updates = {}
+    for field in doctor_update_fields:
+        if field in updates:
+            doctor_updates[field] = _normalize_optional_text(updates[field])
+
+    if doctor_updates:
+        if role != "doctor":
+            raise HTTPException(status_code=403, detail="Doctor profile fields are only available to doctor users.")
+
+        await db.execute(
+            """
+            INSERT INTO doctor (user_id, created_at)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            user_id,
+            now,
+        )
+        columns = tuple(doctor_updates.keys())
+        values = [doctor_updates[column] for column in columns]
+        set_parts = [f"{column} = ${index + 1}" for index, column in enumerate(columns)]
+        values.append(user_id)
+        await db.execute(
+            f"""
+            UPDATE doctor
+            SET {", ".join(set_parts)}
+            WHERE user_id = ${len(values)}
+            """,
+            *values,
+        )
+
+    return await _fetch_auth_user_payload(user_id)
+
+
+@router.get("/settings", response_model=UserSettingsPayload)
+async def get_user_settings(current_user: TokenData = Depends(get_current_user)):
+    row = await _get_or_create_user_settings(int(current_user.user_id))
+    return _settings_row_to_payload(row)
+
+
+@router.put("/settings", response_model=UserSettingsPayload)
+async def update_user_settings(
+    payload: UserSettingsUpdateRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
+    user_id = int(current_user.user_id)
+    updates = payload.model_dump(exclude_unset=True)
+    current = _settings_row_to_payload(await _get_or_create_user_settings(user_id))
+    current.update({key: bool(value) for key, value in updates.items()})
+
+    now = _kst_now_naive()
+    row = await db.fetchrow(
+        f"""
+        INSERT INTO user_settings (
+            user_id,
+            {", ".join(USER_SETTINGS_COLUMNS)},
+            created_at,
+            updated_at
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12
+        )
+        ON CONFLICT (user_id) DO UPDATE
+        SET
+            notify_emergency = EXCLUDED.notify_emergency,
+            notify_weekly = EXCLUDED.notify_weekly,
+            notify_service = EXCLUDED.notify_service,
+            doctor_notify_risk = EXCLUDED.doctor_notify_risk,
+            doctor_notify_weekly = EXCLUDED.doctor_notify_weekly,
+            doctor_notify_mri = EXCLUDED.doctor_notify_mri,
+            share_dialog_summary = EXCLUDED.share_dialog_summary,
+            share_anomaly_alert = EXCLUDED.share_anomaly_alert,
+            share_medication_reminder = EXCLUDED.share_medication_reminder,
+            updated_at = EXCLUDED.updated_at
+        RETURNING {", ".join(USER_SETTINGS_COLUMNS)}
+        """,
+        user_id,
+        current["notify_emergency"],
+        current["notify_weekly"],
+        current["notify_service"],
+        current["doctor_notify_risk"],
+        current["doctor_notify_weekly"],
+        current["doctor_notify_mri"],
+        current["share_dialog_summary"],
+        current["share_anomaly_alert"],
+        current["share_medication_reminder"],
+        now,
+        now,
+    )
+    return _settings_row_to_payload(row)
 
 
 # ============================================================================

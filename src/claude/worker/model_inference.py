@@ -29,7 +29,7 @@ _wav2vec2_processor = None
 _wav2vec2_device = None
 
 MODEL_DIR = os.getenv("MODEL_DIR", "/models/audio_processed")
-MRI_MODEL_DIR = os.getenv("MRI_MODEL_DIR", "/models/mri(cam)")
+MRI_MODEL_DIR = os.getenv("MRI_MODEL_DIR", "models/dig_help")
 MRI_MODEL_CN_FILENAME = os.getenv("MRI_MODEL_CN_FILENAME", "model_cn.pth")
 MRI_MODEL_CI_FILENAME = os.getenv("MRI_MODEL_CI_FILENAME", "model_ci.pth")
 
@@ -736,9 +736,12 @@ def _generate_flag_reasons(mci_probability: float, label: str, flag: str) -> Lis
 
     return reasons
 
-MCI_SUBTYPE_MODEL_PATH = os.path.join(
-    os.getenv("MCI_SUBTYPE_MODEL_DIR", "/models/mci(s,p)"),
-    "mci_model_best.cbm"
+MCI_SUBTYPE_MODEL_PATH = (
+    os.getenv("MCI_SUBTYPE_MODEL_PATH")
+    or os.path.join(
+        os.getenv("MCI_SUBTYPE_MODEL_DIR", "models/mci(s,p)"),
+        os.getenv("MCI_SUBTYPE_MODEL_FILENAME", "mci_model_best.cbm"),
+    )
 )
 
 # CatBoost sMCI/pMCI feature columns (must match training order)
@@ -858,7 +861,12 @@ def _predict_mci_subtype(patient_id: str) -> dict:
         return {'label': 'sMCI', 'confidence': p_smci, 'p_smci': p_smci, 'p_pmci': p_pmci}
 
 
-def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
+def predict_mri(
+    nifti_path: str,
+    patient_id: str = None,
+    mri_id: str | None = None,
+    xai_output_dir: str | None = None,
+) -> dict:
     """
     Run Cascaded 3D CNN inference:
     1. model_cn: CN vs (MCI+AD)
@@ -870,8 +878,11 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
     import random
     import nibabel as nib
     from .mri_model import get_model
+    from .mri_cam_notebook_runner import generate_attention_from_notebook
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cn_conf_threshold = _env_float("MRI_CN_CONFIDENCE_THRESHOLD", 0.75)
+    impaired_prob_threshold = _env_float("MRI_IMPAIRED_PROB_THRESHOLD", 0.25)
     
     try:
         # 1. Find cascade models: prefer model_cn/model_ci, keep 189/184 as fallback.
@@ -903,9 +914,28 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
         full_path_ci = os.path.join(MRI_MODEL_DIR, path_ci)
         logger.info("Loading Cascade Models: %s (CN/Imp) -> %s (MCI/AD)", path_cn, path_ci)
         
-        # 2. Load NIfTI Image and resize to model input (96, 112, 96)
+        # 2. Load NIfTI Image and apply notebook-consistent normalization.
+        #    Keep zero-background as zero, and normalize only foreground voxels.
         img = nib.load(nifti_path)
         img_array = np.asarray(img.dataobj, dtype=np.float32)  # (D, H, W)
+        if img_array.ndim == 4:
+            img_array = img_array[..., 0]
+
+        foreground_mask = np.abs(img_array) > 1e-6
+        if np.any(foreground_mask):
+            foreground_values = img_array[foreground_mask]
+            lo, hi = np.percentile(foreground_values, (1, 99))
+            if hi <= lo:
+                lo, hi = float(np.min(foreground_values)), float(np.max(foreground_values))
+            if hi > lo:
+                normalized = np.zeros_like(img_array, dtype=np.float32)
+                scaled = np.clip((img_array - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
+                normalized[foreground_mask] = scaled[foreground_mask]
+                img_array = normalized
+            else:
+                img_array = np.zeros_like(img_array, dtype=np.float32)
+        else:
+            img_array = np.zeros_like(img_array, dtype=np.float32)
 
         # Resize to (96, 112, 96) using trilinear interpolation
         MODEL_INPUT_SIZE = (96, 112, 96)
@@ -980,9 +1010,18 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
         probs_map = {"CN": p_cn, "MCI": p_impaired * p_mci_cond, "AD": p_impaired * p_ad_cond}
 
         if p_cn > p_impaired:
-            # Stage 1: CN 승
-            final_label = "CN"
-            confidence = p_cn
+            # Gray-zone handling: if CN confidence is not strong enough and
+            # impaired probability is meaningful, defer to stage2 MCI/AD.
+            if p_cn < cn_conf_threshold and p_impaired >= impaired_prob_threshold:
+                if p_mci_cond > p_ad_cond:
+                    final_label = "MCI"
+                    confidence = p_mci_cond
+                else:
+                    final_label = "AD"
+                    confidence = p_ad_cond
+            else:
+                final_label = "CN"
+                confidence = p_cn
         else:
             # Stage 1: Impaired 승 → Stage 2 결과로 MCI/AD 결정
             if p_mci_cond > p_ad_cond:
@@ -1008,12 +1047,62 @@ def predict_mri(nifti_path: str, patient_id: str = None) -> dict:
             logger.info("No patient_id or subtype model. Keeping MCI.")
         
         logger.info(f"Cascade Result: {final_label} ({confidence:.4f})")
-        
+
+        xai_payload = {}
+        if xai_output_dir:
+            try:
+                os.makedirs(xai_output_dir, exist_ok=True)
+                xai_payload = generate_attention_from_notebook(
+                    nifti_path=nifti_path,
+                    output_dir=xai_output_dir,
+                    subject_id=str(patient_id or "patient"),
+                    final_label=str(final_label),
+                    run_token=str(mri_id or "latest"),
+                    top_k=max(1, _env_int("MRI_CAM_TOP_K", 5)),
+                )
+            except Exception as xai_exc:
+                logger.warning("Notebook-style MRI CAM generation failed: %s", xai_exc)
+                try:
+                    from .mri_xai import generate_attention_artifacts
+
+                    xai_name = f"{patient_id or 'patient'}_{mri_id or 'latest'}_cam.png"
+                    xai_local_path = os.path.join(xai_output_dir, xai_name)
+
+                    normalized_final = str(final_label or "").strip().upper()
+                    if normalized_final == "CN":
+                        xai_stage = "stage1_cn_vs_ci"
+                        xai_model = model1
+                        xai_target_idx = 0
+                        xai_target_label = "CN"
+                    elif normalized_final == "AD":
+                        xai_stage = "stage2_mci_vs_ad"
+                        xai_model = model2
+                        xai_target_idx = 1
+                        xai_target_label = "AD"
+                    else:
+                        xai_stage = "stage2_mci_vs_ad"
+                        xai_model = model2
+                        xai_target_idx = 0
+                        xai_target_label = "MCI"
+
+                    xai_payload = generate_attention_artifacts(
+                        model=xai_model,
+                        input_tensor=input_tensor,
+                        base_volume=img_array,
+                        target_class_idx=xai_target_idx,
+                        output_path=xai_local_path,
+                        stage_name=xai_stage,
+                        target_label=xai_target_label,
+                    )
+                except Exception as fallback_exc:
+                    logger.warning("Fallback MRI CAM generation also failed: %s", fallback_exc)
+
         return {
             "label": final_label,
             "confidence": confidence,
             "probabilities": probs_map,
-            "model_version": "cascade_cn_ci_subtype"
+            "model_version": "cascade_cn_ci_subtype",
+            "xai": xai_payload,
         }
         
 

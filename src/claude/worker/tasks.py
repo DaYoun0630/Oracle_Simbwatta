@@ -9,6 +9,7 @@ This module contains async tasks for:
 import os
 import json
 import tempfile
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from pathlib import Path
@@ -21,6 +22,7 @@ from celery.utils.log import get_task_logger
 
 logger = get_task_logger(__name__)
 KST = timezone(timedelta(hours=9))
+SUBJECT_ID_PATTERN = re.compile(r"(\d{3}_S_\d{4})", re.IGNORECASE)
 
 
 def _kst_now_naive() -> datetime:
@@ -258,6 +260,16 @@ def _find_dicom_series_dir(root_dir: str) -> Optional[str]:
             best_count = len(dcm_files)
             best_dir = root
     return best_dir
+
+
+def _extract_subject_id_from_path(path: Optional[str]) -> Optional[str]:
+    text = str(path or "").strip()
+    if not text:
+        return None
+    match = SUBJECT_ID_PATTERN.search(text)
+    if not match:
+        return None
+    return match.group(1).upper()
 
 
 @app.task(bind=True, name='process_voice_recording')
@@ -586,7 +598,11 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
         # Resolve persistent object identity and local cache path.
         preprocessed_dir = _get_preprocessed_dir()
         preprocessed_bucket = _get_preprocessed_bucket()
-        subject_token = subject_id or str(patient_id)
+        subject_token = (
+            (str(subject_id).strip() if subject_id else None)
+            or _extract_subject_id_from_path(file_path)
+            or str(patient_id)
+        )
         output_name = f"{subject_token}_{mri_id}_preprocessed.nii.gz"
         output_path = os.path.join(preprocessed_dir, output_name)
         preprocessed_object_path = f"{preprocessed_bucket}/{output_name}"
@@ -619,32 +635,45 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
             else:
                 local_input_path = _download_mri_input_from_minio(file_path, temp_work_dir, mri_id)
 
-            # Raw ingestion: if DICOM source, convert best series to NIfTI.
-            current_path = local_input_path
-            if os.path.isdir(local_input_path):
-                series_dir = _find_dicom_series_dir(local_input_path)
-                if not series_dir:
-                    raise RuntimeError(f"No DICOM series found under {local_input_path}")
-                nifti_path = os.path.join(temp_work_dir, f"{mri_id}.nii.gz")
-                logger.info(f"Converting DICOM series {series_dir} to NIfTI {nifti_path}")
-                convert_dicom_to_nifti(series_dir, nifti_path)
-                current_path = nifti_path
+            # If the incoming file is already preprocessed NIfTI, do not run ANTs again.
+            basename_lower = os.path.basename(str(local_input_path)).lower()
+            if (
+                os.path.isfile(local_input_path)
+                and basename_lower.endswith((".nii", ".nii.gz"))
+                and "_preprocessed" in basename_lower
+            ):
+                logger.info(
+                    "Input appears already preprocessed (%s). Skipping ANTs preprocessing.",
+                    local_input_path,
+                )
+                final_path = local_input_path
+            else:
+                # Raw ingestion: if DICOM source, convert best series to NIfTI.
+                current_path = local_input_path
+                if os.path.isdir(local_input_path):
+                    series_dir = _find_dicom_series_dir(local_input_path)
+                    if not series_dir:
+                        raise RuntimeError(f"No DICOM series found under {local_input_path}")
+                    nifti_path = os.path.join(temp_work_dir, f"{mri_id}.nii.gz")
+                    logger.info(f"Converting DICOM series {series_dir} to NIfTI {nifti_path}")
+                    convert_dicom_to_nifti(series_dir, nifti_path)
+                    current_path = nifti_path
 
-            # ANTs preprocessing.
-            ants_registration_type = os.getenv("MRI_ANTS_REGISTRATION_TYPE", "SyNRA")
-            ants_clip_min = float(os.getenv("MRI_ANTS_CLIP_MIN", "-5.0"))
-            ants_clip_max = float(os.getenv("MRI_ANTS_CLIP_MAX", "5.0"))
-            logger.info(
-                f"Running ANTs preprocessing: {current_path} -> {output_path} "
-                f"(registration={ants_registration_type})"
-            )
-            final_path = preprocess_single_subject_antspy(
-                current_path,
-                output_path,
-                MRI_TEMPLATE_PATH,
-                registration_type=ants_registration_type,
-                clip_range=(ants_clip_min, ants_clip_max),
-            )
+                # ANTs preprocessing.
+                ants_registration_type = os.getenv("MRI_ANTS_REGISTRATION_TYPE", "SyNRA")
+                ants_clip_min = float(os.getenv("MRI_ANTS_CLIP_MIN", "-5.0"))
+                ants_clip_max = float(os.getenv("MRI_ANTS_CLIP_MAX", "5.0"))
+                logger.info(
+                    f"Running ANTs preprocessing: {current_path} -> {output_path} "
+                    f"(registration={ants_registration_type})"
+                )
+                final_path = preprocess_single_subject_antspy(
+                    current_path,
+                    output_path,
+                    MRI_TEMPLATE_PATH,
+                    registration_type=ants_registration_type,
+                    clip_range=(ants_clip_min, ants_clip_max),
+                )
 
         # Ensure preprocessed artifact is persisted in MinIO bucket.
         if not _object_exists(minio_client, preprocessed_bucket, output_name):
@@ -664,16 +693,161 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
                     f"Using local path in DB: {final_path}"
                 )
 
-        # 3. Model Inference (Placeholder / Integration)
+        # 3. Model inference + CAM generation
         logger.info(f"Running 3D CNN Inference on {final_path}")
         
         from .model_inference import predict_mri
-        mri_result = predict_mri(final_path, patient_id=patient_id)
+        mri_result = predict_mri(
+            final_path,
+            patient_id=patient_id,
+            mri_id=mri_id,
+            xai_output_dir=preprocessed_dir,
+        )
         
         predicted_stage = mri_result['label']
         confidence = mri_result['confidence']
         probabilities = mri_result['probabilities']
-        
+        model_version = mri_result.get("model_version")
+        xai_payload = mri_result.get("xai") if isinstance(mri_result, dict) else None
+        xai_payload = xai_payload if isinstance(xai_payload, dict) else {}
+        region_contributions = xai_payload.get("regionContributions")
+        if not isinstance(region_contributions, list):
+            region_contributions = []
+
+        ai_analysis = {
+            "pipeline": "dig_help_cascade_cam",
+            "generatedAt": _kst_now_naive().isoformat(),
+            "modelVersion": model_version,
+            "regionContributions": region_contributions,
+            "xai": {
+                "method": xai_payload.get("method"),
+                "stage": xai_payload.get("stage"),
+                "targetLabel": xai_payload.get("targetLabel"),
+                "targetClassIndex": xai_payload.get("targetClassIndex"),
+                "sliceIndex": xai_payload.get("sliceIndex"),
+                "sliceIndices": xai_payload.get("sliceIndices"),
+                "roiScores": xai_payload.get("roiScores"),
+            },
+        }
+
+        attention_map_entries = []
+        attention_slide_entries = []
+        slide_payload = xai_payload.get("slides")
+        if isinstance(slide_payload, list):
+            for slide_idx, slide in enumerate(slide_payload, start=1):
+                if not isinstance(slide, dict):
+                    continue
+
+                local_paths = slide.get("local_paths")
+                if not isinstance(local_paths, dict):
+                    continue
+
+                roi_slug = re.sub(
+                    r"[^a-z0-9]+",
+                    "_",
+                    str(slide.get("roi") or f"roi_{slide_idx}").lower(),
+                ).strip("_")
+                if not roi_slug:
+                    roi_slug = f"roi_{slide_idx}"
+
+                view_entries = []
+                for plane in ("axial", "coronal", "sagittal"):
+                    local_path = local_paths.get(plane)
+                    if not isinstance(local_path, str) or not os.path.exists(local_path):
+                        continue
+                    try:
+                        attention_bucket = "mri-xai"
+                        attention_key = (
+                            f"{subject_token}/{mri_id}/"
+                            f"slide_{slide_idx:02d}_{roi_slug}_{plane}.png"
+                        )
+                        uploaded_attention = _upload_file_to_minio(
+                            minio_client,
+                            attention_bucket,
+                            attention_key,
+                            local_path,
+                        )
+                        view_entries.append(
+                            {
+                                "plane": plane,
+                                "bucket": attention_bucket,
+                                "key": attention_key,
+                                "object": uploaded_attention,
+                            }
+                        )
+                        logger.info(
+                            "Uploaded MRI CAM slide image (slide=%s, plane=%s): %s",
+                            slide_idx,
+                            plane,
+                            uploaded_attention,
+                        )
+                    except Exception as cam_upload_exc:
+                        logger.warning(
+                            "Failed to upload MRI CAM slide image (slide=%s, plane=%s): %s",
+                            slide_idx,
+                            plane,
+                            cam_upload_exc,
+                        )
+
+                if view_entries:
+                    attention_slide_entries.append(
+                        {
+                            "rank": int(slide.get("rank") or slide_idx),
+                            "roi": slide.get("roi"),
+                            "description": slide.get("description"),
+                            "score": slide.get("score"),
+                            "percentage": slide.get("percentage"),
+                            "severity": slide.get("severity"),
+                            "sliceIndices": slide.get("sliceIndices"),
+                            "views": view_entries,
+                        }
+                    )
+
+        if attention_slide_entries:
+            ai_analysis["attentionSlides"] = attention_slide_entries
+            first_slide_views = attention_slide_entries[0].get("views")
+            if isinstance(first_slide_views, list):
+                attention_map_entries = [entry for entry in first_slide_views if isinstance(entry, dict)]
+
+        if not attention_map_entries:
+            local_paths = xai_payload.get("local_paths")
+            if not isinstance(local_paths, dict):
+                local_paths = {"axial": xai_payload.get("local_path")}
+
+            for plane in ("axial", "coronal", "sagittal"):
+                local_path = local_paths.get(plane)
+                if not isinstance(local_path, str) or not os.path.exists(local_path):
+                    continue
+                try:
+                    attention_bucket = "mri-xai"
+                    attention_key = f"{subject_token}/{mri_id}_cam_{plane}.png"
+                    uploaded_attention = _upload_file_to_minio(
+                        minio_client,
+                        attention_bucket,
+                        attention_key,
+                        local_path,
+                    )
+                    attention_map_entries.append(
+                        {
+                            "plane": plane,
+                            "bucket": attention_bucket,
+                            "key": attention_key,
+                            "object": uploaded_attention,
+                        }
+                    )
+                    logger.info("Uploaded MRI CAM image (%s) to MinIO: %s", plane, uploaded_attention)
+                except Exception as cam_upload_exc:
+                    logger.warning("Failed to upload MRI CAM image (%s): %s", plane, cam_upload_exc)
+
+        if attention_map_entries:
+            ai_analysis["attentionMaps"] = attention_map_entries
+            axial_entry = next((entry for entry in attention_map_entries if entry.get("plane") == "axial"), None)
+            if not axial_entry:
+                axial_entry = attention_map_entries[0]
+            ai_analysis["attentionMapObject"] = axial_entry.get("object")
+            ai_analysis["attentionMapBucket"] = axial_entry.get("bucket")
+            ai_analysis["attentionMapKey"] = axial_entry.get("key")
+
         logger.info(f"Inference Result: {predicted_stage} (Confidence: {confidence:.4f})")
 
         # 4. Save Results to DB
@@ -686,6 +860,9 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
                     predicted_stage = %s,
                     confidence = %s,
                     probabilities = %s,
+                    model_version = %s,
+                    region_contributions = %s,
+                    ai_analysis = %s,
                     file_path = %s,
                     preprocessing_status = 'completed',
                     processed_at = TIMEZONE('Asia/Seoul', NOW())
@@ -695,6 +872,9 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
                 predicted_stage,
                 confidence,
                 json.dumps(probabilities),
+                model_version,
+                json.dumps(region_contributions),
+                json.dumps(ai_analysis),
                 stored_file_path,
                 mri_id,
             ))
@@ -706,7 +886,9 @@ def process_mri_scan(self, mri_id: str, patient_id: str, file_path: str):
             'status': 'completed',
             'mri_id': mri_id,
             'result': predicted_stage,
-            'confidence': confidence
+            'confidence': confidence,
+            'attention_map': ai_analysis.get("attentionMapObject"),
+            'attention_maps': ai_analysis.get("attentionMaps"),
         }
 
     except Exception as e:

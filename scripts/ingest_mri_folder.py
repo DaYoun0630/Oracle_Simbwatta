@@ -4,6 +4,7 @@ import psycopg2
 import re
 import socket
 import subprocess
+import argparse
 from uuid import uuid4
 from celery import Celery
 
@@ -93,7 +94,7 @@ def extract_subject_id(path: str) -> str:
         return match.group(0)
     return os.path.basename((path or "").rstrip("/"))
 
-def ingest_mri(folder_path):
+def ingest_mri(folder_path, patient_id_override: str | None = None):
     # MinIO object/prefix path passthrough
     if folder_path.startswith("s3://") or folder_path.startswith("mri-scans/"):
         source_path = folder_path
@@ -133,17 +134,27 @@ def ingest_mri(folder_path):
     try:
         cur = conn.cursor()
         
-        # 3. 환자 조회 (Subject ID -> User ID)
-        cur.execute("SELECT user_id FROM patients WHERE subject_id = %s", (subject_id,))
-        row = cur.fetchone()
-        
-        if not row:
-            print(f"❌ Error: Patient with subject_id '{subject_id}' not found in DB.")
-            print("   -> Please register the patient first.")
-            return
-            
-        patient_id = row[0]
-        print(f"✅ Found Patient ID: {patient_id}")
+        # 3. 환자 조회
+        if patient_id_override is not None:
+            cur.execute("SELECT user_id, subject_id FROM patients WHERE user_id = %s", (patient_id_override,))
+            row = cur.fetchone()
+            if not row:
+                print(f"❌ Error: Patient with user_id '{patient_id_override}' not found in DB.")
+                return
+            patient_id = row[0]
+            db_subject_id = row[1]
+            if not subject_id and db_subject_id:
+                subject_id = str(db_subject_id)
+            print(f"✅ Using explicit Patient ID: {patient_id}")
+        else:
+            cur.execute("SELECT user_id FROM patients WHERE subject_id = %s", (subject_id,))
+            row = cur.fetchone()
+            if not row:
+                print(f"❌ Error: Patient with subject_id '{subject_id}' not found in DB.")
+                print("   -> Pass --patient-id to target a specific user.")
+                return
+            patient_id = row[0]
+            print(f"✅ Found Patient ID: {patient_id}")
         
         # 4. Assessment 레코드 생성 (UUID 발급)
         assessment_id = str(uuid4())
@@ -193,16 +204,29 @@ def ingest_mri(folder_path):
     finally:
         conn.close()
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Ingest MRI folder/object and trigger worker pipeline.")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=DEFAULT_MRI_FOLDER_PATH,
+        help="MRI folder path or MinIO object/prefix path",
+    )
+    parser.add_argument(
+        "--patient-id",
+        dest="patient_id",
+        default=None,
+        help="Optional explicit patient user_id override (e.g., 109 for 오동군)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    if len(sys.argv) >= 2:
-        target_path = sys.argv[1]
-    else:
-        target_path = DEFAULT_MRI_FOLDER_PATH
-        print(f"ℹ️  No path argument provided. Using default path: {target_path}")
-        print("   (Override with CLI arg or MRI_INGEST_DEFAULT_PATH env var)")
+    args = parse_args()
+    target_path = args.path
 
     if not target_path:
         print("❌ Error: MRI path is empty.")
         sys.exit(1)
 
-    ingest_mri(target_path)
+    ingest_mri(target_path, patient_id_override=args.patient_id)

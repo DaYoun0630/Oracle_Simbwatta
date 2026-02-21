@@ -1,269 +1,376 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
+
+type AttentionMapInput = {
+  plane?: string;
+  label?: string;
+  url?: string;
+  path?: string;
+  image?: string;
+};
+
+type AttentionSlideInput = {
+  rank?: number;
+  roi?: string;
+  description?: string;
+  score?: number;
+  percentage?: number;
+  views?: AttentionMapInput[];
+};
+
+type AttentionMapItem = {
+  plane: 'axial' | 'coronal' | 'sagittal';
+  label: string;
+  url: string;
+};
+
+type AttentionSlideItem = {
+  rank: number;
+  roi?: string;
+  description?: string;
+  percentage?: number | null;
+  views: AttentionMapItem[];
+};
 
 const props = defineProps<{
   originalImage?: string;
-  originalNifti?: string;
+  originalMaps?: AttentionMapInput[];
   attentionMap?: string;
+  attentionMaps?: AttentionMapInput[];
+  attentionSlides?: AttentionSlideInput[];
   loading?: boolean;
 }>();
 
-const niftiCanvasRef = ref<HTMLCanvasElement | null>(null);
-const niftiLoading = ref(false);
-const niftiError = ref('');
+const failedOriginalUrls = ref<string[]>([]);
+const failedAttentionUrls = ref<string[]>([]);
+const selectedSlideIndex = ref(0);
+const selectedViewIndex = ref(0);
 
-const hasOriginal = computed(() => !!props.originalImage);
-const hasOriginalNifti = computed(() => !!props.originalNifti);
-const hasAttention = computed(() => !!props.attentionMap);
-
-const isGzip = (bytes: Uint8Array) => bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-const bytesPerVoxel = (datatype: number) => {
-  switch (datatype) {
-    case 2: // uint8
-    case 256: // int8
-      return 1;
-    case 4: // int16
-    case 512: // uint16
-      return 2;
-    case 8: // int32
-    case 16: // float32
-    case 768: // uint32
-      return 4;
-    case 64: // float64
-      return 8;
-    default:
-      throw new Error(`지원하지 않는 NIfTI datatype: ${datatype}`);
-  }
+const planeOrder: Record<AttentionMapItem['plane'], number> = {
+  axial: 0,
+  coronal: 1,
+  sagittal: 2
 };
 
-const readVoxelValue = (view: DataView, datatype: number, offset: number, littleEndian: boolean) => {
-  switch (datatype) {
-    case 2:
-      return view.getUint8(offset);
-    case 256:
-      return view.getInt8(offset);
-    case 4:
-      return view.getInt16(offset, littleEndian);
-    case 512:
-      return view.getUint16(offset, littleEndian);
-    case 8:
-      return view.getInt32(offset, littleEndian);
-    case 16:
-      return view.getFloat32(offset, littleEndian);
-    case 64:
-      return view.getFloat64(offset, littleEndian);
-    case 768:
-      return view.getUint32(offset, littleEndian);
-    default:
-      throw new Error(`지원하지 않는 NIfTI datatype: ${datatype}`);
-  }
+const normalizePlane = (value: unknown): AttentionMapItem['plane'] => {
+  const text = String(value || '').trim().toLowerCase();
+  if (text.startsWith('ax')) return 'axial';
+  if (text.startsWith('cor')) return 'coronal';
+  if (text.startsWith('sag')) return 'sagittal';
+  return 'axial';
 };
 
-const parseNiftiHeader = (buffer: ArrayBuffer) => {
-  const view = new DataView(buffer);
-  const sizeofHdrLe = view.getInt32(0, true);
-  const sizeofHdrBe = view.getInt32(0, false);
-  const littleEndian =
-    sizeofHdrLe === 348 ? true : sizeofHdrBe === 348 ? false : null;
-
-  if (littleEndian === null) {
-    throw new Error('유효한 NIfTI 헤더가 아닙니다.');
-  }
-
-  const width = view.getInt16(42, littleEndian);
-  const height = view.getInt16(44, littleEndian);
-  const depth = view.getInt16(46, littleEndian);
-  const datatype = view.getInt16(70, littleEndian);
-  const voxOffset = Math.floor(view.getFloat32(108, littleEndian));
-
-  if (width <= 0 || height <= 0 || depth <= 0) {
-    throw new Error('NIfTI 볼륨 차원 정보가 유효하지 않습니다.');
-  }
-
-  return {
-    littleEndian,
-    width,
-    height,
-    depth,
-    datatype,
-    voxOffset
-  };
+const resolveAttentionLabel = (plane: AttentionMapItem['plane']) => {
+  if (plane === 'coronal') return 'Coronal';
+  if (plane === 'sagittal') return 'Sagittal';
+  return 'Axial';
 };
 
-const maybeGunzip = async (buffer: ArrayBuffer): Promise<ArrayBuffer> => {
-  const bytes = new Uint8Array(buffer);
-  if (!isGzip(bytes)) {
-    return buffer;
-  }
+const parseMapItems = (maps: AttentionMapInput[], options?: { swapAxialSagittal?: boolean }) => {
+  const parsed = maps
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const url = String(item.url || item.path || item.image || '').trim();
+      if (!url) return null;
+      let plane = normalizePlane(item.plane);
+      // CAM artifact in current pipeline is exported with axial/sagittal swapped.
+      // Hard-map here so UI label/order matches the actual anatomical view.
+      if (options?.swapAxialSagittal) {
+        if (plane === 'axial') plane = 'sagittal';
+        else if (plane === 'sagittal') plane = 'axial';
+      }
+      return {
+        plane,
+        label: resolveAttentionLabel(plane),
+        url
+      } as AttentionMapItem;
+    })
+    .filter((item): item is AttentionMapItem => Boolean(item));
 
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error('브라우저에서 gzip 해제를 지원하지 않습니다.');
-  }
-
-  const decompressedStream = new Blob([bytes])
-    .stream()
-    .pipeThrough(new DecompressionStream('gzip'));
-  return new Response(decompressedStream).arrayBuffer();
-};
-
-const renderMiddleSlice = (buffer: ArrayBuffer) => {
-  const { littleEndian, width, height, depth, datatype, voxOffset } = parseNiftiHeader(buffer);
-  const bytes = bytesPerVoxel(datatype);
-  const volumeSize = width * height * depth;
-  const requiredSize = voxOffset + volumeSize * bytes;
-  if (requiredSize > buffer.byteLength) {
-    throw new Error('NIfTI 데이터 길이가 헤더 정보와 일치하지 않습니다.');
-  }
-
-  const view = new DataView(buffer);
-  const sliceIndex = Math.floor(depth / 2);
-  const sliceSize = width * height;
-  const values = new Float32Array(sliceSize);
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const pixelIndex = y * width + x;
-      const voxelIndex = sliceIndex * sliceSize + pixelIndex;
-      const offset = voxOffset + voxelIndex * bytes;
-      values[pixelIndex] = readVoxelValue(view, datatype, offset, littleEndian);
+  const uniqueByPlane = new Map<AttentionMapItem['plane'], AttentionMapItem>();
+  parsed.forEach((item) => {
+    if (!uniqueByPlane.has(item.plane)) {
+      uniqueByPlane.set(item.plane, item);
     }
-  }
+  });
 
-  const finiteValues = Array.from(values).filter((value) => Number.isFinite(value));
-  if (finiteValues.length === 0) {
-    throw new Error('NIfTI 슬라이스에 유효한 픽셀 값이 없습니다.');
-  }
-
-  finiteValues.sort((a, b) => a - b);
-  const lowIndex = Math.floor((finiteValues.length - 1) * 0.02);
-  const highIndex = Math.floor((finiteValues.length - 1) * 0.98);
-  const low = finiteValues[lowIndex];
-  const high = finiteValues[highIndex];
-  const min = Number.isFinite(low) ? low : finiteValues[0];
-  const max = Number.isFinite(high) && high > min ? high : finiteValues[finiteValues.length - 1];
-  const range = max - min || 1;
-
-  const canvas = niftiCanvasRef.value;
-  if (!canvas) {
-    throw new Error('NIfTI 캔버스를 찾을 수 없습니다.');
-  }
-
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('캔버스 2D 컨텍스트를 생성할 수 없습니다.');
-  }
-
-  const imageData = context.createImageData(width, height);
-  for (let i = 0; i < values.length; i += 1) {
-    const source = Number.isFinite(values[i]) ? values[i] : min;
-    const gray = Math.round(clamp((source - min) / range, 0, 1) * 255);
-    const offset = i * 4;
-    imageData.data[offset] = gray;
-    imageData.data[offset + 1] = gray;
-    imageData.data[offset + 2] = gray;
-    imageData.data[offset + 3] = 255;
-  }
-  context.putImageData(imageData, 0, 0);
+  return Array.from(uniqueByPlane.values()).sort(
+    (a, b) => planeOrder[a.plane] - planeOrder[b.plane]
+  );
 };
 
-const loadNifti = async () => {
-  if (!props.originalNifti || props.originalImage) {
-    return;
+const fallbackAttentionMaps = computed<AttentionMapItem[]>(() => {
+  const provided = Array.isArray(props.attentionMaps) ? props.attentionMaps : [];
+  const parsed = parseMapItems(provided, { swapAxialSagittal: true });
+  if (parsed.length > 0) return parsed;
+
+  const single = String(props.attentionMap || '').trim();
+  if (!single) return [];
+  return [{ plane: 'axial', label: 'Axial', url: single }];
+});
+
+const fallbackOriginalMaps = computed<AttentionMapItem[]>(() => {
+  const provided = Array.isArray(props.originalMaps) ? props.originalMaps : [];
+  const parsed = parseMapItems(provided);
+  if (parsed.length > 0) return parsed;
+
+  const single = String(props.originalImage || '').trim();
+  if (!single) return [];
+  return [{ plane: 'axial', label: 'Axial', url: single }];
+});
+
+const resolvedAttentionSlides = computed<AttentionSlideItem[]>(() => {
+  const sourceSlides = Array.isArray(props.attentionSlides) ? props.attentionSlides : [];
+  const parsed = sourceSlides
+    .map((slide, index) => {
+      if (!slide || typeof slide !== 'object') return null;
+      const views = parseMapItems(Array.isArray(slide.views) ? slide.views : [], { swapAxialSagittal: true });
+      if (views.length === 0) return null;
+      const rankValue = Number(slide.rank);
+      return {
+        rank: Number.isFinite(rankValue) ? rankValue : index + 1,
+        roi: typeof slide.roi === 'string' ? slide.roi : undefined,
+        description: typeof slide.description === 'string' ? slide.description : undefined,
+        percentage: Number.isFinite(Number(slide.percentage)) ? Number(slide.percentage) : null,
+        views
+      } as AttentionSlideItem;
+    })
+    .filter((item): item is AttentionSlideItem => Boolean(item));
+
+  if (parsed.length > 0) {
+    return parsed.sort((a, b) => a.rank - b.rank);
   }
 
-  niftiLoading.value = true;
-  niftiError.value = '';
-  try {
-    const response = await fetch(props.originalNifti);
-    if (!response.ok) {
-      throw new Error(`NIfTI 요청 실패 (${response.status})`);
-    }
-    const compressedBuffer = await response.arrayBuffer();
-    const decompressedBuffer = await maybeGunzip(compressedBuffer);
-    // loading placeholder를 먼저 내린 뒤 canvas가 마운트되면 그린다.
-    niftiLoading.value = false;
-    await nextTick();
-    renderMiddleSlice(decompressedBuffer);
-  } catch (error) {
-    console.error(error);
-    niftiError.value = 'NIfTI 원본 이미지를 표시할 수 없습니다.';
-  } finally {
-    if (niftiLoading.value) {
-      niftiLoading.value = false;
-    }
+  if (fallbackAttentionMaps.value.length > 0) {
+    return [
+      {
+        rank: 1,
+        views: fallbackAttentionMaps.value
+      }
+    ];
   }
-};
+  return [];
+});
+
+const currentSlide = computed<AttentionSlideItem | null>(() => {
+  if (!resolvedAttentionSlides.value.length) return null;
+  const index = Math.min(
+    Math.max(selectedSlideIndex.value, 0),
+    resolvedAttentionSlides.value.length - 1
+  );
+  return resolvedAttentionSlides.value[index] || null;
+});
+
+const attentionViews = computed<AttentionMapItem[]>(() => {
+  const slide = currentSlide.value;
+  if (slide?.views?.length) {
+    return [...slide.views].sort((a, b) => planeOrder[a.plane] - planeOrder[b.plane]);
+  }
+  return [...fallbackAttentionMaps.value].sort((a, b) => planeOrder[a.plane] - planeOrder[b.plane]);
+});
+
+const currentAttentionView = computed<AttentionMapItem | null>(() => {
+  if (!attentionViews.value.length) return null;
+  const index = Math.min(Math.max(selectedViewIndex.value, 0), attentionViews.value.length - 1);
+  return attentionViews.value[index] || null;
+});
+
+const currentOriginalView = computed<AttentionMapItem | null>(() => {
+  if (!fallbackOriginalMaps.value.length) return null;
+
+  const targetPlane = currentAttentionView.value?.plane;
+  if (targetPlane) {
+    const matched = fallbackOriginalMaps.value.find((item) => item.plane === targetPlane);
+    if (matched) return matched;
+  }
+
+  const index = Math.min(Math.max(selectedViewIndex.value, 0), fallbackOriginalMaps.value.length - 1);
+  return fallbackOriginalMaps.value[index] || fallbackOriginalMaps.value[0];
+});
 
 watch(
-  () => [props.originalImage, props.originalNifti],
+  () =>
+    `${props.originalImage || ''}|${(props.originalMaps || []).map((item) => `${item?.plane}:${item?.url || item?.path || item?.image || ''}`).join('|')}`,
   () => {
-    if (props.originalImage || !props.originalNifti) {
-      niftiLoading.value = false;
-      niftiError.value = '';
+    failedOriginalUrls.value = [];
+  }
+);
+
+watch(
+  resolvedAttentionSlides,
+  (slides) => {
+    if (!slides.length) {
+      selectedSlideIndex.value = 0;
       return;
     }
-    void loadNifti();
+    if (selectedSlideIndex.value >= slides.length) {
+      selectedSlideIndex.value = slides.length - 1;
+    }
   },
   { immediate: true }
 );
+
+watch(
+  () =>
+    resolvedAttentionSlides.value
+      .map((slide) => `${slide.rank}:${slide.views.map((view) => `${view.plane}:${view.url}`).join('|')}`)
+      .join('||'),
+  () => {
+    failedAttentionUrls.value = [];
+  }
+);
+
+watch(
+  () => attentionViews.value.length,
+  (length) => {
+    if (!length) {
+      selectedViewIndex.value = 0;
+      return;
+    }
+    if (selectedViewIndex.value >= length) {
+      selectedViewIndex.value = length - 1;
+    }
+  },
+  { immediate: true }
+);
+
+const hasOriginalImage = (url: string) => Boolean(url && !failedOriginalUrls.value.includes(url));
+const hasOriginal = computed(() => Boolean(currentOriginalView.value?.url) && hasOriginalImage(currentOriginalView.value?.url || ''));
+const hasViewPaging = computed(() => attentionViews.value.length > 1);
+const viewPositionLabel = computed(() => {
+  const total = attentionViews.value.length || fallbackOriginalMaps.value.length;
+  if (!total) return '0 / 0';
+  const current = Math.min(Math.max(selectedViewIndex.value, 0), total - 1) + 1;
+  return `${current} / ${total}`;
+});
+
+const handleOriginalError = (url: string) => {
+  if (!url) return;
+  if (!failedOriginalUrls.value.includes(url)) {
+    failedOriginalUrls.value = [...failedOriginalUrls.value, url];
+  }
+};
+
+const handleAttentionError = (url: string) => {
+  if (!url) return;
+  if (!failedAttentionUrls.value.includes(url)) {
+    failedAttentionUrls.value = [...failedAttentionUrls.value, url];
+  }
+};
+
+const hasViewImage = (url: string) => Boolean(url && !failedAttentionUrls.value.includes(url));
+
+const goPrevView = () => {
+  const total = attentionViews.value.length;
+  if (!total) return;
+  selectedViewIndex.value = (selectedViewIndex.value - 1 + total) % total;
+};
+
+const goNextView = () => {
+  const total = attentionViews.value.length;
+  if (!total) return;
+  selectedViewIndex.value = (selectedViewIndex.value + 1) % total;
+};
 </script>
 
 <template>
   <div class="mri-image-display">
     <div class="image-grid">
-      <!-- 원본 MRI -->
       <div class="image-card">
         <h4 class="image-label">원본 MRI</h4>
         <div class="image-container">
-          <div v-if="loading || niftiLoading" class="image-placeholder loading">
+          <div v-if="loading" class="image-placeholder loading">
             <div class="spinner"></div>
             <span>MRI 이미지 로딩 중...</span>
           </div>
-          <template v-else-if="hasOriginal">
+          <template v-else-if="hasOriginal && currentOriginalView">
             <img
-              :src="originalImage"
-              alt="Original MRI"
+              :key="`original-${currentOriginalView.plane}-${currentOriginalView.url}`"
+              :class="{
+                'original-rotated-180':
+                  currentOriginalView.plane === 'coronal' || currentOriginalView.plane === 'sagittal'
+              }"
+              :src="currentOriginalView.url"
+              :alt="`Original MRI ${currentOriginalView.label}`"
               loading="lazy"
-              @error="($event.target as HTMLImageElement).src = ''"
-            />
-          </template>
-          <template v-else-if="hasOriginalNifti && !niftiError">
-            <canvas
-              ref="niftiCanvasRef"
-              class="nifti-canvas"
-              aria-label="Original MRI NIfTI middle slice"
+              @error="handleOriginalError(currentOriginalView.url)"
             />
           </template>
           <div v-else class="image-placeholder">
-            <span>{{ niftiError || 'MRI 이미지가 없습니다' }}</span>
+            <span>MRI 이미지가 없습니다</span>
           </div>
+        </div>
+        <div class="attention-view-pager original-view-pager">
+          <button
+            type="button"
+            class="pager-button"
+            aria-label="원본 이전 단면"
+            :disabled="!hasViewPaging"
+            @click="goPrevView"
+          >
+            ‹
+          </button>
+          <div class="attention-view-meta original-view-meta">
+            <strong>{{ currentAttentionView?.label || currentOriginalView?.label || 'Axial' }}</strong>
+            <span class="pager-index">{{ viewPositionLabel }}</span>
+          </div>
+          <button
+            type="button"
+            class="pager-button"
+            aria-label="원본 다음 단면"
+            :disabled="!hasViewPaging"
+            @click="goNextView"
+          >
+            ›
+          </button>
         </div>
       </div>
 
-      <!-- Attention Map -->
-      <div class="image-card">
+      <div class="image-card attention-card">
         <h4 class="image-label">Attention Map</h4>
-        <div class="image-container">
+        <div class="image-container view-container">
           <div v-if="loading" class="image-placeholder loading">
             <div class="spinner"></div>
-            <span>Attention Map 로딩 중...</span>
           </div>
-          <template v-else-if="hasAttention">
+          <template v-else-if="currentAttentionView && hasViewImage(currentAttentionView.url)">
             <img
-              :src="attentionMap"
-              alt="Attention Map"
+              :key="`attention-${currentAttentionView.plane}-${currentAttentionView.url}`"
+              :class="{
+                'attention-rotated': true
+              }"
+              :src="currentAttentionView.url"
+              :alt="`Attention Map ${currentAttentionView.label}`"
               loading="lazy"
-              @error="($event.target as HTMLImageElement).src = ''"
+              @error="handleAttentionError(currentAttentionView.url)"
             />
           </template>
           <div v-else class="image-placeholder">
             <span>Attention Map이 없습니다</span>
           </div>
+        </div>
+        <div class="attention-view-pager">
+          <button
+            type="button"
+            class="pager-button"
+            aria-label="이전 단면"
+            :disabled="!hasViewPaging"
+            @click="goPrevView"
+          >
+            ‹
+          </button>
+          <div class="attention-view-meta">
+            <strong>{{ currentAttentionView?.label || 'Axial' }}</strong>
+            <span class="pager-index">{{ viewPositionLabel }}</span>
+          </div>
+          <button
+            type="button"
+            class="pager-button"
+            aria-label="다음 단면"
+            :disabled="!hasViewPaging"
+            @click="goNextView"
+          >
+            ›
+          </button>
         </div>
       </div>
     </div>
@@ -291,6 +398,10 @@ watch(
   gap: 12px;
 }
 
+.attention-card {
+  gap: 10px;
+}
+
 .image-label {
   font-size: 16px;
   font-weight: 800;
@@ -308,6 +419,11 @@ watch(
   justify-content: center;
 }
 
+.view-container {
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+}
+
 .image-container img {
   width: 100%;
   height: 100%;
@@ -315,12 +431,14 @@ watch(
   display: block;
 }
 
-.nifti-canvas {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-  background: #000;
+.image-container img.original-rotated-180 {
+  transform: rotate(180deg);
+  transform-origin: center center;
+}
+
+.view-container img.attention-rotated {
+  transform: rotate(-90deg);
+  transform-origin: center center;
 }
 
 .image-placeholder {
@@ -334,18 +452,65 @@ watch(
   background: #e5e7eb;
   color: #666;
   font-weight: 700;
-  font-size: 15px;
+  font-size: 12px;
   text-align: center;
-  padding: 20px;
+  padding: 10px;
 }
 
 .image-placeholder.loading {
   background: #f0f3f6;
 }
 
+.attention-view-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.attention-view-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.attention-view-meta strong {
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: 800;
+}
+
+.pager-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d7dde4;
+  border-radius: 999px;
+  background: #fff;
+  color: #4a5563;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pager-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.pager-index {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9aa3ad;
+}
+
 .spinner {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 3px solid #e5e7eb;
   border-top-color: #4cb7b7;
   border-radius: 50%;
@@ -358,8 +523,7 @@ watch(
   }
 }
 
-/* 반응형 - 모바일에서는 세로 스택 */
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .image-grid {
     grid-template-columns: 1fr;
   }

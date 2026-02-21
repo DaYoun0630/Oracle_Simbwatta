@@ -29,3 +29,5 @@ src/claude/worker/templates/mni_icbm152_t1_tal_nlin_sym_09a_mask.nii
 
 # files
 mri_slice_viewer.ipynb
+*.pdf
+10_full_pipeline copy 2.ipynb

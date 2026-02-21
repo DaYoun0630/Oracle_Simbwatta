@@ -1,0 +1,414 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import threading
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
+
+HARDCODED_BASE_DIR = "/Users/machanho/Desktop/uv/ad"
+PLANE_ORDER: Tuple[str, ...] = ("axial", "coronal", "sagittal")
+PLANE_META: Dict[str, Tuple[int, str]] = {
+    "axial": (0, "Axial"),
+    "coronal": (1, "Coronal"),
+    "sagittal": (2, "Sagittal"),
+}
+
+_RUNTIME_LOCK = threading.Lock()
+_CAM_LOCK = threading.Lock()
+_RUNTIME: Dict[str, Any] | None = None
+
+
+def _severity_from_percentage(percentage: float) -> str:
+    if percentage >= 35.0:
+        return "high"
+    if percentage >= 20.0:
+        return "medium"
+    return "low"
+
+
+def _sanitize_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolve_existing_path(candidates: List[Path], kind: str) -> Path:
+    for path in candidates:
+        if path and path.exists():
+            return path
+    raise FileNotFoundError(f"Could not resolve {kind}. candidates={candidates}")
+
+
+def _resolve_runtime_paths() -> Dict[str, Path]:
+    root = _repo_root()
+
+    notebook_env = os.getenv("MRI_CAM_NOTEBOOK_PATH", "").strip()
+    notebook_candidates = [
+        Path(notebook_env) if notebook_env else None,
+        root / "models" / "dig_help" / "inference_cam_5.ipynb",
+        Path("/models/dig_help/inference_cam_5.ipynb"),
+        Path("/app/models/dig_help/inference_cam_5.ipynb"),
+    ]
+    notebook_path = _resolve_existing_path(
+        [p for p in notebook_candidates if p is not None],
+        kind="inference_cam_5.ipynb",
+    )
+
+    cn_env = os.getenv("MRI_CAM_CN_MODEL_PATH", "").strip()
+    ci_env = os.getenv("MRI_CAM_CI_MODEL_PATH", "").strip()
+    model_dir_env = os.getenv("MRI_MODEL_DIR", "").strip()
+    model_dir = Path(model_dir_env) if model_dir_env else None
+
+    cn_candidates = [
+        Path(cn_env) if cn_env else None,
+        (model_dir / "cn_f189.pth") if model_dir else None,
+        (model_dir / "model_cn.pth") if model_dir else None,
+        root / "models" / "dig_help" / "cn_f189.pth",
+        root / "models" / "dig_help" / "model_cn.pth",
+        Path("/app/models/dig_help/cn_f189.pth"),
+        Path("/app/models/dig_help/model_cn.pth"),
+    ]
+    ci_candidates = [
+        Path(ci_env) if ci_env else None,
+        (model_dir / "ci_f184.pth") if model_dir else None,
+        (model_dir / "model_ci.pth") if model_dir else None,
+        root / "models" / "dig_help" / "ci_f184.pth",
+        root / "models" / "dig_help" / "model_ci.pth",
+        Path("/app/models/dig_help/ci_f184.pth"),
+        Path("/app/models/dig_help/model_ci.pth"),
+    ]
+
+    cn_model_path = _resolve_existing_path([p for p in cn_candidates if p is not None], kind="CN model")
+    ci_model_path = _resolve_existing_path([p for p in ci_candidates if p is not None], kind="CI model")
+
+    runtime_base = root / ".tmp_notebook_cam_runtime"
+    runtime_base.mkdir(parents=True, exist_ok=True)
+    return {
+        "root": root,
+        "runtime_base": runtime_base,
+        "notebook_path": notebook_path,
+        "cn_model_path": cn_model_path,
+        "ci_model_path": ci_model_path,
+    }
+
+
+def _code_cell_map(notebook_path: Path) -> Dict[int, str]:
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    code_map: Dict[int, str] = {}
+    for index, cell in enumerate(notebook.get("cells", [])):
+        if cell.get("cell_type") != "code":
+            continue
+        code_map[index] = "".join(cell.get("source", []))
+    return code_map
+
+
+def _exec_cell(namespace: Dict[str, Any], code: str, cell_index: int) -> None:
+    compiled = compile(code, f"inference_cam_5.ipynb#cell{cell_index}", "exec")
+    exec(compiled, namespace)
+
+
+def _build_runtime() -> Dict[str, Any]:
+    paths = _resolve_runtime_paths()
+    code_map = _code_cell_map(paths["notebook_path"])
+
+    missing = [idx for idx in (1, 3, 5, 7, 9, 11, 19, 21) if idx not in code_map]
+    if missing:
+        raise RuntimeError(f"Notebook missing required code cells: {missing}")
+
+    runtime: Dict[str, Any] = {}
+    _exec_cell(runtime, code_map[1], 1)
+
+    # Keep original code intact while redirecting hardcoded BASE_DIR at runtime.
+    original_path_ctor = runtime.get("Path", Path)
+
+    def _patched_path(value: str | os.PathLike[str], *args, **kwargs):
+        resolved = original_path_ctor(value, *args, **kwargs)
+        if str(resolved) == HARDCODED_BASE_DIR:
+            return paths["runtime_base"]
+        return resolved
+
+    runtime["Path"] = _patched_path
+    _exec_cell(runtime, code_map[3], 3)
+    runtime["Path"] = original_path_ctor
+
+    runtime["CN_MODEL_PATH"] = paths["cn_model_path"]
+    runtime["CI_MODEL_PATH"] = paths["ci_model_path"]
+    runtime["OUTPUT_DIR"] = paths["runtime_base"]
+
+    _exec_cell(runtime, code_map[5], 5)
+    _exec_cell(runtime, code_map[7], 7)
+    _exec_cell(runtime, code_map[9], 9)
+
+    # Execute only utility definitions from cell 11.
+    cell11 = code_map[11]
+    utility_part = cell11.split("# 메타데이터 로드", 1)[0]
+    _exec_cell(runtime, utility_part, 11)
+
+    _exec_cell(runtime, code_map[19], 19)
+    _exec_cell(runtime, code_map[21], 21)
+    runtime["plt"].ioff()
+
+    logger.info(
+        "Notebook CAM runtime loaded: notebook=%s cn=%s ci=%s",
+        paths["notebook_path"],
+        paths["cn_model_path"],
+        paths["ci_model_path"],
+    )
+    return runtime
+
+
+def _get_runtime() -> Dict[str, Any]:
+    global _RUNTIME
+    if _RUNTIME is not None:
+        return _RUNTIME
+    with _RUNTIME_LOCK:
+        if _RUNTIME is None:
+            _RUNTIME = _build_runtime()
+    return _RUNTIME
+
+
+def _choose_stage(runtime: Dict[str, Any], final_label: str) -> Tuple[Any, int, str, str]:
+    normalized = str(final_label or "").strip().upper()
+    if normalized == "CN":
+        return runtime["cn_model"], 0, "Stage1_CN-vs-CI", "CN"
+    if normalized == "AD":
+        return runtime["ci_model"], 1, "Stage2_MCI-vs-AD", "AD"
+    return runtime["ci_model"], 0, "Stage2_MCI-vs-AD", "MCI"
+
+
+def _save_roi_plane_overlay(
+    runtime: Dict[str, Any],
+    volume_np: np.ndarray,
+    cam_np: np.ndarray,
+    brain_mask: np.ndarray,
+    center: List[int],
+    plane: str,
+    output_path: Path,
+) -> int:
+    dim, _ = PLANE_META[plane]
+    # Use a robust foreground profile for slice selection.
+    # Some preprocessed files have near-flat masks, where argmax would pick
+    # index 0 and produce visually clipped anatomy.
+    mask_for_profile = np.asarray(brain_mask > 0.0, dtype=np.float32)
+    coverage = float(mask_for_profile.mean()) if mask_for_profile.size else 0.0
+    if coverage < 0.02 or coverage > 0.98:
+        median_val = float(np.median(volume_np))
+        dynamic_eps = max(
+            1e-3,
+            float(np.percentile(volume_np, 95) - np.percentile(volume_np, 5)) * 0.03,
+        )
+        mask_for_profile = np.asarray(np.abs(volume_np - median_val) > dynamic_eps, dtype=np.float32)
+        if float(mask_for_profile.mean()) < 0.02:
+            mask_for_profile = np.asarray(
+                volume_np > np.percentile(volume_np, 60),
+                dtype=np.float32,
+            )
+
+    foreground_coords = np.argwhere(mask_for_profile > 0.0)
+    if foreground_coords.size:
+        min_idx = int(foreground_coords[:, dim].min())
+        max_idx = int(foreground_coords[:, dim].max())
+        safe_index = int(round((min_idx + max_idx) / 2.0))
+    else:
+        if dim == 0:
+            safe_index = int(volume_np.shape[0] // 2)
+        elif dim == 1:
+            safe_index = int(volume_np.shape[1] // 2)
+        else:
+            safe_index = int(volume_np.shape[2] // 2)
+
+    if plane == "axial":
+        axial_shift = int(os.getenv("MRI_AXIAL_SLICE_SHIFT", "0"))
+        if axial_shift != 0:
+            safe_index = int(np.clip(safe_index + axial_shift, 0, volume_np.shape[0] - 1))
+
+    # Keep full anatomical shape on base image (no base masking).
+    if dim == 0:
+        base = volume_np[safe_index, :, :]
+        mask_2d = mask_for_profile[safe_index, :, :]
+    elif dim == 1:
+        base = volume_np[:, safe_index, :]
+        mask_2d = mask_for_profile[:, safe_index, :]
+    else:
+        base = volume_np[:, :, safe_index]
+        mask_2d = mask_for_profile[:, :, safe_index]
+
+    if dim == 0:
+        heat = cam_np[safe_index, :, :]
+    elif dim == 1:
+        heat = cam_np[:, safe_index, :]
+    else:
+        heat = cam_np[:, :, safe_index]
+
+    threshold = float(runtime["percentile_in_mask"](cam_np, brain_mask, 95, fallback=0.5))
+    heat_masked = runtime["_mask_heat"](heat, threshold, mask_2d)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(4.2, 4.2))
+    try:
+        ax.imshow(base, cmap="gray", interpolation="bilinear")
+        ax.imshow(heat_masked, cmap="turbo", alpha=0.55, vmin=threshold, vmax=1.0, interpolation="bilinear")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        fig.savefig(output_path, dpi=160, bbox_inches="tight", pad_inches=0.02)
+    finally:
+        plt.close(fig)
+
+    return safe_index
+
+
+def generate_attention_from_notebook(
+    nifti_path: str,
+    output_dir: str,
+    subject_id: str,
+    final_label: str,
+    run_token: str | None = None,
+    top_k: int = 5,
+) -> Dict[str, Any]:
+    runtime = _get_runtime()
+
+    subject_token = str(subject_id or "subject").strip() or "subject"
+    run_tag = str(run_token or "latest").strip() or "latest"
+    out_dir = Path(output_dir).expanduser().resolve() / "notebook_cam"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with _CAM_LOCK:
+        volume = runtime["load_nifti"](nifti_path)
+        volume_on_device = volume.to(runtime["DEVICE"])
+        volume_np = volume[0, 0].detach().cpu().numpy()
+        brain_mask = runtime["create_brain_mask"](volume_np, threshold=0.05)
+
+        model, target_class, stage_name, target_label = _choose_stage(runtime, final_label)
+        with torch.enable_grad():
+            target_layer = runtime["_resolve_target_layer"](model)
+            cam_generator = runtime["GradCAM3D"](model, target_layer)
+            try:
+                cam_raw = cam_generator(volume_on_device, class_idx=target_class)
+            finally:
+                cam_generator.remove()
+
+            cam_up = F.interpolate(
+                cam_raw,
+                size=runtime["TARGET_SHAPE"],
+                mode="trilinear",
+                align_corners=False,
+            )
+            cam_np = cam_up.detach().cpu().numpy()[0, 0]
+
+        masked_cam = cam_np * brain_mask
+        roi_scores = sorted(
+            runtime["compute_roi_abnormality"](masked_cam, runtime["ROI_DEFINITIONS"]),
+            key=lambda item: item["score"],
+            reverse=True,
+        )
+        top_rois = roi_scores[: max(1, int(top_k))]
+
+        # Execute notebook's original ROI Top-K visualization entrypoint as-is.
+        try:
+            runtime["visualize_roi_cam"](
+                volume_np,
+                cam_np,
+                "Grad-CAM",
+                roi_scores,
+                runtime["ROI_DEFINITIONS"],
+                stage_name,
+                f"{subject_token}_{run_tag}",
+                out_dir,
+                top_k=max(1, int(top_k)),
+                brain_mask=brain_mask,
+            )
+        except Exception as notebook_vis_exc:
+            logger.warning("Notebook ROI visualization failed (continuing): %s", notebook_vis_exc)
+
+        total_score = float(sum(max(float(item["score"]), 0.0) for item in top_rois))
+        slides: List[Dict[str, Any]] = []
+        for rank, roi_item in enumerate(top_rois, start=1):
+            roi_name = str(roi_item.get("name") or f"roi_{rank}")
+            roi_description = str(roi_item.get("description") or roi_name)
+            roi_score = float(roi_item.get("score") or 0.0)
+            roi_info = runtime["ROI_DEFINITIONS"].get(roi_name, {})
+            roi_center = [int(v) for v in roi_info.get("center", [48, 56, 48])]
+            roi_percentage = (max(roi_score, 0.0) / total_score * 100.0) if total_score > 0 else 0.0
+
+            local_paths: Dict[str, str] = {}
+            slice_indices: Dict[str, int] = {}
+            roi_slug = _sanitize_slug(roi_name) or f"roi_{rank}"
+            stage_slug = _sanitize_slug(stage_name) or "stage"
+
+            for plane in PLANE_ORDER:
+                image_name = (
+                    f"{_sanitize_slug(subject_token) or 'subject'}_"
+                    f"{_sanitize_slug(run_tag) or 'latest'}_"
+                    f"{stage_slug}_r{rank:02d}_{roi_slug}_{plane}.png"
+                )
+                image_path = out_dir / image_name
+                slice_index = _save_roi_plane_overlay(
+                    runtime=runtime,
+                    volume_np=volume_np,
+                    cam_np=cam_np,
+                    brain_mask=brain_mask,
+                    center=roi_center,
+                    plane=plane,
+                    output_path=image_path,
+                )
+                local_paths[plane] = str(image_path)
+                slice_indices[plane] = int(slice_index)
+
+            slides.append(
+                {
+                    "rank": int(rank),
+                    "roi": roi_name,
+                    "description": roi_description,
+                    "score": round(roi_score, 6),
+                    "percentage": round(float(roi_percentage), 1),
+                    "severity": _severity_from_percentage(float(roi_percentage)),
+                    "sliceIndices": slice_indices,
+                    "local_paths": local_paths,
+                }
+            )
+
+        region_contributions = [
+            {
+                "region": item["roi"],
+                "percentage": item["percentage"],
+                "severity": item["severity"],
+            }
+            for item in slides
+        ]
+
+        roi_scores_ranked = [
+            {
+                "roi": str(item.get("name") or ""),
+                "description": str(item.get("description") or ""),
+                "score": round(float(item.get("score") or 0.0), 6),
+            }
+            for item in roi_scores[:10]
+        ]
+
+        first_local_paths = slides[0]["local_paths"] if slides else {}
+        return {
+            "method": "GradCAM3D_notebook",
+            "stage": stage_name,
+            "targetLabel": target_label,
+            "targetClassIndex": int(target_class),
+            "roiScores": roi_scores_ranked,
+            "regionContributions": region_contributions,
+            "slides": slides,
+            "local_paths": first_local_paths,
+            "local_path": first_local_paths.get("axial"),
+        }
