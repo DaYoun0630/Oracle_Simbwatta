@@ -182,16 +182,16 @@ curl -I https://jns-hodu.duckdns.org
 curl -I https://jns-hodu.duckdns.org/health
 ```
 
-### Microphone Permission on HTTPS (Important)
-- Browser mic capture (`getUserMedia`) requires a secure context (`https://` or localhost).
-- If Nginx sends `Permissions-Policy: microphone=()`, mic access is blocked even on HTTPS.
-- Use this policy in `nginx.conf`:
+### HTTPS에서 마이크 권한 설정 (중요)
+- 브라우저 마이크 캡처(`getUserMedia`)는 보안 컨텍스트(`https://` 또는 localhost)에서만 동작합니다.
+- Nginx가 `Permissions-Policy: microphone=()`를 내려주면 HTTPS여도 마이크 접근이 차단됩니다.
+- `nginx.conf`에는 아래 정책을 사용하세요:
 
 ```nginx
 add_header Permissions-Policy "geolocation=(), microphone=(self), camera=()" always;
 ```
 
-- Reload Nginx after config updates:
+- 설정 변경 후 Nginx를 리로드하세요:
 
 ```bash
 cd docker
@@ -199,13 +199,13 @@ docker compose exec -T nginx nginx -t
 docker compose exec -T nginx nginx -s reload
 ```
 
-- Verify response header:
+- 응답 헤더 확인:
 
 ```bash
 curl -I https://jns-hodu.duckdns.org | grep -i permissions-policy
 ```
 
-- Expected:
+- 기대 결과:
 ```text
 permissions-policy: geolocation=(), microphone=(self), camera=()
 ```
