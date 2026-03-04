@@ -274,3 +274,9 @@ JWT_SECRET=...
 - `data/`, `minio-data/`, `runtime/`는 민감 데이터가 포함될 수 있으므로 **커밋 금지**.
 - 데이터 경로, 환자 식별자, 원본 파일명은 문서/발표에 기재하지 않습니다.
 - 배포 전 `JWT_SECRET`, OAuth, OpenAI 키는 반드시 교체합니다.
+
+## 데이터 사용 및 배포 안전 가이드
+
+- 라이선스 데이터(예: ADNI/TalkBank)는 공개 배포 금지.
+- 배포 전 로컬 데이터/MinIO/백업 제거 필요.
+- 상세 체크리스트: `COMPLIANCE_CHECKLIST.md`
