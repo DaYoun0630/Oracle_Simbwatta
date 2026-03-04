@@ -20,6 +20,11 @@ class LLMService:
     def __init__(self):
         provider = (settings.llm_provider or "openai").lower()
 
+        if provider in {"openai", "gemini"} and not settings.llm_external_allowed:
+            raise RuntimeError(
+                "External LLM providers are disabled. Set LLM_EXTERNAL_ALLOWED=true to enable."
+            )
+
         if provider == "gemini":
             self.client = AsyncOpenAI(
                 api_key=settings.gemini_api_key,

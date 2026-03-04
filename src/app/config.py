@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     # LLM provider
     llm_provider: str = "openai"
+    llm_external_allowed: bool = False
 
     # OpenAI (for LLM chat)
     openai_api_key: str = "sk-your-openai-api-key"
