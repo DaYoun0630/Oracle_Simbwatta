@@ -182,6 +182,34 @@ curl -I https://jns-hodu.duckdns.org
 curl -I https://jns-hodu.duckdns.org/health
 ```
 
+### Microphone Permission on HTTPS (Important)
+- Browser mic capture (`getUserMedia`) requires a secure context (`https://` or localhost).
+- If Nginx sends `Permissions-Policy: microphone=()`, mic access is blocked even on HTTPS.
+- Use this policy in `nginx.conf`:
+
+```nginx
+add_header Permissions-Policy "geolocation=(), microphone=(self), camera=()" always;
+```
+
+- Reload Nginx after config updates:
+
+```bash
+cd docker
+docker compose exec -T nginx nginx -t
+docker compose exec -T nginx nginx -s reload
+```
+
+- Verify response header:
+
+```bash
+curl -I https://jns-hodu.duckdns.org | grep -i permissions-policy
+```
+
+- Expected:
+```text
+permissions-policy: geolocation=(), microphone=(self), camera=()
+```
+
 ## Compliance Note
 - 이 저장소는 원본 의료 데이터/식별자 공개를 금지합니다.
 - 배포 전 합성 데이터만 남기고 민감 데이터(`data/raw`, `db_backups`, `exports`, MinIO 원본 버킷) 제거가 필요합니다.
