@@ -1,0 +1,32 @@
+/* 전역 스타일 예시 (src/assets/main.css) */
+:root {
+  /* 기본 폰트 사이즈를 16px로 설정 (약 12pt에 해당) */
+  font-size: 16px; 
+  /* 버튼 간 최소 간격 변수 정의 (약 4~5mm 확보) */
+  --min-gap: 20px; 
+  --main-mint: #4cb7b7;
+  --bg-color: #f5f6f7;
+  --text-dark: #2e2e2e;
+  --text-gray: #555;
+}
+
+body {
+  font-family: 'Pretendard', sans-serif; /* 가독성 좋은 폰트 권장 */
+  background-color: var(--bg-color);
+  color: var(--text-dark);
+  /* 본문 기본 글자 크기를 1rem(16px)로 강제 */
+  font-size: 1rem; 
+  line-height: 1.5;
+}
+
+/* 모든 버튼의 최소 터치 영역 확보 */
+button, .clickable-card {
+  min-height: 56px; /* 손가락으로 누르기 편한 높이 */
+  cursor: pointer;
+}
+
+/* 작은 글씨 원천 차단 */
+small, .caption {
+  font-size: 1rem !important; /* 16px 미만 금지 */
+  color: var(--text-gray);
+}
