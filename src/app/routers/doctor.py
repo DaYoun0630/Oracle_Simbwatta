@@ -726,6 +726,112 @@ async def _resolve_mri_assessment_for_image_id(
     return dict(latest_row) if latest_row else None
 
 
+def _ai_analysis_has_cam(ai_analysis: Dict[str, Any]) -> bool:
+    if not isinstance(ai_analysis, dict):
+        return False
+
+    attention_slides = ai_analysis.get("attentionSlides")
+    if isinstance(attention_slides, list) and attention_slides:
+        return True
+
+    attention_maps = ai_analysis.get("attentionMaps")
+    if isinstance(attention_maps, list) and attention_maps:
+        return True
+    if isinstance(attention_maps, dict) and attention_maps:
+        return True
+
+    for key in ("attentionMapObject", "attentionMapKey", "attentionMap"):
+        value = ai_analysis.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+
+    return False
+
+
+async def _resolve_latest_cam_assessment(
+    patient_id: str,
+    reference_timestamp: Optional[datetime] = None,
+) -> Optional[Dict[str, Any]]:
+    lookup_tokens = _patient_lookup_tokens(patient_id)
+    if not lookup_tokens:
+        return None
+
+    if reference_timestamp is not None:
+        row = await db.fetchrow(
+            """
+            SELECT
+                ma.assessment_id AS "assessmentId",
+                ma.ai_analysis AS "aiAnalysis",
+                COALESCE(
+                    ma.ai_analysis->>'preprocessedObjectPath',
+                    ma.ai_analysis->>'preprocessed_path',
+                    ma.file_path
+                ) AS "filePath",
+                ma.scan_date AS "scanDate",
+                ma.created_at AS "createdAt",
+                ma.image_id AS "imageId"
+            FROM mri_assessments ma
+            JOIN patients p ON p.user_id = ma.patient_id
+            WHERE (p.subject_id = ANY($1::text[]) OR p.user_id::text = ANY($1::text[]))
+              AND (
+                    (jsonb_typeof(ma.ai_analysis->'attentionSlides') = 'array'
+                     AND jsonb_array_length(ma.ai_analysis->'attentionSlides') > 0)
+                 OR (jsonb_typeof(ma.ai_analysis->'attentionMaps') = 'array'
+                     AND jsonb_array_length(ma.ai_analysis->'attentionMaps') > 0)
+                 OR COALESCE(ma.ai_analysis->>'attentionMapObject', '') <> ''
+                 OR COALESCE(ma.ai_analysis->>'attentionMapKey', '') <> ''
+                 OR COALESCE(ma.ai_analysis->>'attentionMap', '') <> ''
+              )
+            ORDER BY
+                ABS(EXTRACT(EPOCH FROM (COALESCE(ma.scan_date, ma.created_at) - $2::timestamp))) ASC,
+                ma.scan_date DESC NULLS LAST,
+                ma.created_at DESC
+            LIMIT 1
+            """,
+            lookup_tokens,
+            reference_timestamp,
+        )
+    else:
+        row = await db.fetchrow(
+            """
+            SELECT
+                ma.assessment_id AS "assessmentId",
+                ma.ai_analysis AS "aiAnalysis",
+                COALESCE(
+                    ma.ai_analysis->>'preprocessedObjectPath',
+                    ma.ai_analysis->>'preprocessed_path',
+                    ma.file_path
+                ) AS "filePath",
+                ma.scan_date AS "scanDate",
+                ma.created_at AS "createdAt",
+                ma.image_id AS "imageId"
+            FROM mri_assessments ma
+            JOIN patients p ON p.user_id = ma.patient_id
+            WHERE (p.subject_id = ANY($1::text[]) OR p.user_id::text = ANY($1::text[]))
+              AND (
+                    (jsonb_typeof(ma.ai_analysis->'attentionSlides') = 'array'
+                     AND jsonb_array_length(ma.ai_analysis->'attentionSlides') > 0)
+                 OR (jsonb_typeof(ma.ai_analysis->'attentionMaps') = 'array'
+                     AND jsonb_array_length(ma.ai_analysis->'attentionMaps') > 0)
+                 OR COALESCE(ma.ai_analysis->>'attentionMapObject', '') <> ''
+                 OR COALESCE(ma.ai_analysis->>'attentionMapKey', '') <> ''
+                 OR COALESCE(ma.ai_analysis->>'attentionMap', '') <> ''
+              )
+            ORDER BY ma.scan_date DESC NULLS LAST, ma.created_at DESC
+            LIMIT 1
+            """,
+            lookup_tokens,
+        )
+
+    if not row:
+        return None
+
+    row_dict = dict(row)
+    if not _ai_analysis_has_cam(_as_dict(row_dict.get("aiAnalysis"))):
+        return None
+    return row_dict
+
+
 def _try_read_nifti_bytes_from_reference(reference: Any, default_bucket: str = "mri-preprocessed") -> Optional[bytes]:
     raw = str(reference or "").strip()
     if not raw:
@@ -1969,7 +2075,7 @@ async def get_original_nifti(patient_id: str):
 async def get_attention_map_png(
     patient_id: str,
     plane: str = Query("axial", description="axial | coronal | sagittal"),
-    slide: int = Query(1, ge=1, le=50, description="ROI slide index (1-based)"),
+    slide: int = Query(1, ge=1, le=100, description="ROI slide index (1-based)"),
     slice_index: int | None = Query(None, ge=0, le=100, description="Slice position 0..100"),
     image_id: str | None = Query(None, description="Selected visit image_id"),
     mri_assessment_id: str | None = Query(None, description="Selected visit mri_assessment_id"),
@@ -1986,44 +2092,68 @@ async def get_attention_map_png(
         visit_viscode2=visit_viscode2,
     )
     ai_analysis = _as_dict(resolved_row.get("aiAnalysis")) if resolved_row else {}
-    if ai_analysis:
-        target_slide = slide
+
+    def _resolve_object_from_ai(analysis: Dict[str, Any]) -> Optional[tuple[str, str]]:
+        if not analysis:
+            return None
+        target_slide = max(1, int(slide))
         if slice_index is not None:
-            raw_slides = ai_analysis.get("attentionSlides")
+            raw_slides = analysis.get("attentionSlides")
             if isinstance(raw_slides, list) and len(raw_slides) > 1:
                 ratio = max(0.0, min(1.0, float(slice_index) / 100.0))
                 target_slide = int(round(ratio * (len(raw_slides) - 1))) + 1
 
         resolved = _resolve_attention_map_object(
-            ai_analysis,
+            analysis,
             plane=requested_plane,
             slide_index=target_slide,
         )
         if not resolved and requested_plane != "axial":
             resolved = _resolve_attention_map_object(
-                ai_analysis,
+                analysis,
                 plane="axial",
                 slide_index=target_slide,
             )
-        if resolved:
-            bucket, key = resolved
-            response = None
-            try:
-                response = storage.client.get_object(bucket, key)
-                payload = response.read()
-            except Exception as exc:
-                logger.warning("Failed to read attention map from MinIO (%s/%s): %s", bucket, key, exc)
-            else:
-                if payload:
-                    return Response(
-                        content=payload,
-                        media_type="image/png",
-                        headers={"Cache-Control": "no-store"},
-                    )
-            finally:
-                if response is not None:
-                    response.close()
-                    response.release_conn()
+        return resolved
+
+    resolved_object = _resolve_object_from_ai(ai_analysis) if ai_analysis else None
+
+    if not resolved_object:
+        reference_timestamp = None
+        if resolved_row:
+            reference_candidate = resolved_row.get("scanDate") or resolved_row.get("createdAt")
+            if isinstance(reference_candidate, datetime):
+                reference_timestamp = reference_candidate
+            elif isinstance(reference_candidate, date):
+                reference_timestamp = datetime.combine(reference_candidate, datetime.min.time())
+
+        cam_row = await _resolve_latest_cam_assessment(
+            patient_id=patient_id,
+            reference_timestamp=reference_timestamp,
+        )
+        if cam_row:
+            cam_ai = _as_dict(cam_row.get("aiAnalysis"))
+            resolved_object = _resolve_object_from_ai(cam_ai)
+
+    if resolved_object:
+        bucket, key = resolved_object
+        response = None
+        try:
+            response = storage.client.get_object(bucket, key)
+            payload = response.read()
+        except Exception as exc:
+            logger.warning("Failed to read attention map from MinIO (%s/%s): %s", bucket, key, exc)
+        else:
+            if payload:
+                return Response(
+                    content=payload,
+                    media_type="image/png",
+                    headers={"Cache-Control": "no-store"},
+                )
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
 
     # Fallback for rows without CAM artifacts.
     return await get_preprocessed_nifti_slice_png(

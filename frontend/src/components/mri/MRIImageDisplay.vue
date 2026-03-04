@@ -63,6 +63,10 @@ const isSyncingSlices = ref(false);
 const originalSliceDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const attentionSliceDebounceTimer = ref<ReturnType<typeof setTimeout> | null>(null);
 const SLICE_DEBOUNCE_MS = 70;
+const originalFlipHorizontal = ref(false);
+const attentionFlipHorizontal = ref(false);
+const originalRotationDeg = ref(0);
+const attentionRotationDeg = ref(-90);
 
 const planeOrder: Record<AttentionMapItem['plane'], number> = {
   axial: 0,
@@ -263,6 +267,24 @@ const currentAttentionUrl = computed(() =>
     props.attentionSliceSliderEnabled,
     debouncedAttentionSliceIndexPercent.value
   )
+);
+
+const normalizeRotation = (value: number) => {
+  const normalized = value % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+};
+
+const makeImageTransform = (rotationDeg: number, flipHorizontal: boolean) => {
+  const flipScale = flipHorizontal ? -1 : 1;
+  return `rotate(${rotationDeg}deg) scaleX(${flipScale})`;
+};
+
+const originalImageTransform = computed(() =>
+  makeImageTransform(normalizeRotation(originalRotationDeg.value), originalFlipHorizontal.value)
+);
+
+const attentionImageTransform = computed(() =>
+  makeImageTransform(normalizeRotation(attentionRotationDeg.value), attentionFlipHorizontal.value)
 );
 
 const findViewIndexByPlane = (
@@ -665,6 +687,22 @@ const goNextOriginalView = () => {
   selectedOriginalViewIndex.value = targetIndex;
   syncAttentionViewToOriginal();
 };
+
+const rotateOriginalClockwise = () => {
+  originalRotationDeg.value = normalizeRotation(originalRotationDeg.value + 90);
+};
+
+const rotateAttentionClockwise = () => {
+  attentionRotationDeg.value = normalizeRotation(attentionRotationDeg.value + 90);
+};
+
+const toggleOriginalFlipHorizontal = () => {
+  originalFlipHorizontal.value = !originalFlipHorizontal.value;
+};
+
+const toggleAttentionFlipHorizontal = () => {
+  attentionFlipHorizontal.value = !attentionFlipHorizontal.value;
+};
 </script>
 
 <template>
@@ -673,6 +711,27 @@ const goNextOriginalView = () => {
       <div class="image-card">
         <h4 class="image-label">원본 MRI</h4>
         <div class="image-container">
+          <div class="image-transform-tools" aria-label="원본 MRI 방향 조절">
+            <button
+              type="button"
+              class="transform-button"
+              :class="{ active: originalFlipHorizontal }"
+              title="좌우 반전"
+              aria-label="원본 MRI 좌우 반전"
+              @click="toggleOriginalFlipHorizontal"
+            >
+              ⇋
+            </button>
+            <button
+              type="button"
+              class="transform-button"
+              title="시계 방향 90도 회전"
+              aria-label="원본 MRI 시계 방향 90도 회전"
+              @click="rotateOriginalClockwise"
+            >
+              ↻
+            </button>
+          </div>
           <div v-if="loading" class="image-placeholder loading">
             <div class="spinner"></div>
             <span>MRI 이미지 로딩 중...</span>
@@ -680,6 +739,7 @@ const goNextOriginalView = () => {
           <template v-else-if="hasOriginal && currentOriginalView">
             <img
               :src="displayedOriginalUrl"
+              :style="{ transform: originalImageTransform }"
               :alt="`Original MRI ${currentOriginalView.label}`"
               loading="lazy"
               @error="handleOriginalError(displayedOriginalUrl)"
@@ -737,14 +797,33 @@ const goNextOriginalView = () => {
       <div class="image-card attention-card">
         <h4 class="image-label">Attention Map</h4>
         <div class="image-container view-container">
+          <div class="image-transform-tools" aria-label="Attention Map 방향 조절">
+            <button
+              type="button"
+              class="transform-button"
+              :class="{ active: attentionFlipHorizontal }"
+              title="좌우 반전"
+              aria-label="Attention Map 좌우 반전"
+              @click="toggleAttentionFlipHorizontal"
+            >
+              ⇋
+            </button>
+            <button
+              type="button"
+              class="transform-button"
+              title="시계 방향 90도 회전"
+              aria-label="Attention Map 시계 방향 90도 회전"
+              @click="rotateAttentionClockwise"
+            >
+              ↻
+            </button>
+          </div>
           <div v-if="loading" class="image-placeholder loading">
             <div class="spinner"></div>
           </div>
           <template v-else-if="currentAttentionView && hasAttentionImage">
             <img
-              :class="{
-                'attention-rotated': true
-              }"
+              :style="{ transform: attentionImageTransform }"
               :src="displayedAttentionUrl"
               :alt="`Attention Map ${currentAttentionView.label}`"
               loading="lazy"
@@ -855,16 +934,42 @@ const goNextOriginalView = () => {
   height: 100%;
   object-fit: contain;
   display: block;
-}
-
-.image-container img.original-rotated-180 {
-  transform: rotate(180deg);
   transform-origin: center center;
 }
 
-.view-container img.attention-rotated {
-  transform: rotate(-90deg);
-  transform-origin: center center;
+.image-transform-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transform-button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.78);
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.transform-button:hover {
+  background: rgba(45, 112, 115, 0.88);
+}
+
+.transform-button.active {
+  background: rgba(61, 177, 177, 0.92);
+  border-color: rgba(191, 227, 227, 0.95);
 }
 
 .image-loading-overlay {
