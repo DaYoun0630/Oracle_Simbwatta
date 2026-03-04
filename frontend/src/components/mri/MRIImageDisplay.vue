@@ -276,7 +276,7 @@ const normalizeRotation = (value: number) => {
 
 const makeImageTransform = (rotationDeg: number, flipHorizontal: boolean) => {
   const flipScale = flipHorizontal ? -1 : 1;
-  return `rotate(${rotationDeg}deg) scaleX(${flipScale})`;
+  return `scaleX(${flipScale}) rotate(${rotationDeg}deg)`;
 };
 
 const originalImageTransform = computed(() =>
@@ -709,8 +709,8 @@ const toggleAttentionFlipHorizontal = () => {
   <div class="mri-image-display">
     <div class="image-grid">
       <div class="image-card">
-        <h4 class="image-label">원본 MRI</h4>
-        <div class="image-container">
+        <div class="image-header">
+          <h4 class="image-label">원본 MRI</h4>
           <div class="image-transform-tools" aria-label="원본 MRI 방향 조절">
             <button
               type="button"
@@ -732,6 +732,8 @@ const toggleAttentionFlipHorizontal = () => {
               ↻
             </button>
           </div>
+        </div>
+        <div class="image-container">
           <div v-if="loading" class="image-placeholder loading">
             <div class="spinner"></div>
             <span>MRI 이미지 로딩 중...</span>
@@ -795,8 +797,8 @@ const toggleAttentionFlipHorizontal = () => {
       </div>
 
       <div class="image-card attention-card">
-        <h4 class="image-label">Attention Map</h4>
-        <div class="image-container view-container">
+        <div class="image-header">
+          <h4 class="image-label">Attention Map</h4>
           <div class="image-transform-tools" aria-label="Attention Map 방향 조절">
             <button
               type="button"
@@ -818,6 +820,8 @@ const toggleAttentionFlipHorizontal = () => {
               ↻
             </button>
           </div>
+        </div>
+        <div class="image-container view-container">
           <div v-if="loading" class="image-placeholder loading">
             <div class="spinner"></div>
           </div>
@@ -913,6 +917,13 @@ const toggleAttentionFlipHorizontal = () => {
   margin: 0;
 }
 
+.image-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .image-container {
   position: relative;
   aspect-ratio: 1 / 1;
@@ -938,10 +949,6 @@ const toggleAttentionFlipHorizontal = () => {
 }
 
 .image-transform-tools {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -950,10 +957,10 @@ const toggleAttentionFlipHorizontal = () => {
 .transform-button {
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(255, 255, 255, 0.65);
+  border: 1px solid #d7dde4;
   border-radius: 10px;
-  background: rgba(17, 24, 39, 0.78);
-  color: #f8fafc;
+  background: #ffffff;
+  color: #4a5563;
   font-size: 16px;
   font-weight: 800;
   line-height: 1;
@@ -964,12 +971,14 @@ const toggleAttentionFlipHorizontal = () => {
 }
 
 .transform-button:hover {
-  background: rgba(45, 112, 115, 0.88);
+  background: #e9f7f7;
+  border-color: #bfe3e3;
 }
 
 .transform-button.active {
-  background: rgba(61, 177, 177, 0.92);
-  border-color: rgba(191, 227, 227, 0.95);
+  background: #3db1b1;
+  border-color: #2f8488;
+  color: #ffffff;
 }
 
 .image-loading-overlay {
