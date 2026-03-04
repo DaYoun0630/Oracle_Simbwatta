@@ -2,7 +2,7 @@
 LLM Chat Service for MCI Platform.
 
 Provides Korean-optimized conversational AI for cognitive training.
-Uses OpenAI GPT-4o-mini with carefully crafted prompts for elderly patients.
+Supports OpenAI and Gemini (via OpenAI-compatible endpoint).
 """
 
 from typing import Any, Dict, List, Optional
@@ -27,8 +27,18 @@ class LLMService:
     }
 
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self.model = settings.openai_model
+        provider = (settings.llm_provider or "openai").lower()
+
+        if provider == "gemini":
+            self.client = AsyncOpenAI(
+                api_key=settings.gemini_api_key,
+                base_url=settings.gemini_base_url,
+            )
+            self.model = settings.gemini_model
+        else:
+            self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+            self.model = settings.openai_model
+
         self.max_tokens = settings.openai_max_tokens
         self.prompts = self._load_prompts()
 

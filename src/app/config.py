@@ -26,10 +26,18 @@ class Settings(BaseSettings):
     google_client_secret: str = "your-google-client-secret"
     google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
 
+    # LLM provider
+    llm_provider: str = "openai"
+
     # OpenAI (for LLM chat)
     openai_api_key: str = "sk-your-openai-api-key"
     openai_model: str = "gpt-4o-mini"
     openai_max_tokens: int = 500
+
+    # Gemini (OpenAI-compatible endpoint)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-flash-latest"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     class Config:
         env_file = ".env"
