@@ -8,7 +8,7 @@ const adapter = new DoctorAdapter(doctorUseMock);
 const DEFAULT_AUTO_REFRESH_MS = Number(import.meta.env.VITE_DOCTOR_AUTO_REFRESH_MS ?? 7000);
 const MIN_AUTO_REFRESH_MS = 3000;
 
-const DEFAULT_MOCK_PATIENT_ID = '029_S_6726';
+const DEFAULT_MOCK_PATIENT_ID = 'SM-000000';
 
 const createEmptyDoctorData = () => ({
   patients: [],

@@ -13,7 +13,6 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Copy dependency files first for better caching

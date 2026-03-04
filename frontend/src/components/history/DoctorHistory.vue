@@ -376,7 +376,7 @@ const resolveScoreCriteria = (
   }
 
   if (scoreId === 'ldeltotal') {
-    // ADNI Logical Memory II(Delayed Recall) 교육연수별 기준(최대 25점)
+    // Logical Memory II(Delayed Recall) 교육연수별 기준(최대 25점)
     const min = resolvedEducation >= 16 ? 9 : resolvedEducation >= 8 ? 5 : 3;
     const max = 25;
     const goodThreshold = min;
@@ -521,8 +521,22 @@ const sortedVisits = computed(() => {
   return [...visits.value].sort((a, b) => new Date(a.examDate).getTime() - new Date(b.examDate).getTime());
 });
 
-const visitOptions = computed<VisitOption[]>(() =>
-  sortedVisits.value.map((visit, index) => {
+const visitOptions = computed<VisitOption[]>(() => {
+  // Only expose visits that are linked to MRI artifacts, then dedupe by visit code.
+  // This prevents legacy placeholder rows from appearing as extra selector options.
+  const mriLinked = sortedVisits.value.filter((visit) => {
+    const imageId = String(visit?.imageId ?? '').trim();
+    const assessmentId = String(visit?.mriAssessmentId ?? '').trim();
+    return Boolean(imageId || assessmentId);
+  });
+
+  const dedupedByVisitCode = new Map<string, VisitRecord>();
+  mriLinked.forEach((visit, index) => {
+    const key = String(visit?.viscode2 || visit?.imageId || `visit-${index}`).trim().toLowerCase();
+    dedupedByVisitCode.set(key, visit);
+  });
+
+  return Array.from(dedupedByVisitCode.values()).map((visit, index) => {
     const imageId = String(visit?.imageId ?? '').trim();
     const fallbackBase = String(visit?.examDate || visit?.viscode2 || `visit-${index}`).trim();
     const fallbackValue = `${fallbackBase}-${index}`;
@@ -532,8 +546,8 @@ const visitOptions = computed<VisitOption[]>(() =>
       optionKey: imageId || fallbackValue,
       optionValue: imageId || fallbackValue
     };
-  })
-);
+  });
+});
 
 const selectedVisitImageId = ref('');
 const selectedVisitOption = computed<VisitOption | null>(() => {
@@ -670,14 +684,15 @@ const buildMriSliceEndpoint = (
   if (plane) query.set('plane', plane);
   if (rvCandidate) query.set('rv', String(rvCandidate));
   const queryString = query.toString();
-  return `/api/doctor/patients/${encodeURIComponent(String(patientId))}/mri/${sliceType}.png${queryString ? `?${queryString}` : ''}`;
+  const endpoint = `/api/doctor/patients/${encodeURIComponent(String(patientId))}/mri/${sliceType}.png${queryString ? `?${queryString}` : ''}`;
+  return appendSelectedVisitContext(endpoint);
 };
 
 const originalImage = computed(() => {
   const provided = String(aiAnalysis.value?.originalImage || '').trim();
   const endpoint = buildMriSliceEndpoint('original-slice', 'axial');
 
-  if (provided.includes('/api/doctor/patients/')) return provided;
+  if (provided.includes('/api/doctor/patients/')) return appendSelectedVisitContext(provided);
 
   return endpoint || provided;
 });
@@ -686,7 +701,7 @@ const attentionMap = computed(() => {
   const provided = String(aiAnalysis.value?.attentionMap || '').trim();
   const endpoint = buildMriSliceEndpoint('preprocessed-slice');
 
-  if (provided.includes('/api/doctor/patients/')) return provided;
+  if (provided.includes('/api/doctor/patients/')) return appendSelectedVisitContext(provided);
 
   return endpoint || provided;
 });
@@ -758,7 +773,7 @@ const parseAttentionMapItems = (
       const resolvedUrl = options.rewritePlaneQuery
         ? rewriteAttentionPlaneQuery(baseUrl, plane)
         : baseUrl;
-      const url = appendCacheVersion(resolvedUrl);
+      const url = appendCacheVersion(appendSelectedVisitContext(resolvedUrl));
       if (!url) return null;
       const label = labelByAttentionPlane[plane];
       return { plane, label, url } as AttentionMapItem;

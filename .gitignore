@@ -22,6 +22,7 @@ migrations/
 scripts/
 runtime/
 db_backups/
+compliance-quarantine/
 final_jj_20260226_1/
 claude/
 ops/
@@ -45,3 +46,16 @@ mri_slice_viewer.ipynb
 /runtime/
 /db_backups/
 /exports/
+
+# Secrets / TLS certs
+.env
+.env.*
+!*.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Local secrets
+.secrets/

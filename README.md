@@ -139,10 +139,57 @@ npm install
 npm run dev -- --host 0.0.0.0 --port 5174
 ```
 
+## DuckDNS + HTTPS Deployment
+Prerequisites:
+- DuckDNS subdomain created (example: `jns-hodu.duckdns.org`)
+- Router/NAT forwards `80` and `443` to this host
+- `docker` and `docker compose` available
+
+Set these in `docker/.env`:
+```dotenv
+NGINX_DOMAIN=jns-hodu.duckdns.org
+DUCKDNS_TOKEN=your_duckdns_token
+LETSENCRYPT_EMAIL=you@example.com
+NGINX_CERTS_HOST_DIR=/absolute/path/to/hodu/.secrets/nginx-certs
+```
+
+1) Update DuckDNS A-record:
+```bash
+./scripts/duckdns-update.sh
+```
+
+2) Start services:
+```bash
+cd docker
+docker compose --env-file .env up -d
+```
+
+3) Issue Let's Encrypt certificate (HTTP-01 via webroot):
+```bash
+cd ..
+./scripts/issue-duckdns-cert.sh
+```
+
+4) Renew later (recommended via cron):
+```bash
+./scripts/renew-duckdns-cert.sh
+```
+
+Quick checks:
+```bash
+curl -I http://jns-hodu.duckdns.org
+curl -I https://jns-hodu.duckdns.org
+curl -I https://jns-hodu.duckdns.org/health
+```
+
 ## Compliance Note
 - 이 저장소는 원본 의료 데이터/식별자 공개를 금지합니다.
 - 배포 전 합성 데이터만 남기고 민감 데이터(`data/raw`, `db_backups`, `exports`, MinIO 원본 버킷) 제거가 필요합니다.
 - 외부 SaaS/LLM 연동 시 데이터 보존 정책을 반드시 검증합니다.
+- 외부 라이선스 데이터 마커 제거용 마이그레이션:
+  - `migrations/012_sanitize_external_dataset_markers.sql`
+  - `migrations/013_add_compliance_guardrails.sql`
+- 외부 라이선스 데이터 import 스크립트는 기본 차단됩니다. 라이선스 승인 시에만 `ALLOW_EXTERNAL_LICENSED_DATA=true`로 실행하세요.
 
 ---
 This README is intentionally portfolio-oriented: project scope, technical ownership, architecture, and delivery outcomes 중심으로 정리했습니다.

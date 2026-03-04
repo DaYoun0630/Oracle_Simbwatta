@@ -70,12 +70,34 @@ const planeOrder: Record<AttentionMapItem['plane'], number> = {
   sagittal: 2
 };
 
-const normalizePlane = (value: unknown): AttentionMapItem['plane'] => {
+const parsePlaneToken = (value: unknown): AttentionMapItem['plane'] | null => {
   const text = String(value || '').trim().toLowerCase();
+  if (!text) return null;
   if (text.startsWith('ax')) return 'axial';
   if (text.startsWith('cor')) return 'coronal';
   if (text.startsWith('sag')) return 'sagittal';
-  return 'axial';
+  return null;
+};
+
+const inferPlaneFromUrl = (url: string): AttentionMapItem['plane'] | null => {
+  const raw = String(url || '').trim();
+  if (!raw) return null;
+
+  const queryMatch = raw.match(/[?&]plane=(axial|coronal|sagittal)\b/i);
+  if (queryMatch?.[1]) {
+    return parsePlaneToken(queryMatch[1]);
+  }
+
+  const pathMatch = raw.match(/(?:^|[\/_-])(axial|coronal|sagittal)(?:[\/_.?&-]|$)/i);
+  if (pathMatch?.[1]) {
+    return parsePlaneToken(pathMatch[1]);
+  }
+
+  return null;
+};
+
+const normalizePlane = (value: unknown, urlHint = ''): AttentionMapItem['plane'] => {
+  return parsePlaneToken(value) || inferPlaneFromUrl(urlHint) || 'axial';
 };
 
 const resolveAttentionLabel = (plane: AttentionMapItem['plane']) => {
@@ -84,13 +106,26 @@ const resolveAttentionLabel = (plane: AttentionMapItem['plane']) => {
   return 'Axial';
 };
 
+const buildPlaneMapsFromEndpoint = (url: string): AttentionMapItem[] => {
+  const raw = String(url || '').trim();
+  if (!raw) return [];
+  if (!/\/mri\/(original-slice|preprocessed-slice|attention-map)\.png/i.test(raw)) {
+    return [{ plane: 'axial', label: 'Axial', url: raw }];
+  }
+  return (['axial', 'coronal', 'sagittal'] as const).map((plane) => ({
+    plane,
+    label: resolveAttentionLabel(plane),
+    url: upsertQueryParam(raw, 'plane', plane)
+  }));
+};
+
 const parseMapItems = (maps: AttentionMapInput[]) => {
   const parsed = maps
     .map((item) => {
       if (!item || typeof item !== 'object') return null;
       const url = String(item.url || item.path || item.image || '').trim();
       if (!url) return null;
-      const plane = normalizePlane(item.plane);
+      const plane = normalizePlane(item.plane, url);
       return {
         plane,
         label: resolveAttentionLabel(plane),
@@ -136,7 +171,7 @@ const fallbackAttentionMaps = computed<AttentionMapItem[]>(() => {
 
   const single = String(props.attentionMap || '').trim();
   if (!single) return [];
-  return [{ plane: 'axial', label: 'Axial', url: single }];
+  return buildPlaneMapsFromEndpoint(single);
 });
 
 const fallbackOriginalMaps = computed<AttentionMapItem[]>(() => {
@@ -146,7 +181,7 @@ const fallbackOriginalMaps = computed<AttentionMapItem[]>(() => {
 
   const single = String(props.originalImage || '').trim();
   if (!single) return [];
-  return [{ plane: 'axial', label: 'Axial', url: single }];
+  return buildPlaneMapsFromEndpoint(single);
 });
 
 const resolvedAttentionSlides = computed<AttentionSlideItem[]>(() => {

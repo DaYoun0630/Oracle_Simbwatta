@@ -467,6 +467,35 @@ async def _resolve_latest_mri_file_path(patient_id: str) -> Optional[str]:
     return str(file_path).strip() or None
 
 
+async def _resolve_latest_original_mri_file_path(patient_id: str) -> Optional[str]:
+    lookup_tokens = _patient_lookup_tokens(patient_id)
+    if not lookup_tokens:
+        return None
+
+    row = await db.fetchrow(
+        """
+        SELECT COALESCE(
+            ma.ai_analysis->>'sourceFilePath',
+            ma.file_path,
+            ma.ai_analysis->>'preprocessedObjectPath',
+            ma.ai_analysis->>'preprocessed_path'
+        ) AS "filePath"
+        FROM mri_assessments ma
+        JOIN patients p ON p.user_id = ma.patient_id
+        WHERE p.subject_id = ANY($1::text[]) OR p.user_id::text = ANY($1::text[])
+        ORDER BY ma.scan_date DESC NULLS LAST, ma.created_at DESC
+        LIMIT 1
+        """,
+        lookup_tokens,
+    )
+    if not row:
+        return None
+    file_path = dict(row).get("filePath")
+    if not file_path:
+        return None
+    return str(file_path).strip() or None
+
+
 async def _resolve_mri_assessment_for_image_id(
     patient_id: str,
     image_id: Optional[str],
@@ -777,6 +806,17 @@ async def _resolve_preprocessed_nifti_bytes(patient_id: str, subject_id: str) ->
         if payload:
             return payload
 
+    return None
+
+
+def _read_nifti_from_candidates(
+    references: List[Any],
+    default_bucket: str,
+) -> Optional[bytes]:
+    for reference in references:
+        payload = _try_read_nifti_bytes_from_reference(reference, default_bucket=default_bucket)
+        if payload:
+            return payload
     return None
 
 
@@ -1876,33 +1916,53 @@ async def get_original_nifti(patient_id: str):
     """Return original MRI as NIfTI bytes (converted from raw DICOM series)."""
     subject_id = await _resolve_subject_id(patient_id)
     nii_path = _get_or_build_original_nifti(subject_id)
-    if not nii_path:
-        raise HTTPException(status_code=404, detail=f"Original MRI (DICOM) not found for subject_id={subject_id}")
+    if nii_path:
+        # Return decompressed NIfTI bytes so frontend does not depend on browser gzip APIs.
+        if nii_path.suffix == ".gz":
+            try:
+                with gzip.open(nii_path, "rb") as file_obj:
+                    raw_nifti = file_obj.read()
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Failed to read NIfTI: {exc}") from exc
 
-    # Return decompressed NIfTI bytes so frontend does not depend on browser gzip APIs.
-    if nii_path.suffix == ".gz":
-        try:
-            with gzip.open(nii_path, "rb") as file_obj:
-                raw_nifti = file_obj.read()
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to read NIfTI: {exc}") from exc
+            nii_name = nii_path.name[:-3] if nii_path.name.endswith(".gz") else nii_path.name
+            return Response(
+                content=raw_nifti,
+                media_type="application/octet-stream",
+                headers={
+                    "Cache-Control": "public, max-age=300",
+                    "Content-Disposition": f'inline; filename="{nii_name}"',
+                },
+            )
 
-        nii_name = nii_path.name[:-3] if nii_path.name.endswith(".gz") else nii_path.name
-        return Response(
-            content=raw_nifti,
-            media_type="application/octet-stream",
-            headers={
-                "Cache-Control": "public, max-age=300",
-                "Content-Disposition": f'inline; filename="{nii_name}"',
-            },
+        return FileResponse(
+            path=str(nii_path),
+            media_type="application/gzip",
+            filename=nii_path.name,
+            headers={"Cache-Control": "public, max-age=300"},
         )
 
-    return FileResponse(
-        path=str(nii_path),
-        media_type="application/gzip",
-        filename=nii_path.name,
-        headers={"Cache-Control": "public, max-age=300"},
-    )
+    # Fallback for environments without raw DICOM tree:
+    # try latest MRI object reference from DB, then preprocessed bytes.
+    source_ref = await _resolve_latest_original_mri_file_path(patient_id)
+    if source_ref:
+        raw_nifti = _try_read_nifti_bytes_from_reference(source_ref, default_bucket="mri-scans")
+        if raw_nifti:
+            return Response(
+                content=raw_nifti,
+                media_type="application/octet-stream",
+                headers={"Cache-Control": "public, max-age=300"},
+            )
+
+    preprocessed_nifti = await _resolve_preprocessed_nifti_bytes(patient_id, subject_id)
+    if preprocessed_nifti:
+        return Response(
+            content=preprocessed_nifti,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
+
+    raise HTTPException(status_code=404, detail=f"Original MRI source not found for subject_id={subject_id}")
 
 
 @router.get("/patients/{patient_id}/mri/attention-map.png")
@@ -1911,26 +1971,21 @@ async def get_attention_map_png(
     plane: str = Query("axial", description="axial | coronal | sagittal"),
     slide: int = Query(1, ge=1, le=50, description="ROI slide index (1-based)"),
     slice_index: int | None = Query(None, ge=0, le=100, description="Slice position 0..100"),
+    image_id: str | None = Query(None, description="Selected visit image_id"),
+    mri_assessment_id: str | None = Query(None, description="Selected visit mri_assessment_id"),
+    visit_exam_date: str | None = Query(None, description="Selected visit exam date (YYYY-MM-DD)"),
+    visit_viscode2: str | None = Query(None, description="Selected visit viscode2"),
 ):
     """Return latest CAM attention map image from ai_analysis, with preprocessed-slice fallback."""
     requested_plane = _normalize_plane_name(plane)
-    lookup_tokens = _patient_lookup_tokens(patient_id)
-    if not lookup_tokens:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    row = await db.fetchrow(
-        """
-        SELECT ma.ai_analysis AS "aiAnalysis"
-        FROM mri_assessments ma
-        JOIN patients p ON p.user_id = ma.patient_id
-        WHERE p.subject_id = ANY($1::text[]) OR p.user_id::text = ANY($1::text[])
-        ORDER BY ma.scan_date DESC NULLS LAST, ma.created_at DESC
-        LIMIT 1
-        """,
-        lookup_tokens,
+    resolved_row = await _resolve_mri_assessment_for_image_id(
+        patient_id=patient_id,
+        image_id=image_id,
+        mri_assessment_id=mri_assessment_id,
+        visit_exam_date=visit_exam_date,
+        visit_viscode2=visit_viscode2,
     )
-
-    ai_analysis = _as_dict(dict(row).get("aiAnalysis")) if row else {}
+    ai_analysis = _as_dict(resolved_row.get("aiAnalysis")) if resolved_row else {}
     if ai_analysis:
         target_slide = slide
         if slice_index is not None:
@@ -1975,6 +2030,10 @@ async def get_attention_map_png(
         patient_id=patient_id,
         plane=requested_plane,
         slice_index=slice_index,
+        image_id=image_id,
+        mri_assessment_id=mri_assessment_id,
+        visit_exam_date=visit_exam_date,
+        visit_viscode2=visit_viscode2,
     )
 
 
@@ -1983,16 +2042,65 @@ async def get_original_nifti_slice_png(
     patient_id: str,
     plane: str = Query("axial", description="axial | coronal | sagittal"),
     slice_index: int | None = Query(None, ge=0, le=100, description="Slice position 0..100"),
+    image_id: str | None = Query(None, description="Selected visit image_id"),
+    mri_assessment_id: str | None = Query(None, description="Selected visit mri_assessment_id"),
+    visit_exam_date: str | None = Query(None, description="Selected visit exam date (YYYY-MM-DD)"),
+    visit_viscode2: str | None = Query(None, description="Selected visit viscode2"),
 ):
     """Render representative original MRI slice for the requested plane and return PNG bytes."""
     subject_id = await _resolve_subject_id(patient_id)
-
-    nii_path = _get_or_build_original_nifti(subject_id)
+    selection_row = await _resolve_mri_assessment_for_image_id(
+        patient_id=patient_id,
+        image_id=image_id,
+        mri_assessment_id=mri_assessment_id,
+        visit_exam_date=visit_exam_date,
+        visit_viscode2=visit_viscode2,
+    )
+    selection_ai = _as_dict(selection_row.get("aiAnalysis")) if selection_row else {}
+    has_selection_context = any(
+        [
+            str(image_id or "").strip(),
+            str(mri_assessment_id or "").strip(),
+            str(visit_exam_date or "").strip(),
+            str(visit_viscode2 or "").strip(),
+        ]
+    )
+    nii_path = None if has_selection_context else _get_or_build_original_nifti(subject_id)
 
     try:
         target_plane = _normalize_plane_name(plane)
         slice_percent = (float(slice_index) / 100.0) if slice_index is not None else None
         raw_original_nifti = _read_nifti_bytes(nii_path) if nii_path else None
+        raw_preprocessed_nifti = _read_nifti_from_candidates(
+            [
+                selection_ai.get("preprocessedObjectPath"),
+                selection_ai.get("preprocessed_path"),
+                selection_row.get("filePath") if selection_row else None,
+                selection_ai.get("sourceFilePath"),
+            ],
+            default_bucket="mri-preprocessed",
+        )
+        if raw_original_nifti is None:
+            raw_original_nifti = _read_nifti_from_candidates(
+                [
+                    selection_ai.get("sourceFilePath"),
+                    selection_row.get("filePath") if selection_row else None,
+                    selection_ai.get("preprocessedObjectPath"),
+                    selection_ai.get("preprocessed_path"),
+                ],
+                default_bucket="mri-scans",
+            )
+        if raw_original_nifti is None:
+            source_ref = await _resolve_latest_original_mri_file_path(patient_id)
+            if source_ref:
+                raw_original_nifti = _try_read_nifti_bytes_from_reference(
+                    source_ref,
+                    default_bucket="mri-scans",
+                )
+        if raw_original_nifti is None:
+            if raw_preprocessed_nifti is None:
+                raw_preprocessed_nifti = await _resolve_preprocessed_nifti_bytes(patient_id, subject_id)
+            raw_original_nifti = raw_preprocessed_nifti
         if raw_original_nifti is None:
             raise HTTPException(
                 status_code=404,
@@ -2007,23 +2115,27 @@ async def get_original_nifti_slice_png(
             )
             if target_plane in ("coronal", "sagittal"):
                 image_2d = image_2d[::-1, ::-1].copy()
-        elif nii_path and target_plane == "axial":
-            raw_preprocessed_nifti = await _resolve_preprocessed_nifti_bytes(patient_id, subject_id)
+        elif target_plane == "axial":
+            if raw_preprocessed_nifti is None:
+                raw_preprocessed_nifti = await _resolve_preprocessed_nifti_bytes(patient_id, subject_id)
             if raw_preprocessed_nifti is not None:
-                image_2d = _find_aligned_original_slice_uint8(
-                    raw_original_nifti,
-                    raw_preprocessed_nifti,
-                )
+                try:
+                    image_2d = _find_aligned_original_slice_uint8(
+                        raw_original_nifti,
+                        raw_preprocessed_nifti,
+                    )
+                except Exception:
+                    image_2d = _extract_representative_axial_slice_uint8(raw_original_nifti)
             else:
                 image_2d = _extract_representative_axial_slice_uint8(raw_original_nifti)
-        elif target_plane == "axial":
-            image_2d = _extract_plane_slice_uint8(raw_original_nifti, "axial")
         else:
             image_2d = _extract_plane_slice_uint8(raw_original_nifti, target_plane)
             if target_plane in ("coronal", "sagittal"):
                 # Keep original MRI orientation consistent with previous UI expectation.
                 image_2d = image_2d[::-1, ::-1].copy()
         png_bytes = _encode_png_gray8(image_2d)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to render NIfTI slice: {exc}") from exc
 
@@ -2039,10 +2151,32 @@ async def get_preprocessed_nifti_slice_png(
     patient_id: str,
     plane: str = Query("axial", description="axial | coronal | sagittal"),
     slice_index: int | None = Query(None, ge=0, le=100, description="Slice position 0..100"),
+    image_id: str | None = Query(None, description="Selected visit image_id"),
+    mri_assessment_id: str | None = Query(None, description="Selected visit mri_assessment_id"),
+    visit_exam_date: str | None = Query(None, description="Selected visit exam date (YYYY-MM-DD)"),
+    visit_viscode2: str | None = Query(None, description="Selected visit viscode2"),
 ):
     """Render representative slice from preprocessed NIfTI and return PNG bytes."""
     subject_id = await _resolve_subject_id(patient_id)
-    raw_nifti = await _resolve_preprocessed_nifti_bytes(patient_id, subject_id)
+    selection_row = await _resolve_mri_assessment_for_image_id(
+        patient_id=patient_id,
+        image_id=image_id,
+        mri_assessment_id=mri_assessment_id,
+        visit_exam_date=visit_exam_date,
+        visit_viscode2=visit_viscode2,
+    )
+    selection_ai = _as_dict(selection_row.get("aiAnalysis")) if selection_row else {}
+    raw_nifti = _read_nifti_from_candidates(
+        [
+            selection_ai.get("preprocessedObjectPath"),
+            selection_ai.get("preprocessed_path"),
+            selection_row.get("filePath") if selection_row else None,
+            selection_ai.get("sourceFilePath"),
+        ],
+        default_bucket="mri-preprocessed",
+    )
+    if raw_nifti is None:
+        raw_nifti = await _resolve_preprocessed_nifti_bytes(patient_id, subject_id)
     if raw_nifti is None:
         raise HTTPException(status_code=404, detail=f"Preprocessed NIfTI not found for subject_id={subject_id}")
 
