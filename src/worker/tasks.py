@@ -73,7 +73,7 @@ app.conf.update(
 )
 
 # Define MRI Template path relative to this file
-# Location: src/claude/worker/templates/mni_icbm152_t1_tal_nlin_sym_09a.nii
+# Location: src/worker/templates/mni_icbm152_t1_tal_nlin_sym_09a.nii
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MRI_TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "mni_icbm152_t1_tal_nlin_sym_09a.nii")
 

@@ -125,7 +125,7 @@ services:
       - sh
       - -c
       - >
-        uv run celery -A src.claude.worker.tasks worker
+        uv run celery -A src.worker.tasks worker
         --loglevel=${CELERY_LOGLEVEL:-info}
         --concurrency=${CELERY_WORKER_CONCURRENCY:-1}
         --prefetch-multiplier=${CELERY_WORKER_PREFETCH_MULTIPLIER:-1}
