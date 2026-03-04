@@ -24,6 +24,7 @@ runtime/
 db_backups/
 final_jj_20260226_1/
 claude/
+ops/
 
 # Local tooling state
 .claude/
