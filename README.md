@@ -210,6 +210,28 @@ curl -I https://jns-hodu.duckdns.org | grep -i permissions-policy
 permissions-policy: geolocation=(), microphone=(self), camera=()
 ```
 
+### 해외 IP 차단 (KR Allowlist)
+- 운영 환경 보안을 위해 Nginx에서 한국(KR) IP 대역 + 로컬/사설망만 허용하도록 설정했습니다.
+- 적용 파일:
+  - `nginx.conf` (`geo`, `map` 기반 차단 로직)
+  - `docker/nginx-geo/allow_kr.conf` (KR CIDR 목록)
+  - `docker/docker-compose.yml` (allowlist 파일 마운트)
+- 해외 IP는 기본적으로 `403`이 반환됩니다.
+- `/health` 경로는 모니터링을 위해 예외로 열어둡니다.
+
+KR CIDR 목록 업데이트:
+```bash
+./docker/update-nginx-kr-allowlist.sh
+```
+
+Nginx 반영:
+```bash
+cd docker
+docker compose up -d nginx
+docker compose exec -T nginx nginx -t
+docker compose exec -T nginx nginx -s reload
+```
+
 ## Compliance Note
 - 이 저장소는 원본 의료 데이터/식별자 공개를 금지합니다.
 - 배포 전 합성 데이터만 남기고 민감 데이터(`data/raw`, `db_backups`, `exports`, MinIO 원본 버킷) 제거가 필요합니다.
